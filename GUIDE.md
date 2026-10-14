@@ -1,804 +1,329 @@
-# [Office Visual Agent] 폐쇄망 환경 구축 및 구현 완벽 가이드
-> **문서 버전:** 1.0  
-> **대상 LLM / 개발자:** 사내 구축형 온프레미스 LLM (Gemma 4 26B 등) 및 폐쇄망 시스템 엔지니어  
-> **목적:** 최소한의 반입 자원(Python Wheel, LibreOffice Portable)만으로 고속 인메모리 오피스 조작 및 초경량 실시간 시각 뷰포트 시스템을 100% 무결점으로 재구축
+# OfficeCLI 완전 정복 매뉴얼 및 단독 레퍼런스 (GUIDE.md)
+
+> **이 문서는 소스 코드를 단 한 줄도 열어보지 않고도 OfficeCLI의 모든 기능, 파라미터 조합, 데이터 형식, 예외 대처법을 100% 숙지하고 즉시 활용할 수 있도록 작성된 완전 자립형(Self-Contained) 가이드북입니다.**
 
 ---
 
-## 1. 프로젝트 핵심 철학 및 이전 실패의 교훈 (반드시 준수할 원칙)
+## ⚡ 빠른 판단 가이드: 할 수 있는 것 (CAN DO) vs 할 수 없는 것 (CANNOT DO)
 
-이 프로젝트는 기존 MS Office 자동화의 치명적 결함을 극복하기 위해 설계되었습니다. 구현 시 아래 원칙을 반드시 지켜야 합니다.
+> **작업 시작 전 1초 확인!**  
+> AI 에이전트와 사용자는 아래의 기능 경계를 확인하여 잘못된 명령 호출을 사전에 방지하세요.
 
-1. **Win32 COM 사용 금지 (Zero Win32 COM)**:
-   - Windows COM 바인딩의 프로세스 지연, 셀 편집 중 블로킹(Busy), 대화상자 프리징을 원천 배제합니다.
-2. **두꺼운 헬퍼 클래스 금지 (No Thick Helpers)**:
-   - 헬퍼를 두껍게 만들수록 LLM은 좁은 API 감옥에 갇혀 자율성을 잃습니다. LLM이 세계적으로 검증된 파이썬 표준 라이브러리(`openpyxl`, `python-docx`, `python-pptx`, `pandas`, `matplotlib`)를 직접 다루게 합니다.
-3. **도구 과다 세분화 금지 (No Fine-grained MCP Explosion)**:
-   - 수십 개의 잘게 쪼갠 도구(예: 셀 수정, 폰트 변경, 표 삽입 등)를 만들지 않습니다. **단 1개의 통합 Code Runner** 또는 파이썬 스크립트 실행 체계로 처리합니다.
-4. **리브레오피스는 렌더러로만 사용 (Renderer Only)**:
-   - 불안정하고 무거운 LibreOffice UNO 편집 API는 일체 쓰지 않습니다.
-   - 오직 `soffice --headless --convert-to pdf` 단일 백그라운드 명령어만 사용하여 100% 인쇄 품질의 고해상도 벡터 PDF를 추출하는 렌더러로만 씁니다.
-5. **초경량 뷰포트 (OpenCV Blit)**:
-   - 무거운 오피스 GUI나 브라우저 대신, OpenCV(`cv2.imshow`)의 네이티브 메모리 버퍼 표출을 사용하여 **10ms 만에 실시간 시각 피드백**을 제공합니다.
-6. **100% 결정론적 정량 비전 진단 (Deterministic Visual Diagnostics)**:
-   - 비전 모델(Vision LLM) 토큰을 소모하지 않고, `PyMuPDF`로 벡터 텍스트/좌표를 파싱하여 **셀 너비 부족 마스킹(`###`)과 여백 넘침을 1ms 만에 수학적으로 검출**하고 코드를 자율 교정합니다.
+| 대상 포맷 / 앱 | 🟢 할 수 있는 것 (CAN DO) | 🔴 할 수 없는 것 (CANNOT DO) | 비고 |
+| :--- | :--- | :--- | :--- |
+| **한글 (HWP / HWPX)** | • **로컬 파일 초고속 읽기 (`read --file <경로.hwp>`)**<br>• 하이브리드 검색 (`run --search ...`)<br>• 본문 문단 및 표 데이터 추출<br>• **Hwp.exe 실행 0%, 화면 간섭 0% 순수 파이썬 파싱** | ❌ **화면 활성 창 읽기 (`--active`) 불가**<br>❌ **한글 문서 쓰기/수정 (`write --to hwp`) 불가**<br>❌ 한글 창 초기화 (`--clear`) 불가<br>❌ 한글에 이미지 삽입 불가 | **PDF와 동일한 [읽기 전용]**<br>(화면 팝업 및 포커스 뺏김 원천 방지) |
+| **PDF** | • **로컬 파일 고속 읽기 (`read --file <경로.pdf>`)**<br>• 하이브리드 검색 및 목차 요약 (`info`)<br>• 도면/이미지 분리 추출 (`--extract-images`) | ❌ **PDF 파일 쓰기/수정 불가**<br>❌ 활성 창 제어 불가 | **읽기/검색 전용** |
+| **Microsoft Word** | • 로컬 파일 읽기/검색 (`.docx`, `.doc`)<br>• **실시간 활성 창 읽기/쓰기 (`--active`)**<br>• 키워드 앵커 위치 삽입 (`--anchor --pos`)<br>• 네이티브 표 자동 생성 & 본문 초기화 (`--clear`)<br>• 인라인 이미지 삽입 (`--image`)<br>• **작업 전 자동 백업 & 1초 롤백 (`restore`)** | ❌ 암호로 잠긴(비밀번호 보호) 문서 강제 해제 | **읽기 + 쓰기 + 활성 창 전면 지원** |
+| **Microsoft Excel** | • 로컬 파일 읽기/검색 (`.xlsx`, `.xls`, `.csv`)<br>• **실시간 활성 시트 읽기/쓰기 (`--active`)**<br>• 2D 정규화 및 병합 셀 Forward-Fill 복원<br>• `=` 수식(`Formula`) 자동 인식 주입<br>• 윗행 서식 자동 상속 (`xlPasteFormats`)<br>• 이미지 삽입 (`--image`) & 시트 초기화 (`--clear`)<br>• **작업 전 자동 백업 & 1초 롤백 (`restore`)** | ❌ 매크로(VBA) 코드 직접 수정 | **읽기 + 쓰기 + 활성 창 전면 지원** |
+| **PowerPoint** | • 로컬 파일 읽기/검색 (`.pptx`, `.ppt`)<br>• **실시간 활성 슬라이드 읽기/쓰기 (`--active`)**<br>• 중첩 그룹 도형 언패킹 & 시각적 순서 추출<br>• **지능형 동적 페이지네이션** (높이 초과 시 새 슬라이드 자동 생성 및 표 분할)<br>• 이미지 삽입 (`--image`) & 슬라이드 초기화 (`--clear`)<br>• **작업 전 자동 백업 & 1초 롤백 (`restore`)** | ❌ 복잡한 애니메이션/전환 효과 추가 | **읽기 + 쓰기 + 활성 창 전면 지원** |
+| **Markdown / Text** | • 로컬 파일 읽기 및 쓰기 (`.md`, `.txt`)<br>• 하이브리드 검색 및 표 생성 | ❌ GUI 활성 창 개념 없음 | **로컬 파일 전용** |
 
 ---
 
-## 2. 폐쇄망 최소 반입 자원 목록 (Whitelist Assets)
-
-폐쇄망 내부로 반입해야 하는 자원은 오직 2가지(Python 패키지 Wheel 파일들과 LibreOffice Portable 압축 파일)입니다.
-
-### 2.1 Python 패키지 Wheel (인터넷 망에서 사전 다운로드)
-인터넷 PC에서 아래 명령으로 `.whl` 파일들을 수집하여 반입합니다:
-```bash
-pip download openpyxl python-docx python-pptx pandas opencv-python pymupdf matplotlib -d ./wheels/
-```
-
-| 패키지명 | 역할 |
-| :--- | :--- |
-| `openpyxl` | 엑셀(.xlsx) 인메모리 생성, 셀 서식, 네이티브 차트 생성 |
-| `python-docx` | 워드(.docx) 보고서 본문, 테이블, 스타일 서식 생성 |
-| `python-pptx` | 파워포인트(.pptx) 프레젠테이션 슬라이드 조작 |
-| `pandas` | 초고속 오피스 간 데이터 추출 및 가공 허브 |
-| `opencv-python` | 실시간 멀티 탭 GUI 뷰포트 팝업 (`cv2.imshow`) |
-| `pymupdf` | PDF 페이지를 초고속(10~30ms)으로 OpenCV BGR 이미지로 래스터화 |
-| `matplotlib` | 고해상도 비즈니스 그래프 인메모리 렌더링 (`io.BytesIO`) |
-
-### 2.2 LibreOffice Portable
-- 설치가 필요 없는 포터블 버전(약 200MB zip)을 다운로드하여 프로젝트 폴더 내 `LibreOfficePortable/`로 압축 해제합니다.
-- 핵심 실행 파일 경로: `LibreOfficePortable/App/libreoffice/program/soffice.com`
+## 📑 목차 (Table of Contents)
+1. [빠른 판단 가이드: 할 수 있는 것 vs 할 수 없는 것](#-빠른-판단-가이드-할-수-있는-것-can-do-vs-할-수-없는-것-cannot-do)
+2. [핵심 개념 및 아키텍처 (Concepts & Architecture)](#1-핵심-개념-및-아키텍처)
+3. [표준 입출력 데이터 규격 (Data Schema)](#2-표준-입출력-데이터-규격)
+4. [전체 CLI 명령어 및 옵션 완전 분석 (CLI Reference)](#3-전체-cli-명령어-및-옵션-완전-분석)
+   - [4.1 run (올인원 실행: 읽기 ➔ 검색 ➔ 쓰기/출력)](#31-run-올인원-실행)
+   - [4.2 read (범위/활성창 정밀 추출)](#32-read-정밀-추출)
+   - [4.3 write (독립 쓰기 / 이미지 / 초기화 / 파이프)](#33-write-독립-쓰기)
+   - [4.4 info (0.1초 고속 메타데이터 요약)](#34-info-고속-메타데이터-요약)
+   - [4.5 restore (작업 전 1초 롤백 복원)](#35-restore-작업-전-1초-롤백-복원)
+   - [4.6 backup (백업 스냅샷 이력 조회)](#36-backup-백업-스냅샷-이력-조회)
+5. [오피스 프로그램별 지원 범위 및 특성](#4-오피스-프로그램별-지원-범위-및-특성)
+6. [실무 상황별 명령어 치트시트 (Cookbook & Cheatsheet)](#5-실무-상황별-명령어-치트시트)
+7. [자주 묻는 질문 및 트러블슈팅 (FAQ & Troubleshooting)](#6-자주-묻는-질문-및-트러블슈팅)
 
 ---
 
-## 3. 권장 디렉터리 구조
+## 1. 핵심 개념 및 아키텍처
 
-```text
-libreoffice_viewer/
-│
-├── LibreOfficePortable/          # [반입] 내장 리브레오피스 포터블 폴더
-│   └── App/libreoffice/program/soffice.com
-│
-├── wheels/                       # [반입] 오프라인 설치용 패키지 .whl 모음
-│
-├── src/                          # 핵심 패키지 소스 코드
-│   └── office_visual/
-│       ├── __init__.py           # 최상위 고수준 API export
-│       ├── config.py             # soffice 바이너리 자동 탐색 및 기본 환경 설정
-│       ├── renderer.py           # Headless PDF 변환 & PyMuPDF 래스터화
-│       ├── inspector.py          # 1ms 정량 비전 진단기 (### 마스킹, 오버플로우 검출)
-│       ├── viewport.py           # MultiDocViewer (OpenCV 다중 탭 및 Live 자동감지 뷰포트)
-│       ├── runner.py             # Unified Code Runner (코드 실행 ➔ 검사 ➔ 렌더링)
-│       ├── cli.py                # 단일 CLI 진입점 (live, preview, check, render)
-│       └── __main__.py           # python -m office_visual 진입점
-│
-├── samples/                      # 작업 및 출력 디렉터리
-│   ├── workspace/                # 실시간 뷰어가 감시하는 동적 작업 폴더
-│   ├── docs/                     # 원본 오피스 문서 보관함
-│   └── outputs/                  # 최종 저장 및 이미지 결과물
-│
-├── tests/                        # 자동화 검증 스위트
-│   ├── test_pipeline.py
-│   └── test_self_healing_loop.py
-│
-├── pyproject.toml                # 패키지 빌드 매니페스트
-├── README.md                     # 프로젝트 안내 가이드
-└── GUIDE.md                      # [본 문서] 폐쇄망 구현 지침서
-```
+OfficeCLI는 Windows 11 폐쇄망 및 WinPython 환경에서 AI 에이전트가 로컬 오피스 문서를 탐색하고, 화면에 열려 있는 활성 창을 실시간으로 제어하기 위해 제작된 단일 스크립트 도구입니다.
+
+### 🌟 7대 핵심 원칙
+1. **완전 무간섭 백그라운드 읽기 (`DispatchEx`)**:
+   - 오프라인 파일 경로(`--file "보고서.docx"`, `"기안서.hwp"`, `"매뉴얼.pdf"`)로 명령을 실행하면 사용자가 화면에서 오피스 프로그램을 열고 작업 중이더라도 **0% 간섭하는 독립 백그라운드 프로세스**로 파일을 읽고 깔끔하게 종료합니다.
+2. **3대 오피스 활성 창 안전 제어 (`--active`)**:
+   - 화면에 열려 있는 저장 전 상태의 문서(Word, Excel, PowerPoint)를 읽거나 수정할 때는 `--active` 플래그를 붙이며, 사전에 열려 있는 창 핸들(`HWND`)을 안전하게 가져와 조작합니다.
+3. **한글(HWP) 및 PDF: 무간섭 읽기 전용(Read-Only)**:
+   - 한컴오피스 한글(HWP)과 PDF는 사용자의 화면 간섭, 보안 팝업, 키보드 포커스 충돌을 원천 방지하기 위해 **100% 무간섭 백그라운드 읽기/검색 전용**으로 안전하게 동작합니다. (쓰기는 Word, Excel, PPT, Markdown 대상)
+4. **윈도우 오프스크린 자동 복원 (`ensure_window_visible`)**:
+   - 다중 모니터 분리, 가상 데스크톱 전환, 최소화 상태 등으로 활성 창이 화면 밖(음수 좌표)에 숨겨져 있으면, 자동으로 **주 모니터 안전 영역(`x=100, y=100`, `1100×750`)으로 창을 이동하고 포커스를 복원**합니다.
+5. **안전 제일! 작업 전 자동 스냅샷 & 원터치 롤백 (`BackupManager` & `restore`)**:
+   - 에이전트가 문서를 수정(`write`)하거나 비우는(`--clear`) 모든 작업 직전, 원본 파일 및 활성 창 본문 전체를 `.officecli_backup/` 폴더에 타임스탬프와 함께 자동 보관합니다. 실수 시 `restore` 단 한 줄로 1초 만에 작업 전 상태로 되돌립니다.
+6. **초고속 캐싱 엔진 (`.officecli_cache/`)**:
+   - 파일의 절대 경로와 수정 시각(`mtime`) 해시를 기반으로 1회 파싱 결과를 JSONL 캐시로 저장합니다. 수백 쪽짜리 대용량 문서도 2회차 조회부터는 0.01초 내에 즉각 응답합니다.
+7. **지능형 하이브리드 검색 & PPT 동적 페이지네이션**:
+   - 정규식(Regex) + 희소 단어 BM25/IDF + 목차 가중치를 결합하여 외부 무거운 벡터 모델 없이도 관련도 높은 상위 N개 문단을 초고속 랭킹하며, PPT 삽입 시 슬라이드 높이 초과 시 새 슬라이드를 자동 생성합니다.
 
 ---
 
-## 4. 소스 코드 구현 명세 (Source Code Implementation)
+## 2. 표준 입출력 데이터 규격
 
-Gemma 4 26B 또는 개발자가 그대로 구현할 수 있는 전체 핵심 소스 코드입니다.
+OfficeCLI의 모든 읽기/검색 결과는 표준 **JSONL (JSON Lines)** 형식으로 출력되며, 각 줄은 독립된 단일 레코드입니다.
 
-### 4.1 `pyproject.toml`
-```toml
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "office-visual"
-version = "0.2.0"
-description = "High-speed In-Memory Office Manipulation with Headless LibreOffice Viewport"
-authors = [{ name = "Office Visual Agent Team" }]
-requires-python = ">=3.10"
-dependencies = [
-    "openpyxl",
-    "python-docx",
-    "python-pptx",
-    "pandas",
-    "opencv-python",
-    "pymupdf",
-    "matplotlib",
-]
-
-[project.scripts]
-office-visual = "office_visual.cli:main"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-```
-
----
-
-### 4.2 `src/office_visual/config.py`
-LibreOffice의 `soffice` 실행 바이너리를 시스템 PATH 및 로컬 포터블 디렉터리에서 자동 감지합니다.
-```python
-import os
-import shutil
-from pathlib import Path
-
-DEFAULT_DPI = 130
-MAX_VIEWPORT_HEIGHT = 900
-SUPPORTED_EXTENSIONS = {
-    ".xlsx", ".xlsm", ".xls", ".csv",
-    ".docx", ".doc", ".odt", ".rtf",
-    ".pptx", ".ppt", ".odp",
+### 2.1 JSONL 레코드 스키마
+```json
+{
+  "id": 14,
+  "src": "2026_사업계획서.docx",
+  "ext": "docx",
+  "page": 3,
+  "section": "2. 소요 예산 계획",
+  "coord": "Tbl:2/Row:1",
+  "type": "table_row",
+  "data": ["연구개발비", "150,000,000", "정부지원금 매칭"],
+  "score": 18.5
 }
+```
 
-def find_soffice_binary() -> Path:
-    current_file = Path(__file__).resolve()
-    repo_root = current_file.parents[2]
+### 2.2 필드 정의서
+| 필드명 | 타입 | 설명 |
+| :--- | :--- | :--- |
+| `id` | `int` | 문서 전체 내 고유 등장 순번 (0부터 1씩 증가, 문서 앞뒤 문맥 보존용) |
+| `src` | `str` | 소스 파일명(예: `report.pdf`, `sample.hwp`) 또는 활성 창 제목(예: `문서1 - Microsoft Word`) |
+| `ext` | `str` | 확장자: `pdf`, `docx`, `xlsx`, `pptx`, `hwp`, `hwpx`, `md`, `txt` |
+| `page` | `int` | 실제 인쇄 쪽 번호, PPT 슬라이드 번호, Excel 시트 순번 (1부터 시작) |
+| `section` | `str` | 직전 상위 목차(Heading), 엑셀 시트명, PPT 슬라이드 제목 |
+| `coord` | `str` | 정밀 좌표: `Para:14`(14번째 문단), `Row:12`(12번째 행), `Tbl:2/Row:1`(2번째 표의 1행), `Shape:3`(3번째 도형) |
+| `type` | `str` | `text`(일반 문단), `table_row`(표의 한 행), `heading`(제목/목차) |
+| `data` | `str` \| `list` | 실제 내용: 일반 문단은 `str`, 표의 행은 셀 값 목록 `list[str]` |
+| `score` | `float` | (`--search` 시에만 출력) 검색어 연관도 점수 (높을수록 일치율 높음) |
 
-    candidates = [
-        repo_root / "LibreOfficePortable" / "App" / "libreoffice" / "program" / "soffice.com",
-        repo_root / "LibreOfficePortable" / "App" / "libreoffice" / "program" / "soffice.exe",
-        repo_root / "LibreOfficePortable" / "LibreOfficePortable.exe",
-        Path(r"C:\Program Files\LibreOffice\program\soffice.com"),
-        Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
-        Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.com"),
-    ]
+---
 
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
+## 3. 전체 CLI 명령어 및 옵션 완전 분석
 
-    which_path = shutil.which("soffice")
-    if which_path:
-        return Path(which_path)
+```
+python officecli.py <COMMAND> [OPTIONS...]
+```
 
-    raise FileNotFoundError(
-        "LibreOffice executable (soffice) not found. "
-        "Ensure 'LibreOfficePortable' exists in the workspace root or LibreOffice is installed."
-    )
+OfficeCLI는 목적에 따라 6개의 서브 명령어를 제공합니다:
+1. `run`: 읽기, 검색, 쓰기를 한 번에 수행하는 메인 명령어.
+2. `read`: 문서나 활성 창의 내용을 JSONL로 스트리밍 추출.
+3. `write`: 텍스트, 이미지 삽입, 문서 초기화, 파이프 입력 기록.
+4. `info`: 파일이나 활성 창의 쪽수, 목차, 크기 메타데이터 요약.
+5. `restore`: 작업 전 백업 스냅샷으로 1초 만에 롤백 복원.
+6. `backup`: 백업 스냅샷 이력 확인.
+
+---
+
+### 3.1 `run` (올인원 실행)
+가장 핵심이 되는 명령어로, 원본 문서를 읽어 검색한 뒤 화면에 출력하거나 대상 문서에 즉시 주입합니다.
+
+```bash
+python officecli.py run --file <경로|앱별칭> [옵션...]
+```
+
+#### 옵션 상세 테이블
+| 옵션 | 단축 | 타입 | 기본값 | 설명 및 유효값 |
+| :--- | :--- | :--- | :--- | :--- |
+| `--file` | - | `str` | **(필수)** | 원본 파일 경로 (`.pdf`, `.docx`, `.xlsx`, `.pptx`, `.hwp`, `.md`, `.txt`) 또는 활성 앱 별칭 (`word`, `excel`, `ppt`) |
+| `--active` | - | 플래그 | `False` | 활성 창 제어 여부. `--file`이 앱 별칭일 때 활성 창에서 읽고, `--to`가 지정되면 쓰기 대상 창에 적용 |
+| `--search` | - | `str` | `None` | 검색할 키워드 또는 정규식. 공백으로 여러 단어 입력 시 BM25 희소 단어 랭킹 적용 |
+| `--top` | - | `int` | `0` (전체) | 상위 N개 레코드만 제한하여 추출/쓰기 |
+| `--pages` | - | `str` | `None` | 추출/기록할 페이지 또는 슬라이드 범위 (예: `1`, `1-3`, `1,3,5-7`) |
+| `--to` | - | `str` | `None` | 검색 결과를 기록할 대상 파일 경로 또는 활성 앱 별칭 (`word`, `excel`, `ppt`). 생략 시 stdout 출력 |
+| `--anchor` | - | `str` | `None` | 대상 문서에서 삽입 위치를 찾을 기준 텍스트 키워드 |
+| `--pos` | - | `str` | `after` | 앵커 기준 상대 위치: `after`(뒤), `before`(앞), `replace`(해당 문단/행 교체) |
+| `--prefix` | - | `str` | `None` | 기록할 각 문단/표 첫 셀 앞단에 붙일 접두사 (예: `"[출처: 기안서]"`)|
+| `--clear` | - | 플래그 | `False` | 기록 전 대상 시트나 문서 본문 전체를 삭제 (자동 백업 동시 수행) |
+| `--extract-images`| - | 플래그 | `False` | PDF 파싱 시 `{파일명}_images/` 폴더를 생성하여 포함된 이미지 파일들을 저장 |
+
+---
+
+### 3.2 `read` (정밀 추출)
+특정 문서나 활성 창의 전체 내용 또는 특정 페이지를 순수 JSONL 규격으로 추출할 때 사용합니다.
+
+```bash
+python officecli.py read --file <경로|앱별칭> [옵션...]
+```
+
+#### 옵션 상세 테이블
+| 옵션 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `--file` | `str` | **(필수)** | 파일 경로 또는 활성 앱 별칭 (`word`, `excel`, `ppt`) |
+| `--active` | 플래그 | `False` | 활성 창에서 직접 읽기 수행 (Word, Excel, PPT) |
+| `--pages` | `str` | `None` | 특정 페이지/슬라이드 범위 추출 (`1-5`, `2,4`) |
+| `--extract-images`| 플래그 | `False` | PDF 이미지 추출 여부 |
+
+---
+
+### 3.3 `write` (독립 쓰기)
+검색 단계 없이 직접 텍스트나 이미지를 삽입하거나, 문서를 초기화하거나, 파이프라인(stdin) 데이터를 대상 문서에 기록할 때 사용합니다.
+
+```bash
+python officecli.py write --to <경로|앱별칭> [옵션...]
+```
+
+#### 옵션 상세 테이블
+| 옵션 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `--to` | `str` | **(필수)** | 대상 파일 경로 또는 활성 앱 별칭 (`word`, `excel`, `ppt`) |
+| `--active` | 플래그 | `False` | 현재 화면에 열려 있는 활성 창에 쓰기 |
+| `--text` | `str` | `None` | 기록할 단일 텍스트 내용 |
+| `--image` | `str` | `None` | 삽입할 이미지 파일 경로 (`.png`, `.jpg`, `.bmp` 등) |
+| `--clear` | 플래그 | `False` | 쓰기 전 대상 문서/시트/슬라이드를 완전히 비움 (자동 백업 자동 수행) |
+| `--anchor` | `str` | `None` | 기준 위치 검색 키워드 |
+| `--pos` | `str` | `after` | 앵커 상대 위치 (`after`, `before`, `replace`) |
+| `--prefix` | `str` | `None` | 삽입 데이터 각 행에 붙일 접두사 |
+
+> **💡 파이프라인(stdin) 지원**:  
+> `--text`나 `--image`를 주지 않고 표준 입력을 전달하면 stdin의 JSONL 또는 일반 텍스트 라인을 그대로 대상 문서에 순서대로 기록합니다.  
+> 예: `python officecli.py read --file a.xlsx | python officecli.py write --to word --active`
+
+---
+
+### 3.4 `info` (고속 메타데이터 요약)
+대용량 문서를 전체 파싱하지 않고, 0.1초 만에 페이지 수, 크기, 목차(TOC)/시트명 구조를 빠르게 파악하여 후속 작업(검색/페이지 지정) 전략을 수립합니다.
+
+```bash
+python officecli.py info --file <경로|앱별칭> [--active]
+```
+
+#### 반환 JSON 예시
+```json
+{
+  "src": "2026_신규사업계획서.pdf",
+  "ext": "pdf",
+  "size_kb": 2450.8,
+  "page_count": 48,
+  "toc": ["1. 사업 개요", "2. 시장 분석", "3. 기술 개발 계획", "4. 소요 예산"],
+  "total_records": 312
+}
 ```
 
 ---
 
-### 4.3 `src/office_visual/renderer.py`
-어떤 오피스 문서든 헤드리스 PDF로 변환하고, PyMuPDF를 통해 수십 밀리초 만에 OpenCV BGR 이미지로 변환합니다.
-```python
-import tempfile
-import subprocess
-from pathlib import Path
-from typing import Union, List, Optional
-import numpy as np
-import cv2
-import pymupdf
+### 3.5 `restore` (작업 전 1초 롤백 복원)
+OfficeCLI가 수행한 모든 쓰기 및 초기화 작업은 사전에 백업 스냅샷이 생성됩니다. 결과가 마음에 들지 않거나 원복이 필요할 때 단 한 줄로 직전 상태로 복원합니다.
 
-from .config import find_soffice_binary, DEFAULT_DPI, SUPPORTED_EXTENSIONS
+```bash
+python officecli.py restore --target <앱별칭|파일경로> [--snapshot <스냅샷ID>]
+```
 
-def convert_to_pdf(input_path: Union[str, Path], output_dir: Optional[Union[str, Path]] = None) -> Path:
-    input_path = Path(input_path).resolve()
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
+#### 옵션 상세 테이블
+| 옵션 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `--target` | `str` | **(필수)** | 복원 대상 앱 별칭 (`word`, `excel`, `ppt`) 또는 파일 경로 (상대/절대/파일명 모두 지원) |
+| `--snapshot`| `str` | `None` | 특정 스냅샷 ID 지정 (생략 시 해당 대상의 **가장 최신 스냅샷**으로 자동 롤백) |
 
-    soffice = find_soffice_binary()
-    out_dir = Path(output_dir).resolve() if output_dir else input_path.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        str(soffice),
-        "--headless",
-        "--convert-to", "pdf",
-        "--outdir", str(out_dir),
-        str(input_path)
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"LibreOffice conversion failed: {result.stderr or result.stdout}")
-
-    expected_pdf = out_dir / f"{input_path.stem}.pdf"
-    if not expected_pdf.exists():
-        raise FileNotFoundError(f"Converted PDF not found at {expected_pdf}")
-
-    return expected_pdf
-
-def pdf_to_images(pdf_path: Union[str, Path], dpi: int = DEFAULT_DPI) -> List[np.ndarray]:
-    pdf_path = Path(pdf_path).resolve()
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-    doc = pymupdf.open(str(pdf_path))
-    images: List[np.ndarray] = []
-
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        pix = page.get_pixmap(dpi=dpi)
-        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-        
-        if pix.n == 4:
-            bgr = cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
-        elif pix.n == 3:
-            bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        else:
-            bgr = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-        images.append(bgr)
-
-    doc.close()
-    return images
-
-def render_document(input_path: Union[str, Path], dpi: int = DEFAULT_DPI) -> List[np.ndarray]:
-    input_path = Path(input_path).resolve()
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_path = convert_to_pdf(input_path, output_dir=tmpdir)
-        images = pdf_to_images(pdf_path, dpi=dpi)
-    return images
+#### 반환 JSON 예시
+```json
+{
+  "status": "ok",
+  "action": "restored",
+  "target": "excel",
+  "from": "C:\\Users\\...\\excel_active_20261014_221750.xlsx",
+  "snapshot_id": "active_excel_20261014_221750"
+}
 ```
 
 ---
 
-### 4.4 `src/office_visual/inspector.py`
-비전 모델 없이 수치와 좌표 계산만으로 엑셀 `###` 마스킹과 여백 침범을 1ms 만에 잡아내는 핵심 모듈입니다.
-```python
-from pathlib import Path
-from dataclasses import dataclass, field
-from typing import List, Optional, Union
-import pymupdf
+### 3.6 `backup` (백업 스냅샷 이력 조회)
+현재 `.officecli_backup/` 폴더에 저장된 모든 백업 스냅샷 목록을 조회합니다.
 
-from .renderer import convert_to_pdf
-
-@dataclass
-class VisualIssue:
-    issue_type: str        # CELL_MASKED, HORIZONTAL_OVERFLOW, VERTICAL_OVERFLOW, PAGE_SPILLOVER
-    page_number: int
-    message: str
-    coordinates: Optional[List[float]] = None
-    hint: str = ""
-
-@dataclass
-class InspectionReport:
-    is_valid: bool
-    total_pages: int
-    issues: List[VisualIssue] = field(default_factory=list)
-    document_path: Optional[Path] = None
-
-    def summary(self) -> str:
-        if self.is_valid:
-            return f"[PASS] Document layout is clean ({self.total_pages} page(s), 0 issues)."
-        lines = [f"[FAIL] Document layout has {len(self.issues)} issue(s):"]
-        for idx, issue in enumerate(self.issues, 1):
-            lines.append(f"  {idx}. [{issue.issue_type}] Page {issue.page_number}: {issue.message}")
-            if issue.hint:
-                lines.append(f"     -> Recommendation: {issue.hint}")
-        return "\n".join(lines)
-
-def inspect_pdf(pdf_path: Union[str, Path], expected_pages: Optional[int] = None, margin_pts: float = 20.0) -> InspectionReport:
-    pdf_path = Path(pdf_path).resolve()
-    doc = pymupdf.open(str(pdf_path))
-    total_pages = len(doc)
-    issues: List[VisualIssue] = []
-
-    if expected_pages is not None and total_pages > expected_pages:
-        issues.append(VisualIssue(
-            issue_type="PAGE_SPILLOVER",
-            page_number=total_pages,
-            message=f"Document produced {total_pages} pages, but expected at most {expected_pages} page(s).",
-            hint=f"Reduce table margins/row heights or set fit-to-page so it fits in {expected_pages} page(s)."
-        ))
-
-    for page_idx in range(total_pages):
-        page = doc[page_idx]
-        page_num = page_idx + 1
-        safe_max_x = page.rect.width - margin_pts
-        safe_max_y = page.rect.height - margin_pts
-
-        words = page.get_text("words")  # (x0, y0, x1, y1, word, ...)
-        for w in words:
-            x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4]
-            cleaned_text = text.strip()
-
-            # 1. Excel Cell Masking (###)
-            if len(cleaned_text) >= 2 and all(ch == '#' for ch in cleaned_text):
-                issues.append(VisualIssue(
-                    issue_type="CELL_MASKED",
-                    page_number=page_num,
-                    message=f"Masked cell content detected ('{cleaned_text}') at position ({x0:.1f}, {y0:.1f}).",
-                    coordinates=[round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)],
-                    hint="Column width is too narrow. Increase column width in openpyxl by at least 5-10."
-                ))
-
-            # 2. Horizontal Overflow
-            if x1 > safe_max_x:
-                issues.append(VisualIssue(
-                    issue_type="HORIZONTAL_OVERFLOW",
-                    page_number=page_num,
-                    message=f"Text '{text}' exceeds right printable margin ({x1:.1f} > {safe_max_x:.1f}).",
-                    coordinates=[round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)],
-                    hint="Reduce table width or change page orientation to Landscape."
-                ))
-
-            # 3. Vertical Overflow
-            if y1 > safe_max_y:
-                issues.append(VisualIssue(
-                    issue_type="VERTICAL_OVERFLOW",
-                    page_number=page_num,
-                    message=f"Text '{text}' clipped beyond bottom page margin ({y1:.1f} > {safe_max_y:.1f}).",
-                    coordinates=[round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)],
-                    hint="Content spilled off page. Adjust font size, reduce row height, or insert proper page breaks."
-                ))
-
-    doc.close()
-    return InspectionReport(is_valid=(len(issues) == 0), total_pages=total_pages, issues=issues, document_path=pdf_path)
-
-def inspect_document(input_path: Union[str, Path], expected_pages: Optional[int] = None, margin_pts: float = 20.0) -> InspectionReport:
-    input_path = Path(input_path).resolve()
-    if input_path.suffix.lower() == ".pdf":
-        return inspect_pdf(input_path, expected_pages=expected_pages, margin_pts=margin_pts)
-
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_path = convert_to_pdf(input_path, output_dir=tmpdir)
-        report = inspect_pdf(pdf_path, expected_pages=expected_pages, margin_pts=margin_pts)
-        report.document_path = input_path
-        return report
+```bash
+python officecli.py backup list
 ```
 
 ---
 
-### 4.5 `src/office_visual/viewport.py`
-실시간 폴더 감시(Auto-Reload) 및 마우스 클릭/단축키 지원 OpenCV 멀티 탭 뷰포트입니다.
-```python
-import time
-from pathlib import Path
-from typing import Union, List, Dict, Optional, Tuple
-import numpy as np
-import cv2
+## 4. 오피스 프로그램별 지원 범위 및 특성
 
-from .renderer import render_document
-from .config import MAX_VIEWPORT_HEIGHT
+| 포맷 / 프로그램 | 지원 모드 | 읽기 / 검색 방식 | 쓰기 / 편집 지원 범위 |
+| :--- | :--- | :--- | :--- |
+| **Microsoft Word** | 오프라인 파일 + **활성 창 제어** | 문단과 표의 실제 인쇄 배치 순서 100% 보장. 실제 쪽번호(`wdActiveEndPageNumber`) 추적 | 텍스트 추가, 네이티브 Word Table 자동 렌더링, 인라인 이미지 삽입(`InlineShapes`), 본문 초기화(`--clear`) |
+| **Microsoft Excel** | 오프라인 파일 + **활성 창 제어** | 시트별 2D 정규화, 병합 셀 Forward-Fill 복원 | `=` 수식 자동 인식(`Formula`), 이전 행 서식 자동 상속(`xlPasteFormats`), 이미지 삽입(`Shapes`), 시트 초기화(`--clear`) |
+| **PowerPoint** | 오프라인 파일 + **활성 창 제어** | 도형 중첩 그룹 재귀 언패킹, (Top, Left) 시각적 순서 정렬 추출 | **지능형 동적 페이지네이션** (슬라이드 높이 초과 시 자동 새 슬라이드 생성 및 표 분할), 이미지 삽입(`Shapes`), 슬라이드 초기화(`--clear`) |
+| **한컴오피스 한글 (HWP)** | **로컬 파일 전용 (Read-Only)** | 화면 간섭 0% 백그라운드 엔진 구동, 본문 및 표 원천 순서 보장 고속 추출 | ❌ **읽기 전용 (PDF와 동일)**<br>(화면 포커스 뺏김, 보안 팝업, 키보드 간섭 원천 차단) |
+| **PDF** | **로컬 파일 전용 (Read-Only)** | PyMuPDF 기반 고속 파싱, 목차(TOC) 요약, 이미지 분리 추출 | ❌ 읽기 전용 |
+| **Markdown / Text** | 로컬 파일 읽기/쓰기 | 줄 단위 및 표 파싱 | 앵커 기준 텍스트 및 마크다운 표 삽입 |
 
-class MultiDocViewer:
-    def __init__(
-        self,
-        documents: Optional[Dict[str, Union[List[np.ndarray], np.ndarray, str, Path]]] = None,
-        window_title: str = "Office Visual Multi-Viewport",
-        max_height: int = MAX_VIEWPORT_HEIGHT,
-        dpi: int = 130,
-        watch_dir: Optional[Union[str, Path]] = None
-    ):
-        self.window_title = window_title
-        self.max_height = max_height
-        self.dpi = dpi
-        self.watch_dir = Path(watch_dir).resolve() if watch_dir else None
+---
 
-        self.docs: Dict[str, List[np.ndarray]] = {}
-        self.file_sources: Dict[str, Path] = {}
-        self.file_mtimes: Dict[str, float] = {}
+## 5. 실무 상황별 명령어 치트시트 (Cookbook & Cheatsheet)
 
-        if documents:
-            for name, item in documents.items():
-                if isinstance(item, (str, Path)):
-                    p = Path(item).resolve()
-                    self.file_sources[name] = p
-                    self.file_mtimes[name] = p.stat().st_mtime if p.exists() else 0.0
-                    self.docs[name] = render_document(p, dpi=self.dpi)
-                elif isinstance(item, np.ndarray):
-                    self.docs[name] = [item]
-                elif isinstance(item, list):
-                    self.docs[name] = item
+### 1) 로컬 한글(HWP) 문서에서 화면 간섭 없이 내용 검색
+```bash
+# 한글 창을 화면에 띄우지 않고 0.1초 만에 기안서에서 "추진 과제" 검색
+python officecli.py run --file "C:\Docs\기안서.hwp" --search "추진 과제" --top 3
+```
 
-        if self.watch_dir and self.watch_dir.exists():
-            for f in sorted(self.watch_dir.iterdir()):
-                if f.is_file() and f.suffix.lower() in [".xlsx", ".docx", ".pptx"] and not f.name.startswith("~"):
-                    if f.name not in self.file_sources:
-                        self.file_sources[f.name] = f
-                        self.file_mtimes[f.name] = f.stat().st_mtime
-                        try:
-                            self.docs[f.name] = render_document(f, dpi=self.dpi)
-                        except Exception:
-                            pass
+### 2) 대용량 PDF 문서에서 핵심 내용 초고속 검색
+```bash
+# 500페이지 분량의 규격서에서 "암호화 모듈" 관련 상위 3개 문단 추출 (2회차부터 0.01초 캐시)
+python officecli.py run --file "C:\Docs\보안규격서.pdf" --search "암호화 모듈" --top 3
+```
 
-        self.doc_names = list(self.docs.keys())
-        self.active_doc_idx = max(0, len(self.doc_names) - 1)
-        self.active_page_idx = 0
-        self.tab_rects: List[Tuple[int, int, int, int]] = []
-        self.header_height = 46
+### 3) 한글(HWP) 파일에서 읽은 표 데이터를 활성 PPT 슬라이드에 바로 주입
+```bash
+# 한글 파일에서 "소요 예산" 표를 검색하여 현재 열린 PPT 슬라이드에 출처 태그를 달아 삽입
+python officecli.py run --file "기안서.hwp" --search "소요 예산" \
+  --to ppt --active --prefix "[한글 기안서 발췌] "
+```
 
-    def _mouse_callback(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN and y <= self.header_height:
-            for idx, (x1, y1, x2, y2) in enumerate(self.tab_rects):
-                if x1 <= x <= x2 and y1 <= y <= y2:
-                    if self.active_doc_idx != idx:
-                        self.active_doc_idx = idx
-                        self.active_page_idx = 0
-                    break
+### 4) 열려 있는 엑셀 활성 시트에 수식 및 데이터 기입 (서식 상속)
+```bash
+# 열려있는 엑셀 창의 "소계" 행 아래에 새 데이터 행 추가 (윗행 서식 자동 복사)
+python officecli.py write --to excel --active --anchor "소계" --pos after --text "신규사업비"
+```
 
-    def _render_frame(self) -> np.ndarray:
-        if not self.doc_names:
-            blank = np.full((350, 700, 3), 240, dtype=np.uint8)
-            cv2.putText(blank, "No documents in workspace", (120, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (50, 50, 50), 2)
-            return blank
+### 5) 작업 전 자동 백업 및 즉각적인 원상 복구 (롤백)
+```bash
+# 1. 엑셀 활성 시트를 실수로 비우고 새 내용을 적었을 때
+python officecli.py write --to excel --active --clear --text "실수 데이터"
 
-        current_doc_name = self.doc_names[self.active_doc_idx]
-        current_pages = self.docs[current_doc_name]
-        page_idx = min(self.active_page_idx, len(current_pages) - 1)
-        content_img = current_pages[page_idx].copy()
+# 2. 1초 만에 작업 직전 원래 시트 상태로 완벽 복원!
+python officecli.py restore --target excel
+```
 
-        h, w = content_img.shape[:2]
-        available_h = self.max_height - self.header_height
-        if h > available_h:
-            scale = available_h / h
-            target_w = max(int(w * scale), 400)
-            content_img = cv2.resize(content_img, (target_w, available_h), interpolation=cv2.INTER_AREA)
+### 6) 3대 오피스 프로그램(Word, Excel, PPT)에 차트/그래프 이미지 삽입
+```bash
+# 워드 활성 문서에 차트 삽입
+python officecli.py write --to word --active --image "chart.png"
 
-        canvas_w = max(content_img.shape[1], 850)
-        canvas_h = content_img.shape[0] + self.header_height
-        canvas = np.full((canvas_h, canvas_w, 3), 245, dtype=np.uint8)
+# 파워포인트 활성 슬라이드에 차트 삽입
+python officecli.py write --to ppt --active --image "chart.png"
 
-        x_offset = (canvas_w - content_img.shape[1]) // 2
-        canvas[self.header_height : self.header_height + content_img.shape[0], x_offset : x_offset + content_img.shape[1]] = content_img
+# 엑셀 활성 시트에 차트 삽입
+python officecli.py write --to excel --active --image "chart.png"
+```
 
-        # Top Tab Bar
-        cv2.rectangle(canvas, (0, 0), (canvas_w, self.header_height), (35, 30, 25), -1)
-        self.tab_rects.clear()
-        tab_x = 10
+### 7) 활성 문서 완전 초기화 (새 작업 준비)
+```bash
+# PPT의 모든 슬라이드를 지우고 1번 빈 슬라이드로 초기화 (자동 백업 동시 수행)
+python officecli.py write --to ppt --active --clear
 
-        for idx, name in enumerate(self.doc_names):
-            label = f"[{idx + 1}] {name}"
-            (text_w, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-            tab_w = text_w + 24
-            tab_x2 = tab_x + tab_w
-            is_active = (idx == self.active_doc_idx)
+# 워드 활성 문서 본문 완전 삭제
+python officecli.py write --to word --active --clear
+```
 
-            if is_active:
-                cv2.rectangle(canvas, (tab_x, 6), (tab_x2, self.header_height - 6), (180, 105, 30), -1)
-                cv2.putText(canvas, label, (tab_x + 12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
-            else:
-                cv2.rectangle(canvas, (tab_x, 6), (tab_x2, self.header_height - 6), (55, 50, 45), -1)
-                cv2.putText(canvas, label, (tab_x + 12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (180, 180, 180), 1)
-
-            self.tab_rects.append((tab_x, 6, tab_x2, self.header_height - 6))
-            tab_x = tab_x2 + 8
-
-        page_info = f"Page {self.active_page_idx + 1}/{len(current_pages)}"
-        hint = f"{page_info} | Tab/1-9: Select Doc | Arrows: Page | ESC: Exit"
-        (hint_w, _), _ = cv2.getTextSize(hint, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-        hint_x = max(tab_x + 10, canvas_w - hint_w - 15)
-        cv2.putText(canvas, hint, (hint_x, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (160, 160, 160), 1)
-
-        return canvas
-
-    def show(self, wait_ms: int = 0) -> int:
-        cv2.namedWindow(self.window_title, cv2.WINDOW_AUTOSIZE)
-        cv2.setMouseCallback(self.window_title, self._mouse_callback)
-        last_reload_check = time.time()
-
-        while True:
-            now = time.time()
-            if now - last_reload_check > 0.5:
-                last_reload_check = now
-
-                # Dynamic detection of new documents in watch_dir
-                if self.watch_dir and self.watch_dir.exists():
-                    for f in sorted(self.watch_dir.iterdir()):
-                        if f.is_file() and f.suffix.lower() in [".xlsx", ".docx", ".pptx"] and not f.name.startswith("~"):
-                            if f.name not in self.file_sources:
-                                self.file_sources[f.name] = f
-                                self.file_mtimes[f.name] = f.stat().st_mtime
-                                try:
-                                    self.docs[f.name] = render_document(f, dpi=self.dpi)
-                                    self.doc_names.append(f.name)
-                                    self.active_doc_idx = len(self.doc_names) - 1
-                                    self.active_page_idx = 0
-                                except Exception:
-                                    pass
-
-                # Check for updates to existing documents
-                for name, path in list(self.file_sources.items()):
-                    if path.exists():
-                        try:
-                            mtime = path.stat().st_mtime
-                            if mtime > self.file_mtimes.get(name, 0.0):
-                                self.file_mtimes[name] = mtime
-                                self.docs[name] = render_document(path, dpi=self.dpi)
-                                if self.active_page_idx >= len(self.docs[name]):
-                                    self.active_page_idx = max(0, len(self.docs[name]) - 1)
-                        except Exception:
-                            pass
-
-            frame = self._render_frame()
-            cv2.imshow(self.window_title, frame)
-
-            key = cv2.waitKey(wait_ms if wait_ms > 0 else 30)
-            if wait_ms > 0 or key in [27, ord('q'), ord('Q')]:
-                break
-
-            if ord('1') <= key <= ord('9'):
-                target_idx = key - ord('1')
-                if target_idx < len(self.doc_names):
-                    self.active_doc_idx = target_idx
-                    self.active_page_idx = 0
-            elif key == 9:  # Tab
-                if self.doc_names:
-                    self.active_doc_idx = (self.active_doc_idx + 1) % len(self.doc_names)
-                    self.active_page_idx = 0
-            elif key in [81, 2424832, ord('p'), ord('P')]:  # Left Arrow
-                if self.doc_names:
-                    total = len(self.docs[self.doc_names[self.active_doc_idx]])
-                    if total > 1:
-                        self.active_page_idx = (self.active_page_idx - 1) % total
-            elif key in [83, 2555904, ord('n'), ord('N'), 32]:  # Right Arrow / Space
-                if self.doc_names:
-                    total = len(self.docs[self.doc_names[self.active_doc_idx]])
-                    if total > 1:
-                        self.active_page_idx = (self.active_page_idx + 1) % total
-
-        cv2.destroyWindow(self.window_title)
-        return key
-
-def show_preview(target: Union[Dict, List, str, Path], window_title: str = "Office Visual Viewport", max_height: int = MAX_VIEWPORT_HEIGHT, wait_ms: int = 0, dpi: int = 130) -> int:
-    watch_dir = None
-    if isinstance(target, dict):
-        docs = target
-    elif isinstance(target, (str, Path)) and Path(target).is_dir():
-        docs = {}
-        watch_dir = Path(target)
-    elif isinstance(target, list) and target and isinstance(target[0], (str, Path)):
-        docs = {Path(p).name: p for p in target}
-        watch_dir = Path(target[0]).parent
-    elif isinstance(target, (str, Path)):
-        docs = {Path(target).name: target}
-        watch_dir = Path(target).parent
-    else:
-        docs = {"Active Document": target}
-
-    viewer = MultiDocViewer(docs, window_title=window_title, max_height=max_height, dpi=dpi, watch_dir=watch_dir)
-    return viewer.show(wait_ms=wait_ms)
+### 8) 파이프라인(stdin)을 통한 복합 문서 변환 및 전송
+```bash
+# 엑셀 시트의 데이터를 읽어서 워드 활성 문서로 직접 파이프 전송
+python officecli.py read --file "원천데이터.xlsx" | python officecli.py write --to word --active
 ```
 
 ---
 
-### 4.6 `src/office_visual/runner.py`
-에이전트가 작성한 순수 파이썬 코드를 실행하고, 레이아웃 정량 진단 및 렌더링을 원스톱으로 처리하는 러너입니다.
-```python
-import sys, io, time, traceback
-from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Union
-import numpy as np
+## 6. 자주 묻는 질문 및 트러블슈팅 (FAQ & Troubleshooting)
 
-from .inspector import inspect_document, InspectionReport
-from .renderer import render_document
+### Q1. 한글(HWP) 문서를 수정하거나 한글에 글을 쓸 수는 없나요?
+- **답변**: 한컴오피스 한글은 Windows 보안 모듈 팝업 및 화면 포커스 간섭 이슈가 있어, 안정성을 위해 **PDF와 동일하게 '초고속 무간섭 백그라운드 읽기 전용'으로 정책이 고정**되어 있습니다.
+- 한글 문서의 내용을 읽어서 Word, Excel, PowerPoint 등으로 변환하거나 전송하는 방향으로 활용하시기를 권장합니다.
 
-@dataclass
-class ExecutionResult:
-    success: bool
-    code: str
-    stdout: str
-    stderr: str
-    document_paths: List[Path] = field(default_factory=list)
-    images: List[np.ndarray] = field(default_factory=list)
-    inspection: Optional[InspectionReport] = None
-    execution_time_ms: float = 0.0
-    render_time_ms: float = 0.0
+### Q2. 활성 창(`--active`)을 제어하려는데 프로그램을 찾지 못한다고 나옵니다.
+- **원인**: 해당 오피스 프로그램(Word, Excel, PowerPoint)이 실행되어 있지 않거나, 문서가 열려 있지 않은 상태입니다.
+- **해결**: Word, Excel, PowerPoint 프로그램을 실행하고 빈 문서라도 하나 열어둔 상태에서 실행하세요.
 
-    @property
-    def has_visual_issues(self) -> bool:
-        return self.inspection is not None and not self.inspection.is_valid
+### Q3. 복원(`restore`)할 때 어떤 대상명을 지정해야 하나요?
+- 활성 창이었던 경우 앱 별칭(`word`, `excel`, `ppt`)을 지정합니다.
+- 오프라인 파일이었던 경우 전체 경로(`C:\test\sample.docx`), 상대 경로(`test/sample.docx`), 또는 순수 파일명(`sample.docx`) 중 편한 형식을 지정하면 가장 최근 백업을 찾아 복원합니다.
+- 특정 시점으로 가고 싶다면 `python officecli.py backup list`에서 ID를 확인한 뒤 `--snapshot <ID>`를 넘기면 됩니다.
 
-    def feedback_message(self) -> str:
-        if not self.success:
-            return f"[Execution Error]\n{self.stderr}"
-        msg = [f"[Execution Success] Generated {len(self.document_paths)} document(s)."]
-        if self.inspection:
-            msg.append(f"\n{self.inspection.summary()}")
-        return "\n".join(msg)
-
-class OfficeCodeRunner:
-    def __init__(self, workspace_dir: Optional[Union[str, Path]] = None):
-        self.workspace_dir = Path(workspace_dir or Path.cwd()).resolve()
-
-    def run_code(
-        self,
-        code_string: str,
-        expected_output_files: Optional[List[Union[str, Path]]] = None,
-        expected_pages: Optional[int] = None,
-        auto_inspect: bool = True,
-        auto_render: bool = True,
-        dpi: int = 120
-    ) -> ExecutionResult:
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
-
-        exec_globals: Dict[str, Any] = {
-            "__name__": "__main__",
-            "Path": Path,
-            "workspace_dir": self.workspace_dir,
-        }
-        for mod in ["openpyxl", "docx", "pptx", "pandas", "np", "numpy", "matplotlib", "plt"]:
-            try:
-                exec_globals[mod] = __import__(mod)
-            except ImportError:
-                pass
-
-        t0 = time.perf_counter()
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        success = True
-
-        try:
-            sys.stdout = stdout_capture
-            sys.stderr = stderr_capture
-            exec(code_string, exec_globals)
-        except Exception:
-            success = False
-            stderr_capture.write(traceback.format_exc())
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-
-        exec_time = (time.perf_counter() - t0) * 1000
-        found_docs: List[Path] = []
-        if expected_output_files:
-            for p in expected_output_files:
-                resolved = Path(p) if Path(p).is_absolute() else (self.workspace_dir / p).resolve()
-                if resolved.exists():
-                    found_docs.append(resolved)
-
-        inspection_report = None
-        images: List[np.ndarray] = []
-        render_time = 0.0
-
-        if success and found_docs:
-            t_render_start = time.perf_counter()
-            primary_doc = found_docs[0]
-            if auto_inspect:
-                try:
-                    inspection_report = inspect_document(primary_doc, expected_pages=expected_pages)
-                except Exception as e:
-                    stderr_capture.write(f"\n[Inspector Warning] {e}")
-
-            if auto_render:
-                try:
-                    images = render_document(primary_doc, dpi=dpi)
-                except Exception as e:
-                    stderr_capture.write(f"\n[Renderer Warning] {e}")
-
-            render_time = (time.perf_counter() - t_render_start) * 1000
-
-        return ExecutionResult(
-            success=success,
-            code=code_string,
-            stdout=stdout_capture.getvalue(),
-            stderr=stderr_capture.getvalue(),
-            document_paths=found_docs,
-            images=images,
-            inspection=inspection_report,
-            execution_time_ms=exec_time,
-            render_time_ms=render_time
-        )
-```
-
----
-
-### 4.7 `src/office_visual/cli.py`
-```python
-import sys, argparse
-from pathlib import Path
-
-from .config import find_soffice_binary
-from .renderer import render_document
-from .viewport import show_preview
-
-def main():
-    parser = argparse.ArgumentParser(prog="office-visual", description="Office Visual Agent CLI Viewport")
-    subparsers = parser.add_subparsers(dest="command")
-
-    subparsers.add_parser("check", help="Verify LibreOffice and runtime environment")
-
-    p_live = subparsers.add_parser("live", help="Live Workspace Watcher (Real-time auto-reload & tab additions)")
-    p_live.add_argument("directory", nargs="?", default="samples/workspace", help="Directory to watch")
-    p_live.add_argument("--dpi", type=int, default=130)
-
-    p_preview = subparsers.add_parser("preview", help="Preview documents")
-    p_preview.add_argument("files", nargs="+", help="Files to preview")
-    p_preview.add_argument("--dpi", type=int, default=130)
-    p_preview.add_argument("--wait", type=int, default=0)
-
-    args = parser.parse_args()
-
-    if args.command == "check":
-        soffice = find_soffice_binary()
-        print(f"[OK] LibreOffice Binary: {soffice}")
-        print("[OK] Environment is ready for Office Visual Agent.")
-
-    elif args.command == "live":
-        watch_path = Path(args.directory).resolve()
-        watch_path.mkdir(parents=True, exist_ok=True)
-        print(f"Starting Live Workspace Viewport watching: {watch_path}")
-        show_preview(watch_path, window_title="Office Visual Live Workspace", dpi=args.dpi)
-
-    elif args.command == "preview":
-        file_paths = [Path(f) for f in args.files]
-        if len(file_paths) == 1:
-            show_preview(file_paths[0], wait_ms=args.wait, dpi=args.dpi)
-        else:
-            doc_dict = {f.name: f for f in file_paths}
-            show_preview(doc_dict, wait_ms=args.wait, dpi=args.dpi)
-    else:
-        parser.print_help()
-
-if __name__ == "__main__":
-    main()
-```
-
----
-
-## 5. 폐쇄망 설치 및 가동 절차 (Deployment Steps)
-
-폐쇄망 PC에 소스 파일과 반입 자원을 배치한 후 실행하는 절차입니다.
-
-### 1단계: 오프라인 Wheel 패키지 설치
-```cmd
-cd C:\Users\JooJoo\Desktop\AI\libreoffice_viewer
-pip install --no-index --find-links=wheels openpyxl python-docx python-pptx pandas opencv-python pymupdf matplotlib
-```
-
-### 2단계: 로컬 패키지 등록 (Editable Install)
-```cmd
-pip install -e . --no-deps
-```
-
-### 3단계: 환경 검증
-```cmd
-office-visual check
-```
-출력에 `[OK] LibreOffice Binary: ...\soffice.com`이 표시되면 완벽하게 준비된 것입니다.
-
-### 4단계: 실시간 라이브 뷰어 실행
-```cmd
-office-visual live
-```
-뷰어가 `samples\workspace\` 폴더를 감시하기 시작하며 화면에 상주합니다.
-
----
-
-## 6. 사내 LLM (Gemma 4 26B) 프롬프트 가이드
-
-사내 LLM에게 역할을 부여할 때는 두꺼운 래퍼나 가상 도구를 주지 말고, 아래 시스템 프롬프트를 주어 **직접 파이썬 코드를 작성하게 한 후 `OfficeCodeRunner`로 실행**합니다.
-
-### 6.1 LLM 시스템 프롬프트 (System Prompt)
-```text
-당신은 'Office Visual Agent'입니다. 
-당신은 MS Office Win32 COM을 절대 사용하지 않으며, 100% 인메모리 파이썬 라이브러리(openpyxl, python-docx, python-pptx, pandas, matplotlib)만을 사용하여 오피스 문서를 생성/편집합니다.
-
-[규칙]
-1. 작업 결과 파일은 반드시 'samples/workspace/' 폴더에 저장하십시오. (뷰어가 실시간으로 감지합니다.)
-2. 엑셀을 생성할 때는 셀 너비 부족으로 '###' 마스킹이 발생하지 않도록 넉넉한 열 너비(column_dimensions['A'].width = 15~25)를 지정하십시오.
-3. 엑셀 대시보드는 ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE 및 fitToWidth = 1 설정을 주어 1페이지에 깔끔하게 인쇄되도록 하십시오.
-4. 오피스 간 데이터 교환(Excel -> Word/PPT)은 pandas DataFrame과 matplotlib 이미지 버퍼(io.BytesIO)를 활용하십시오.
-```
-
-### 6.2 자율 자가 교정(Self-Healing) 프롬프트 템플릿
-러너 실행 후 `result.has_visual_issues`가 `True`일 경우 LLM에게 보낼 피드백:
-```text
-[Visual Inspector Feedback]
-당신이 생성한 문서에서 다음과 같은 시각적 서식 결함이 감지되었습니다:
-{result.feedback_message()}
-
-위의 Recommendation(권장 사항)을 반영하여 기존 코드를 수정한 파이썬 코드를 다시 작성하십시오.
-```
-
----
-
-## 7. 주요 트러블슈팅
-
-1. **`ModuleNotFoundError: No module named 'cv2'` / `pymupdf`**:
-   - 오프라인 wheel 설치 시 C++ 런타임 종속성이 있는 경우, Windows용 `VC_redist.x64.exe`(Visual C++ Redistributable)를 폐쇄망에 반입하여 설치해야 합니다.
-2. **`LibreOffice conversion failed`**:
-   - `LibreOfficePortable/App/libreoffice/program/soffice.com` 경로가 올바른지 확인하십시오. (`office-visual check`로 자동 진단 가능)
-3. **콘솔 한글 인코딩 깨짐 (Windows cmd cp949)**:
-   - 파이썬 출력문에서 특수 유니코드 기호(`•` 등) 대신 표준 ASCII 기호(`-`, `*`)를 사용하십시오.
+### Q4. 캐시를 강제로 비우고 처음부터 다시 파싱하고 싶습니다.
+- 프로젝트 디렉토리에 있는 `.officecli_cache/` 폴더를 삭제하면 다음 실행 시 원본 문서를 처음부터 새로 파싱합니다.
+- 마찬가지로 백업 파일 용량을 정리하고 싶을 때는 `.officecli_backup/` 폴더 내의 오래된 스냅샷을 삭제하시면 됩니다.
