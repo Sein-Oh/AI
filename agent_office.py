@@ -91,12 +91,15 @@ def build_system_prompt() -> str:
 1. 멀티스텝 작업 계획(Planning):
    - 복합적인 요구사항(예: "시트 내용 지우고 표 넣은 뒤 합계 행 서식 넣고 차트 그려줘")을 받으면,
      어떤 순서로 도구를 호출할지 명확한 단계(Plan)를 먼저 생각하고 차례대로 도구를 호출하십시오.
-2. 자율 반성 및 자가 복구 (Self-Healing / Reflection):
-   - 도구 실행 결과에서 에러(status: error)나 시트/텍스트 불일치(status: no_match)가 발생하면, 즉시 포기하지 마십시오.
-   - 반환된 에러 메시지를 꼼꼼히 분석하여(예: 시트명이 다름, 셀 범위 표현 오류 등), 인자를 올바르게 교정한 뒤 재시도하여 작업을 완수하십시오.
-3. 파일 데이터 원자성 보장:
+2. 파이썬 코드 실행기 (Code Interpreter) 활용:
+   - 복잡한 수치 계산, 날짜/성장률 연산, 통계 지표 산출, 파일 파싱(CSV/JSON), 피벗/집계 작업은 모델이 텍스트로 추론하지 말고, 반드시 `execute_python_code`를 호출하여 Python 코드로 정확하게 연산하십시오.
+   - 계산된 최종 결과는 표준 출력(stdout)으로 확인한 뒤 `excel_write_table` 또는 `office_doc_write`로 넘기십시오.
+3. 자율 반성 및 자가 복구 (Self-Healing / Reflection):
+   - 도구 실행 결과에서 에러(status: error), 파이썬 예외(stderr), 시트/텍스트 불일치(status: no_match)가 발생하면 즉시 포기하지 마십시오.
+   - 반환된 에러 메시지를 꼼꼼히 분석하여(예: 코드 버그, 시트명 불일치, 범위 오류 등), 인자나 코드를 올바르게 교정한 뒤 재시도하여 작업을 완수하십시오.
+4. 파일 데이터 원자성 보장:
    - 표 데이터 주입과 다중 셀 서식 매핑은 이미 백엔드 도구가 `C:\\cli_data\\data\\` 내에서 UTF-8 인코딩을 완벽히 보장하여 처리하므로, 모델은 오직 데이터 구조(2차원 배열/마크다운 표)와 서식 규칙(딕셔너리)에만 집중하십시오.
-4. 신속한 완료 보고:
+5. 신속한 완료 보고:
    - 모든 화면 반영이 정상적으로 완료되었으면, 어떤 작업이 수행되었는지 사용자에게 전문적이고 친절하게 요약 보고하십시오.
 
 [참고: CLI 엔진 매뉴얼 (SKILL.md)]
@@ -276,10 +279,74 @@ def run_raw_cli_command(cli_args: str) -> Dict[str, Any]:
     return _execute_cli_office(tokens)
 
 
+def execute_python_code(code: str) -> Dict[str, Any]:
+    """
+    Python 코드를 격리된 환경에서 직접 실행하여 데이터 분석, 복잡한 수치 계산,
+    통계 집계, 파일 파싱(CSV/JSON), 피벗 가공 등을 수행하고 결과를 반환합니다.
+    (pandas, numpy, math, datetime, json, re 등 표준 데이터 과학 라이브러리 사용 가능)
+    """
+    scratch_file = DATA_DIR / "scratchpad.py"
+    try:
+        scratch_file.write_text(code, encoding="utf-8")
+    except Exception as e:
+        return {"status": "error", "message": f"스크립트 파일 저장 실패: {e}"}
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(scratch_file)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            cwd=str(SCRIPT_DIR)
+        )
+        stdout = proc.stdout.strip()
+        stderr = proc.stderr.strip()
+
+        if proc.returncode != 0:
+            return {
+                "status": "error",
+                "returncode": proc.returncode,
+                "stderr": stderr,
+                "stdout": stdout,
+                "message": "Python 실행 중 에러가 발생했습니다. stderr를 분석하여 코드를 수정한 뒤 다시 시도하십시오."
+            }
+
+        return {
+            "status": "ok",
+            "returncode": 0,
+            "stdout": stdout,
+            "message": "Python 코드가 성공적으로 실행되었습니다."
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": "Python 코드 실행 시간 초과 (30초 제한 경과)"}
+    except Exception as e:
+        return {"status": "error", "message": f"Python 실행 중 예외 발생: {str(e)}"}
+
+
 # ==============================================================================
 # 4. Nemotron 550B용 OpenAI Function Calling 도구 스키마
 # ==============================================================================
 OFFICE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_python_code",
+            "description": "Python 코드를 격리된 환경에서 직접 실행하여 데이터 분석, 복잡한 통계/수치 계산, 피벗 가공, 파일 파싱(CSV/JSON) 등을 수행합니다. pandas, numpy, math, datetime 등을 활용할 수 있습니다. 계산 결과를 print()로 출력하여 확인한 뒤 엑셀/워드 도구로 주입하십시오.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "실행할 완전한 Python 코드 문자열 (표준 라이브러리 및 pandas, numpy 포함)"
+                    }
+                },
+                "required": ["code"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
@@ -411,6 +478,7 @@ OFFICE_TOOLS = [
 ]
 
 TOOL_FUNCTION_MAP = {
+    "execute_python_code": execute_python_code,
     "excel_inspect_or_list": excel_inspect_or_list,
     "excel_write_table": excel_write_table,
     "excel_format_cells": excel_format_cells,
