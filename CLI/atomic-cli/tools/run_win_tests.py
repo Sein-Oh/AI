@@ -21,6 +21,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -49,6 +50,8 @@ class Ctx:
         self.dir = os.path.abspath(args.dir)
         self.results = []
         self.auto = args.auto
+        self.untitled_before = []
+        self.start_time = time.time()           # 이 시각 뒤에 생긴 Office 프로세스만 정리 대상
 
     def path(self, name):
         return os.path.join(self.dir, name)
@@ -462,20 +465,8 @@ def test_A(ctx):
         text = json.dumps(data, ensure_ascii=False) if data else raw
         ok = "A.xlsx" in text and "C_second_instance.xlsx" in text
         record(ctx, "A5", "다중 Excel 프로세스 목록", ok, f"EXCEL.EXE 프로세스 {process_count('EXCEL.EXE')}개", data, code, raw, err)
-        try:
-            sys.path.insert(0, ROOT)
-            import _office
-            for app in _office.find_apps("excel"):
-                try:
-                    names = [app.Workbooks(i).Name for i in range(1, app.Workbooks.Count + 1)]
-                    if "C_second_instance.xlsx" in names and "A.xlsx" not in names:
-                        app.Workbooks("C_second_instance.xlsx").Close(SaveChanges=False)
-                        if app.Workbooks.Count == 0:
-                            app.Quit()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        close_test_documents(ctx, only_name="C_second_instance.xlsx")     # 두 번째 Excel도 문서가 없어지면 종료
+        wait_for(lambda: process_count("EXCEL.EXE") <= before, timeout=15)
         ask(ctx, "두 번째 Excel 창(C_second_instance.xlsx)이 닫혔나요? 남아 있으면 저장하지 않고 직접 닫은 뒤 y를 누르세요")
 
     run_test(ctx, "A1", "닫힌 엑셀 읽기", a1)
@@ -1404,6 +1395,146 @@ def test_I(ctx):
 
 
 # ---------------------------------------------------------------------------
+# J. 배치 점검 (info --detail): 도구가 만든 결과가 슬라이드/쪽 밖으로 나가거나 겹치거나 데이터를 가리지 않는지
+# ---------------------------------------------------------------------------
+def test_J(ctx):
+    def check(tid, title, module):
+        d, c, r, e = run_cli(module, "info", "--detail")
+        if module == "ppt.py":
+            warns = [f"슬라이드 {s['no']}: {w}" for s in (d or {}).get("slides", []) for w in s.get("warnings", [])]
+        elif module == "excel.py":
+            warns = [f"{s['name']}: {w}" for s in (d or {}).get("sheets", []) for w in s.get("warnings", [])]
+        else:
+            warns = list((d or {}).get("warnings", []))
+        ok = (d or {}).get("status") == "ok" and (d or {}).get("layout_warnings") == len(warns) and not warns
+        record(ctx, tid, title, ok, f"경고 {len(warns)}건" + (": " + "; ".join(warns[:8]) if warns else ""), d, c, r, e)
+
+    run_test(ctx, "J1", "PPT 배치", lambda: check("J1", "PPT 전체 슬라이드 배치 경고 없음 (info --detail)", "ppt.py"))
+    run_test(ctx, "J2", "엑셀 차트 배치", lambda: check("J2", "엑셀 차트가 데이터를 가리지 않음 (info --detail)", "excel.py"))
+    run_test(ctx, "J3", "워드 그림 크기", lambda: check("J3", "워드 그림이 쪽 너비 안 (info --detail)", "word.py"))
+
+
+# ---------------------------------------------------------------------------
+# 마무리: 확인용 그림 저장, 테스트 문서 닫기
+# ---------------------------------------------------------------------------
+def save_shots(ctx):
+    """눈으로 볼 결과를 그림으로 남깁니다: A.pptx 모든 슬라이드, A.xlsx 모든 차트."""
+    folder = ctx.path("shots")
+    shutil.rmtree(folder, ignore_errors=True)
+    os.makedirs(folder, exist_ok=True)
+    saved = 0
+    try:
+        prs = pp_prs("A.pptx")
+        for i in range(1, prs.Slides.Count + 1):
+            com_retry(lambda: prs.Slides(i).Export(os.path.join(folder, f"slide_{i:02d}.png"), "PNG", 960, 720))
+            saved += 1
+    except Exception as e:
+        log(f"[WARN] 슬라이드 그림 저장 실패: {describe_com_error(e)}")
+    try:
+        wb = xl_wb("A.xlsx")
+        for ws in wb.Worksheets:
+            for k in range(1, ws.ChartObjects().Count + 1):
+                co = ws.ChartObjects(k)
+                safe = "".join(ch if ch.isalnum() else "_" for ch in f"{ws.Name}_{co.Name}")
+                com_retry(lambda: co.Chart.Export(os.path.join(folder, f"chart_{safe}.png")))
+                saved += 1
+    except Exception as e:
+        log(f"[WARN] 차트 그림 저장 실패: {describe_com_error(e)}")
+    return folder, saved
+
+
+# 별도 프로세스에서 실행합니다: 러너가 COM 참조를 쥐고 있으면 Quit해도 PowerPoint/Excel이 남습니다.
+CLEANUP_SCRIPT = r"""
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import _office
+test_dir = os.path.normcase(sys.argv[2])
+keep_untitled = set(json.loads(sys.argv[3]))          # 실행 전부터 있던 제목 없는 문서는 사용자 것
+only_name = sys.argv[4] if len(sys.argv) > 4 else ""   # 지정하면 그 이름의 문서만 (빈 문자열: 테스트 문서 전체)
+closed = []
+for kind, coll in (("excel", "Workbooks"), ("word", "Documents"), ("ppt", "Presentations")):
+    for app in _office.find_apps(kind):
+        try:
+            docs = getattr(app, coll)
+            for i in range(docs.Count, 0, -1):
+                d = docs(i)
+                name, path = str(d.Name), os.path.normcase(str(d.Path or ""))
+                ours = name == only_name if only_name else (path == test_dir or (not path and name not in keep_untitled))
+                if ours:
+                    closed.append(name)
+                    d.Close(False) if kind == "excel" else (d.Close(0) if kind == "word" else d.Close())
+            if docs.Count == 0:
+                app.Quit()
+        except Exception as e:
+            sys.stderr.write(f"[WARN] {kind}: {e}\n")
+app = docs = d = None                                   # COM 참조를 놓아야 Quit이 실제로 반영됨
+# Quit을 받고도 남는 인스턴스(예: excel.exe /x로 띄운 두 번째 Excel)는 창 닫기(WM_CLOSE)로 끝냅니다.
+# 대상: 이 실행이 시작된 뒤 생긴 프로세스이면서, 창이 숨겨져 있거나 문서가 없는 Excel/PowerPoint만.
+import time, datetime, win32api, win32con, win32gui, win32process
+run_start = datetime.datetime.fromtimestamp(float(sys.argv[5]), datetime.timezone.utc) if len(sys.argv) > 5 else None
+def _started(pid):
+    h = win32api.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+    try:
+        return win32process.GetProcessTimes(h)["CreationTime"]
+    finally:
+        win32api.CloseHandle(h)
+def _leftover_windows():
+    found = []
+    def cb(hwnd, _):
+        cls = win32gui.GetClassName(hwnd)
+        if cls in _office.FRAME_CLASS["excel"] + _office.FRAME_CLASS["ppt"]:       # PowerPoint 2007은 PP12FrameClass
+            title = win32gui.GetWindowText(hwnd)
+            empty = title in ("Microsoft Excel", "Microsoft PowerPoint", "")
+            if not win32gui.IsWindowVisible(hwnd) or empty:
+                found.append(hwnd)
+        return True
+    win32gui.EnumWindows(cb, None)
+    return found
+if run_start is not None:
+    time.sleep(2)
+    for hwnd in _leftover_windows():
+        try:
+            pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+            if _started(pid) >= run_start:
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                closed.append(f"(빈 {win32gui.GetClassName(hwnd)} pid {pid})")
+        except Exception as e:
+            sys.stderr.write(f"[WARN] window close: {e}\n")
+print(json.dumps(closed, ensure_ascii=False))
+"""
+
+
+def untitled_documents():
+    """지금 열려 있는 제목 없는(저장 안 한) 문서 이름들."""
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
+    import _office
+    names = []
+    for kind, coll in (("excel", "Workbooks"), ("word", "Documents"), ("ppt", "Presentations")):
+        for app in _office.find_apps(kind):
+            try:
+                docs = getattr(app, coll)
+                names += [str(docs(i).Name) for i in range(1, docs.Count + 1) if not docs(i).Path]
+            except Exception:
+                pass
+    return names
+
+
+def close_test_documents(ctx, only_name=""):
+    """테스트 폴더 문서와 실행 중에 생긴 제목 없는 문서를 저장하지 않고 닫고, 문서가 남지 않은 앱은 끝냅니다."""
+    args = [PY, "-c", CLEANUP_SCRIPT, ROOT, ctx.dir, json.dumps(ctx.untitled_before, ensure_ascii=False),
+            only_name, str(ctx.start_time)]
+    proc = subprocess.run(args, capture_output=True, timeout=120, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    err = proc.stderr.decode("utf-8", errors="replace").strip()
+    if err:
+        log(err[-500:])
+    try:
+        return json.loads(proc.stdout.decode("utf-8").strip().splitlines()[-1])
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 def write_report(ctx):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = ctx.path(f"report_{stamp}.txt")
@@ -1435,7 +1566,7 @@ def write_report(ctx):
 
 
 GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G),
-          ("H", test_H), ("I", test_I)]
+          ("H", test_H), ("I", test_I), ("J", test_J)]
 
 
 def main():
@@ -1445,6 +1576,8 @@ def main():
     parser.add_argument("--self-email", help="G3 실제 발송 테스트에 쓸 본인 메일 주소 (생략 시 G3 건너뜀)")
     parser.add_argument("--skip-outlook", action="store_true", help="G 그룹(Outlook) 건너뜀")
     parser.add_argument("--auto", action="store_true", help="y/n 질문 없이 자동 판정 항목만 진행")
+    parser.add_argument("--keep-open", action="store_true",
+                        help="끝난 뒤 테스트 문서를 열어 둠 (기본: 테스트 폴더 문서만 저장하지 않고 닫음)")
     args = parser.parse_args()
 
     pythoncom.CoInitialize()
@@ -1466,6 +1599,7 @@ def main():
         if input("시작할까요? (y/n): ").strip().lower() != "y":
             return
 
+    ctx.untitled_before = untitled_documents()   # 실행 전부터 있던 제목 없는 문서는 닫지 않음
     setup_files(ctx)
     open_user_windows(ctx)
 
@@ -1479,6 +1613,7 @@ def main():
                                     "detail": str(e), "trace": traceback.format_exc()[-800:]})
                 log(f"[ERROR] 그룹 {g}: {e}")
 
+    shots, n_shots = save_shots(ctx)
     path, counts = write_report(ctx)
     log("\n" + "=" * 70)
     log(" 결과 요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
@@ -1486,7 +1621,15 @@ def main():
         if r["status"] not in ("PASS",):
             log(f"   [{r['status']}] {r['id']} {r['title']} {r.get('detail', '')}")
     log(f" 보고서: {path}")
-    log(" 테스트용 A 파일들은 열린 채로 남아 있습니다. 저장하지 않고 닫아도 됩니다.")
+    log(f" 확인용 그림 {n_shots}개: {shots} (슬라이드, 차트)")
+    if args.keep_open:
+        log(" 테스트용 A 파일들은 열린 채로 남아 있습니다. 저장하지 않고 닫아도 됩니다.")
+    else:
+        import gc
+        gc.collect()
+        pythoncom.CoUninitialize()            # 러너가 쥔 COM 참조를 놓아야 Quit한 PowerPoint가 실제로 끝남
+        closed = close_test_documents(ctx)
+        log(f" 테스트 문서 {len(closed)}개를 저장하지 않고 닫았습니다: {', '.join(closed)}")
     log("=" * 70)
 
 
