@@ -851,6 +851,56 @@ def parse_inline_input(input_str: str) -> pd.DataFrame:
     return pd.DataFrame([row_dict])
 
 
+LOW_CONFIDENCE_THRESHOLD = 0.6
+
+
+def _predict_classification(
+    pipe: Any,
+    X_frame: pd.DataFrame,
+    target_name: str,
+    df_result: pd.DataFrame,
+    is_inline: bool,
+    low_conf_warnings: List[str],
+) -> Dict[str, Any]:
+    """
+    Adds pred_<t> (label), proba_<t>_<class> (per-class probability) and conf_<t>
+    (max probability) columns, and returns the JSON summary for a classification target.
+    """
+    labels = pipe.predict(X_frame.values).astype(str)
+    classes = [str(c) for c in pipe.classes_]
+    proba = pipe.predict_proba(X_frame.values)
+    conf = proba.max(axis=1)
+
+    df_result[f"pred_{target_name}"] = labels
+    for i, c in enumerate(classes):
+        df_result[f"proba_{target_name}_{c}"] = np.round(proba[:, i], 4)
+    df_result[f"conf_{target_name}"] = np.round(conf, 4)
+
+    n_low = int((conf < LOW_CONFIDENCE_THRESHOLD).sum())
+    if n_low:
+        low_conf_warnings.append(
+            f"타겟 '{target_name}': 예측 확신도 {LOW_CONFIDENCE_THRESHOLD} 미만 {n_low}건 (전체 {len(conf)}건). "
+            f"해당 행은 conf_{target_name} 컬럼으로 확인하십시오."
+        )
+
+    counts = pd.Series(labels).value_counts()
+    summary: Dict[str, Any] = {
+        "task": "classification",
+        "classes": classes,
+        "predicted_class_counts": {c: int(counts.get(c, 0)) for c in classes},
+        "mean_confidence": round(float(conf.mean()), 4),
+        "min_confidence": round(float(conf.min()), 4),
+        "low_confidence_count": n_low,
+    }
+    if is_inline and len(labels) <= 5:
+        summary["predictions"] = labels.tolist()
+        summary["probabilities"] = [
+            {c: round(float(p), 4) for c, p in zip(classes, row)} for row in proba
+        ]
+        summary["confidences"] = [round(float(v), 4) for v in conf]
+    return summary
+
+
 def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     """Orchestrates 1-Turn declarative inference."""
     # 1. Resolve Targets & Models
@@ -881,6 +931,7 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     df_result = df_input.copy()
     predictions_summary = {}
     drift_warnings: List[str] = []
+    low_conf_warnings: List[str] = []
     column_aliases: Dict[str, str] = {}
 
     # 3. Perform Inference per Target
@@ -944,15 +995,29 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                                 )
 
         # Execute Prediction
+        task = meta.get("task", "regression")  # models trained before 2.0.0 have no task -> regression
+        estimator = pipe.named_steps.get("regressor") or pipe.named_steps.get("classifier") or pipe
+        desc = meta.get("description", "")
+
+        if task == "classification":
+            predictions_summary[target_name] = {
+                "task": "classification",
+                "model": meta.get("champion_model", type(estimator).__name__),
+                "description": desc,
+                "features_used": req_features,
+                **_predict_classification(pipe, X_frame, target_name, df_result, is_inline, low_conf_warnings),
+            }
+            continue
+
         preds = pipe.predict(X_frame.values)
 
         pred_col_name = f"pred_{target_name}"
         df_result[pred_col_name] = np.round(preds, 4)
 
         # Record summary
-        desc = meta.get("description", "")
         predictions_summary[target_name] = {
-            "model": meta.get("champion_model", type(pipe.named_steps.get("regressor", pipe)).__name__),
+            "task": "regression",
+            "model": meta.get("champion_model", type(estimator).__name__),
             "description": desc,
             "features_used": req_features,
             "mean_pred": round(float(np.mean(preds)), 4),
@@ -991,15 +1056,26 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     for w in drift_warnings:
         sys.stderr.write(f"[WARN] Extrapolation detected: {w}\n")
 
-    targets_brief = ", ".join([f"{t}({predictions_summary[t]['mean_pred']})" for t in predictions_summary])
+    for w in low_conf_warnings:
+        sys.stderr.write(f"[WARN] Low confidence: {w}\n")
+
+    def _brief(t: str) -> str:
+        ps = predictions_summary[t]
+        if ps.get("task") == "classification":
+            return f"{t}({ps['predicted_class_counts']})"
+        return f"{t}({ps['mean_pred']})"
+
+    targets_brief = ", ".join(_brief(t) for t in predictions_summary)
     preview = (
-        f"[추론 완료] 소스: {source_desc} | 타겟 평균 예측값: [{targets_brief}] | "
+        f"[추론 완료] 소스: {source_desc} | 타겟 예측 요약: [{targets_brief}] | "
         f"{'저장: ' + os.path.basename(saved_file) if saved_file else '인라인 반환'}"
         + (f" | 외삽 경고 {len(drift_warnings)}건" if drift_warnings else "")
+        + (f" | 저확신 경고 {len(low_conf_warnings)}건" if low_conf_warnings else "")
     )
     agent_directive = (
         f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
         + (" with extrapolation warning (inputs outside training range; predictions may be unreliable)" if drift_warnings else "")
+        + (" with low-confidence warning (class probability < 0.6 for some rows)" if low_conf_warnings else "")
         + ". "
         + (f"Output saved to {os.path.basename(saved_file)}. " if saved_file else "Inline predictions returned. ")
         + "Next step: report inference results to user."
@@ -1016,6 +1092,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         "drift_warning": bool(drift_warnings),
         "drift_warnings": drift_warnings,
         "extrapolation_warnings": drift_warnings,
+        "low_confidence_warning": bool(low_conf_warnings),
+        "low_confidence_warnings": low_conf_warnings,
         "preview": preview,
         "agent_directive": agent_directive
     }

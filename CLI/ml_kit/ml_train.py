@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-ml_train.py - Autonomous Regression Machine Learning Engine with
+ml_train.py - Autonomous Regression / Classification Machine Learning Engine with
 Collision-Free AST Feature Engineering, 5-Model Competitive Benchmark,
 Atomic Version Packaging, and Single Source of Truth (SSOT) Ledger.
+
+--task regression (default) : champion by Out-of-Fold R2
+--task classification       : champion by Out-of-Fold Macro-F1 (Stratified K-Fold)
+
+Shared runtime (data loading, --eval engine, CLI protocol) is imported from ml_predict.py.
 
 Designed for lightweight 26B-30B LLM agents with 1-turn declarative execution.
 100% Standalone: Pure Python, Scikit-learn, Pandas, NumPy, and Joblib.
@@ -35,17 +40,31 @@ import pandas as pd
 import joblib
 
 import sklearn
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score, mean_absolute_error, root_mean_squared_error
+from sklearn.metrics import (
+    r2_score, mean_absolute_error, root_mean_squared_error,
+    f1_score, accuracy_score, balanced_accuracy_score, roc_auc_score,
+    confusion_matrix, classification_report,
+)
 from sklearn.inspection import permutation_importance
 from sklearn.exceptions import ConvergenceWarning
 
 # 5 Core Regression Algorithms
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor, ExtraTreesRegressor
 from sklearn.linear_model import Ridge, ElasticNet
+
+# 5 Core Classification Algorithms (--task classification)
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+
+TASK_REGRESSION = "regression"
+TASK_CLASSIFICATION = "classification"
+PRIMARY_METRIC = {TASK_REGRESSION: "val_r2", TASK_CLASSIFICATION: "val_f1_macro"}
+METRIC_LABEL = {TASK_REGRESSION: "Val R2", TASK_CLASSIFICATION: "Val Macro-F1"}
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -172,10 +191,12 @@ def validate_and_sanitize_data(
     df: pd.DataFrame,
     feature_names: List[str],
     target_names: List[str],
-    dtypes_arg: Optional[str] = None
+    dtypes_arg: Optional[str] = None,
+    task: str = "regression"
 ) -> Tuple[pd.DataFrame, List[str], List[str], Dict[str, str]]:
     """
     Validates explicit feature (X) and target (Y) columns.
+    - task='classification': targets keep their labels (normalized to strings), not coerced to float.
     - Exact names first, then unique unit-less aliases ('생산효율' -> '생산효율(%)').
     - Fail-fast with suggestions and the available columns list if spelling fails.
     - Converts every X/Y column to float regardless of pandas version (object / str dtype),
@@ -220,19 +241,28 @@ def validate_and_sanitize_data(
                         sys.stderr.write(f"[WARN] 타입 변환 실패 ({c_name} -> {c_type}): {e}\n")
 
     # Sanitize numerical columns (works for pandas 2 'object' and pandas 3 'str' dtypes)
-    for col in feature_names + target_names:
+    numeric_cols = feature_names + (target_names if task == TASK_REGRESSION else [])
+    for col in numeric_cols:
         if pd.api.types.is_datetime64_any_dtype(df_clean[col]):
             raise InputError(
-                f"컬럼 '{col}'은(는) 날짜/시간 타입이라 회귀 피처로 직접 사용할 수 없습니다. "
+                f"컬럼 '{col}'은(는) 날짜/시간 타입이라 피처로 직접 사용할 수 없습니다. "
                 f"-x 목록에서 제외하거나 --eval로 수치 파생변수를 만드십시오."
             )
         df_clean[col] = coerce_numeric(df_clean[col])
 
-    all_nan = [c for c in feature_names + target_names if df_clean[c].notna().sum() == 0]
+    if task == TASK_CLASSIFICATION:
+        for col in target_names:
+            df_clean[col] = normalize_labels(df_clean[col])
+
+    all_nan = [c for c in numeric_cols if df_clean[c].notna().sum() == 0]
     if all_nan:
         raise InputError(
             f"컬럼 {all_nan}에 숫자로 변환 가능한 값이 하나도 없습니다. 헤더/데이터 시작 행(--header-row, --data-row)을 확인하십시오."
+            + (" 타겟이 범주(라벨)라면 --task classification을 지정하십시오." if any(c in target_names for c in all_nan) else "")
         )
+    empty_targets = [c for c in target_names if df_clean[c].notna().sum() == 0]
+    if empty_targets:
+        raise InputError(f"타겟 컬럼 {empty_targets}에 유효한 값이 없습니다.")
 
     return df_clean, feature_names, target_names, {**feat_alias, **tgt_alias}
 
@@ -376,6 +406,9 @@ def train_and_benchmark_models(
     feature_ranks.sort(key=lambda x: x["importance"], reverse=True)
 
     champion_summary = {
+        "task": TASK_REGRESSION,
+        "primary_metric": "val_r2",
+        "val_score": champion_entry["val_r2"],
         "champion_model": champion_name,
         "val_r2": champion_entry["val_r2"],
         "train_r2": champion_entry["train_r2"],
@@ -390,11 +423,233 @@ def train_and_benchmark_models(
 
     target_benchmark_res = {
         "target": target_name,
+        "task": TASK_REGRESSION,
         "sample_count": len(y),
         "champion": champion_summary,
         "leaderboard": leaderboard
     }
 
+    return target_benchmark_res, final_pipeline, champion_summary
+
+
+# ==============================================================================
+# 5-B. 5-Model Competitive Classification Pool (--task classification)
+# ==============================================================================
+
+def normalize_labels(series: pd.Series) -> pd.Series:
+    """
+    Converts class labels to stable strings so the same class never splits by storage type:
+    1, 1.0, '1' -> '1'; ' 양품 ' -> '양품'. Placeholder strings become missing.
+    """
+    def _norm(v):
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return None
+        if isinstance(v, (bool, np.bool_)):
+            return str(bool(v))
+        if isinstance(v, (int, np.integer)):
+            return str(int(v))
+        if isinstance(v, (float, np.floating)):
+            return str(int(v)) if float(v).is_integer() else str(float(v))
+        t = str(v).strip()
+        if t in ("", "-", "N/A", "n/a", "NA", "null", "NULL", "None", "nan", "NaN", "미측정"):
+            return None
+        try:
+            f = float(t.replace(",", ""))
+            if f.is_integer() and re.fullmatch(r"[+-]?[\d,]+(\.0+)?", t):
+                return str(int(f))
+        except ValueError:
+            pass
+        return t
+
+    return series.astype("object").map(_norm)
+
+
+def get_classification_models(seed: int = 42, balanced: bool = False) -> Dict[str, Any]:
+    """
+    Returns 5 distinct classifiers:
+    1. HistGradientBoostingClassifier (GBDT, non-linear, robust)
+    2. RandomForestClassifier (Bagging ensemble)
+    3. ExtraTreesClassifier (Extremely randomized trees)
+    4. LogisticRegression (linear baseline, calibrated probabilities)
+    5. KNeighborsClassifier (instance-based, local decision boundaries)
+    balanced=True applies class_weight='balanced' where supported (KNN has no class weights).
+    """
+    cw = "balanced" if balanced else None
+    return {
+        "HistGradientBoosting": HistGradientBoostingClassifier(random_state=seed, class_weight=cw),
+        "RandomForest": RandomForestClassifier(n_estimators=100, random_state=seed, n_jobs=-1, class_weight=cw),
+        "ExtraTrees": ExtraTreesClassifier(n_estimators=100, random_state=seed, n_jobs=-1, class_weight=cw),
+        "LogisticRegression": LogisticRegression(max_iter=2000, class_weight=cw),
+        "KNeighbors": KNeighborsClassifier(n_neighbors=5),
+    }
+
+
+def _roc_auc(y_true: np.ndarray, proba: np.ndarray, classes: List[str]) -> Optional[float]:
+    try:
+        if len(classes) == 2:
+            return float(roc_auc_score(y_true == classes[1], proba[:, 1]))
+        return float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro", labels=classes))
+    except Exception:
+        return None
+
+
+def train_and_benchmark_classifiers(
+    X_df: pd.DataFrame,
+    y_series: pd.Series,
+    target_name: str,
+    feature_names: List[str],
+    seed: int = 42,
+    log_offset: int = 20,
+    log_weight: int = 50
+) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
+    """
+    Stratified K-Fold competition of 5 classifiers. Champion = highest Out-of-Fold Macro-F1
+    (fair under class imbalance). Fits champion on 100% of data and extracts permutation
+    importance (scoring = f1_macro).
+    """
+    valid_mask = y_series.notna()
+    X = X_df.loc[valid_mask, feature_names].values
+    y = y_series.loc[valid_mask].astype(str).values
+
+    classes = sorted(pd.unique(y).tolist())
+    counts = pd.Series(y).value_counts()
+    class_counts = {c: int(counts[c]) for c in classes}
+    if len(classes) < 2:
+        raise InputError(f"타겟 '{target_name}'의 클래스가 {len(classes)}개뿐입니다. 분류에는 2개 이상의 클래스가 필요합니다.")
+    rare = [c for c in classes if class_counts[c] < 2]
+    if rare:
+        raise InputError(
+            f"타겟 '{target_name}'에 샘플이 1개뿐인 클래스 {rare}이(가) 있습니다. "
+            f"클래스별 최소 2개 이상 필요합니다. 해당 행을 제외하거나 클래스를 병합하십시오. [클래스별 건수]: {class_counts}"
+        )
+    if len(classes) > 50:
+        raise InputError(
+            f"타겟 '{target_name}'의 클래스가 {len(classes)}개로 너무 많습니다. 연속형 수치라면 --task regression을 사용하십시오."
+        )
+    if len(y) < 10:
+        raise InputError(f"타겟 '{target_name}'의 유효 학습 샘플 수가 너무 적습니다 ({len(y)}개). 최소 10개 이상 필요합니다.")
+
+    min_ratio = min(class_counts.values()) / len(y)
+    balanced = min_ratio < 0.20
+    if balanced:
+        sys.stderr.write(
+            f"[WARN] 타겟 '{target_name}' 클래스 불균형 감지 (최소 클래스 비율 {min_ratio:.1%}) -> class_weight='balanced' 적용\n"
+        )
+
+    models = get_classification_models(seed=seed, balanced=balanced)
+    model_count = len(models)
+    n_splits = max(2, min(5, min(class_counts.values())))
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+
+    leaderboard = []
+    model_oof_map: Dict[str, np.ndarray] = {}
+
+    for m_idx, (model_name, clf) in enumerate(models.items()):
+        oof_pred = np.empty(len(y), dtype=object)
+        oof_proba = np.zeros((len(y), len(classes)))
+        train_f1_list = []
+
+        for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+            pct = log_offset + int(log_weight * (m_idx * n_splits + fold) / (model_count * n_splits))
+            log_progress(pct, f"Target '{target_name}' | {model_name} (Fold {fold}/{n_splits})...")
+
+            pipe = Pipeline([
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                ("classifier", clf)
+            ])
+            pipe.fit(X[train_idx], y[train_idx])
+            train_f1_list.append(f1_score(y[train_idx], pipe.predict(X[train_idx]), average="macro", zero_division=0))
+            oof_pred[val_idx] = pipe.predict(X[val_idx])
+            proba = pipe.predict_proba(X[val_idx])
+            col_idx = [classes.index(c) for c in pipe.classes_]
+            oof_proba[np.ix_(val_idx, col_idx)] = proba
+            del pipe
+
+        oof_pred = oof_pred.astype(str)
+        model_oof_map[model_name] = oof_pred
+        val_f1 = float(f1_score(y, oof_pred, average="macro", zero_division=0))
+        avg_train_f1 = float(np.mean(train_f1_list))
+        auc = _roc_auc(y, oof_proba, classes)
+        leaderboard.append({
+            "model_name": model_name,
+            "val_f1_macro": round(val_f1, 4),
+            "train_f1_macro": round(avg_train_f1, 4),
+            "overfit_gap": round(avg_train_f1 - val_f1, 4),
+            "accuracy": round(float(accuracy_score(y, oof_pred)), 4),
+            "balanced_accuracy": round(float(balanced_accuracy_score(y, oof_pred)), 4),
+            "roc_auc": round(auc, 4) if auc is not None else None,
+        })
+
+    leaderboard.sort(key=lambda item: item["val_f1_macro"], reverse=True)
+    for rank, entry in enumerate(leaderboard, 1):
+        entry["rank"] = rank
+        entry["is_champion"] = (rank == 1)
+    champion_entry = leaderboard[0]
+    champion_name = champion_entry["model_name"]
+
+    champion_oof = model_oof_map[champion_name]
+    cm = confusion_matrix(y, champion_oof, labels=classes)
+    report = classification_report(y, champion_oof, labels=classes, output_dict=True, zero_division=0)
+    per_class = {
+        c: {
+            "precision": round(float(report[c]["precision"]), 4),
+            "recall": round(float(report[c]["recall"]), 4),
+            "f1": round(float(report[c]["f1-score"]), 4),
+            "support": int(report[c]["support"]),
+        }
+        for c in classes
+    }
+
+    log_progress(log_offset + log_weight - 4, f"Target '{target_name}' | 1위 챔피언({champion_name}) 전체 데이터 적합 중...")
+    final_pipeline = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+        ("classifier", models[champion_name])
+    ])
+    final_pipeline.fit(X, y)
+
+    log_progress(log_offset + log_weight - 2, f"Target '{target_name}' | 순열 피처 중요도(Feature Importance) 산출 중...")
+    try:
+        perm_res = permutation_importance(final_pipeline, X, y, n_repeats=5, random_state=seed, scoring="f1_macro")
+        raw_importances = np.maximum(perm_res.importances_mean, 0)
+    except Exception:
+        raw_importances = np.ones(len(feature_names))
+
+    total_imp = float(np.sum(raw_importances)) or 1.0
+    feature_ranks = sorted(
+        [{"feature": f, "importance": round(float(imp), 4), "pct": round(float(imp / total_imp * 100), 1)}
+         for f, imp in zip(feature_names, raw_importances)],
+        key=lambda x: x["importance"], reverse=True
+    )
+
+    champion_summary = {
+        "task": TASK_CLASSIFICATION,
+        "primary_metric": "val_f1_macro",
+        "val_score": champion_entry["val_f1_macro"],
+        "champion_model": champion_name,
+        "val_f1_macro": champion_entry["val_f1_macro"],
+        "train_f1_macro": champion_entry["train_f1_macro"],
+        "overfit_gap": champion_entry["overfit_gap"],
+        "accuracy": champion_entry["accuracy"],
+        "balanced_accuracy": champion_entry["balanced_accuracy"],
+        "roc_auc": champion_entry["roc_auc"],
+        "classes": classes,
+        "class_counts": class_counts,
+        "class_weight": "balanced" if balanced else None,
+        "per_class": per_class,
+        "confusion_matrix": {"labels": classes, "matrix": cm.tolist()},
+        "top_features": feature_ranks[:3],
+        "weak_features": [f["feature"] for f in feature_ranks if f["pct"] <= 1.0],
+        "feature_importances": feature_ranks
+    }
+    target_benchmark_res = {
+        "target": target_name,
+        "task": TASK_CLASSIFICATION,
+        "sample_count": len(y),
+        "champion": champion_summary,
+        "leaderboard": leaderboard
+    }
     return target_benchmark_res, final_pipeline, champion_summary
 
 
@@ -539,8 +794,11 @@ def load_history_ledger(ledger_path: str) -> List[Dict[str, Any]]:
 # ==============================================================================
 
 def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
-    """Orchestrates 1-Turn declarative regression pipeline."""
+    """Orchestrates 1-Turn declarative regression / classification pipeline."""
     start_time = time.time()
+    task = (getattr(args, "task", None) or TASK_REGRESSION).lower()
+    primary_metric = PRIMARY_METRIC[task]
+    metric_label = METRIC_LABEL[task]
     raw_file = os.path.abspath(args.file)
     if not os.path.exists(raw_file):
         raise FileNotFoundError(f"입력 파일이 존재하지 않습니다: {raw_file}")
@@ -579,7 +837,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             df=df_raw,
             feature_names=feature_names,
             target_names=target_names,
-            dtypes_arg=args.dtypes
+            dtypes_arg=args.dtypes,
+            task=task
         )
 
         # Feature Engineering (--eval)
@@ -603,20 +862,21 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         num_df = df_clean[all_train_cols].select_dtypes(include=[np.number])
         corr_matrix = num_df.corr().round(4).to_dict()
 
-        # Multi-Target 5-Model Competitive Training
+        # Multi-Target 5-Model Competitive Training (one task per run)
         target_benchmarks = {}
         target_champions = {}
         target_summaries = {}
-        all_champion_val_r2 = []
+        all_champion_scores = []
+        benchmark_fn = train_and_benchmark_models if task == TASK_REGRESSION else train_and_benchmark_classifiers
 
         total_targets = len(target_names)
         for t_idx, target_name in enumerate(target_names):
             t_offset = 25 + int(55 * t_idx / total_targets)
             t_weight = int(55 / total_targets)
 
-            log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습...")
+            log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
-            t_bench, champion_pipe, champion_info = train_and_benchmark_models(
+            t_bench, champion_pipe, champion_info = benchmark_fn(
                 X_df=df_clean,
                 y_series=df_clean[target_name],
                 target_name=target_name,
@@ -631,21 +891,28 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "pipeline": champion_pipe,
                 "info": champion_info
             }
-            all_champion_val_r2.append(champion_info["val_r2"])
+            all_champion_scores.append(champion_info["val_score"])
 
             # Target statistics
             y_valid = df_clean[target_name].dropna()
-            target_summaries[target_name] = {
-                "mean": round(float(y_valid.mean()), 4),
-                "std": round(float(y_valid.std()), 4),
-                "min": round(float(y_valid.min()), 4),
-                "max": round(float(y_valid.max()), 4)
-            }
+            if task == TASK_REGRESSION:
+                target_summaries[target_name] = {
+                    "mean": round(float(y_valid.mean()), 4),
+                    "std": round(float(y_valid.std()), 4),
+                    "min": round(float(y_valid.min()), 4),
+                    "max": round(float(y_valid.max()), 4)
+                }
+            else:
+                target_summaries[target_name] = {
+                    "classes": champion_info["classes"],
+                    "class_counts": champion_info["class_counts"],
+                    "missing_dropped": int(df_clean[target_name].isna().sum())
+                }
 
-        mean_val_r2 = float(np.mean(all_champion_val_r2))
+        mean_val_score = float(np.mean(all_champion_scores))
 
-        # Check Previous History for Delta R2
-        log_progress(85, "이전 이력 대조 및 성능 변화(Delta R2) 산출 중...")
+        # Check Previous History (same task only) for Delta
+        log_progress(85, f"이전 이력 대조 및 성능 변화(Delta {metric_label}) 산출 중...")
         history_records = load_history_ledger(ledger_path)
 
         # Resolve project description: explicit arg takes precedence, otherwise inherit from previous version
@@ -656,22 +923,16 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         if not project_desc and history_records:
             project_desc = history_records[-1].get("description", "")
 
-        prev_best_r2 = -999.0
-        last_val_r2 = None
-        if history_records:
-            last_record = history_records[-1]
-            last_val_r2 = last_record.get("mean_val_r2", last_record.get("val_r2", None))
-            prev_best_r2 = max(
-                [h.get("mean_val_r2", h.get("val_r2", -999.0)) for h in history_records],
-                default=-999.0
-            )
+        same_task = [h for h in history_records if h.get("task", TASK_REGRESSION) == task]
 
-        if last_val_r2 is not None:
-            delta_r2 = round(mean_val_r2 - last_val_r2, 4)
-        else:
-            delta_r2 = "base"
+        def _rec_score(h: Dict[str, Any]) -> Optional[float]:
+            v = h.get("mean_val_score", h.get("mean_val_r2", h.get("val_r2")))
+            return float(v) if isinstance(v, (int, float)) else None
 
-        is_best = (mean_val_r2 > prev_best_r2)
+        prev_scores = [v for v in (_rec_score(h) for h in same_task) if v is not None]
+        last_score = _rec_score(same_task[-1]) if same_task else None
+        delta_score: Any = round(mean_val_score - last_score, 4) if last_score is not None else "base"
+        is_best = mean_val_score > max(prev_scores, default=-999.0)
 
         # Generate Actionable Recommendations for 26B-30B LLM
         primary_target = target_names[0]
@@ -680,14 +941,36 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         weak_feats = prim_champ.get("weak_features", [])
 
         recommendations = []
-        if mean_val_r2 >= 0.90:
-            recommendations.append(f"사전 목표 성능(Val R2 >= 0.90)을 달성하여 배포 승인 준비가 완료되었습니다.")
+        if mean_val_score >= 0.90:
+            recommendations.append(f"사전 목표 성능({metric_label} >= 0.90)을 달성하여 배포 승인 준비가 완료되었습니다.")
+        elif task == TASK_CLASSIFICATION:
+            weak_classes = [c for c, m in prim_champ.get("per_class", {}).items() if m["recall"] < 0.70]
+            if weak_classes:
+                recommendations.append(
+                    f"재현율(Recall)이 0.70 미만인 클래스 {weak_classes[:3]}의 구분력이 부족합니다. "
+                    f"해당 클래스를 가르는 피처를 추가하거나 --eval로 비율/차이 파생변수를 만드십시오."
+                )
+            elif len(top_feats) >= 2:
+                f1, f2 = top_feats[0]["feature"], top_feats[1]["feature"]
+                recommendations.append(f"주요 기여 피처 '{f1}'와(과) '{f2}'의 교차 상호작용('{f1} * {f2}') 생성을 권장합니다.")
         elif len(top_feats) >= 2:
             f1 = top_feats[0]["feature"]
             f2 = top_feats[1]["feature"]
             recommendations.append(f"주요 기여 피처 '{f1}'와(과) '{f2}'의 교차 상호작용('{f1} * {f2}') 또는 다항식 생성을 권장합니다.")
+        if task == TASK_CLASSIFICATION and prim_champ.get("class_weight"):
+            recommendations.append("클래스 불균형으로 class_weight='balanced'가 적용되었습니다. 소수 클래스 데이터 추가 수집을 권장합니다.")
         if weak_feats:
             recommendations.append(f"기여도가 1% 미만인 피처 {weak_feats[:2]}을(를) 배제하여 노이즈를 감소시키십시오.")
+
+        # Task-specific score keys (regression keeps its historical key names)
+        score_keys: Dict[str, Any] = {
+            "task": task,
+            "primary_metric": primary_metric,
+            "mean_val_score": round(mean_val_score, 4),
+            "delta_score": delta_score,
+        }
+        if task == TASK_REGRESSION:
+            score_keys.update({"mean_val_r2": round(mean_val_score, 4), "delta_r2": delta_score})
 
         # Stage Artifacts in .tmp_vX/
         log_progress(90, f"버전 산출물 패키징 중 ({current_version})...")
@@ -697,8 +980,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         leaderboard_data = {
             "version": current_version,
             "timestamp": datetime.now().isoformat(),
-            "mean_val_r2": round(mean_val_r2, 4),
-            "delta_r2": delta_r2,
+            **score_keys,
             "is_best": is_best,
             "targets": target_benchmarks
         }
@@ -733,12 +1015,29 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "version": current_version,
                 "target": target_name,
                 "target_safe_name": safe_target,
+                "task": task,
+                "primary_metric": primary_metric,
+                "val_score": info["val_score"],
                 "description": project_desc,
                 "champion_model": info["champion_model"],
-                "val_r2": info["val_r2"],
-                "mae": info["mae"],
-                "rmse": info["rmse"],
-                "residual_skew": info.get("residual_skew", 0.0),
+            }
+            if task == TASK_REGRESSION:
+                meta_json.update({
+                    "val_r2": info["val_r2"],
+                    "mae": info["mae"],
+                    "rmse": info["rmse"],
+                    "residual_skew": info.get("residual_skew", 0.0),
+                })
+            else:
+                meta_json.update({
+                    "val_f1_macro": info["val_f1_macro"],
+                    "accuracy": info["accuracy"],
+                    "balanced_accuracy": info["balanced_accuracy"],
+                    "roc_auc": info["roc_auc"],
+                    "classes": info["classes"],
+                    "class_counts": info["class_counts"],
+                })
+            meta_json.update({
                 "features_required": feature_names,
                 "feature_count": len(feature_names),
                 "feature_stats": feat_stats,
@@ -746,7 +1045,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "target_summary": target_summaries.get(target_name, {}),
                 "sklearn_version": sklearn.__version__,
                 "python_version": sys.version.split()[0]
-            }
+            })
             with open(os.path.join(staging_dir, f"model_{safe_target}.json"), "w", encoding="utf-8") as f:
                 f.write(dumps_json(meta_json, indent=2))
 
@@ -780,8 +1079,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "target_summaries": target_summaries,
             "features_used": feature_names,
             "derived_evals": applied_evals,
-            "mean_val_r2": round(mean_val_r2, 4),
-            "delta_r2": delta_r2,
+            **score_keys,
             "is_best": is_best,
             "prescription": prescription,
             "recommendations": recommendations,
@@ -795,17 +1093,19 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         log_progress(100, f"학습 및 산출물 패키징 완료: {current_version} ({os.path.basename(final_version_dir)}) [소요: {duration_sec}초]")
 
         # LLM Directive
-        target_brief = ", ".join([f"{t}({target_champions[t]['info']['champion_model']}: R2={target_champions[t]['info']['val_r2']:.4f})" for t in target_names])
+        short = "R2" if task == TASK_REGRESSION else "F1"
+        target_brief = ", ".join([f"{t}({target_champions[t]['info']['champion_model']}: {short}={target_champions[t]['info']['val_score']:.4f})" for t in target_names])
+        delta_txt = delta_score if delta_score == "base" else f"{delta_score:+.4f}"
         preview = (
-            f"[{current_version} 완료] 타겟: [{target_brief}] | "
-            f"평균 Val R2={mean_val_r2:.4f} (Delta: {delta_r2 if delta_r2 == 'base' else f'{delta_r2:+.4f}'}) | "
+            f"[{current_version} 완료 / {task}] 타겟: [{target_brief}] | "
+            f"평균 {metric_label}={mean_val_score:.4f} (Delta: {delta_txt}) | "
             f"소요시간: {duration_sec}s | "
             f"산출물 저장: {final_version_dir}"
         )
         agent_directive = (
             f"VERIFIED: {current_version} competitive training completed. "
             f"Champion models and leaderboard packaged into '{os.path.basename(final_version_dir)}'. "
-            f"Mean Val R2={mean_val_r2:.4f}. Next step: proceed to inference or next iteration."
+            f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. Next step: proceed to inference or next iteration."
         )
 
         result = {
@@ -817,8 +1117,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "data_root": data_root,
             "version_dir": final_version_dir,
             "targets": target_names,
-            "mean_val_r2": round(mean_val_r2, 4),
-            "delta_r2": delta_r2,
+            **score_keys,
             "is_best": is_best,
             "recommendations": recommendations,
             "preview": preview,
@@ -860,41 +1159,57 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
     if proj_desc:
         out.write(f" [PROJECT DESCRIPTION] {proj_desc}\n")
     out.write("=" * 125 + "\n")
-    out.write(f"{'Version':<8} | {'Tag / Memo':<16} | {'Mean R2':<9} | {'Delta R2':<10} | {'Time':<7} | {'Targets':<22} | {'Status'}\n")
-    out.write(f"{'-'*8}-+-{'-'*16}-+-{'-'*9}-+-{'-'*10}-+-{'-'*7}-+-{'-'*22}-+-{'-'*15}\n")
+    out.write(f"{'Version':<8} | {'Tag / Memo':<16} | {'Task / Score':<16} | {'Delta':<10} | {'Time':<7} | {'Targets':<22} | {'Status'}\n")
+    out.write(f"{'-'*8}-+-{'-'*16}-+-{'-'*16}-+-{'-'*10}-+-{'-'*7}-+-{'-'*22}-+-{'-'*15}\n")
 
     rows = []
     for r in records:
         ver = r.get("version", "-")
         tag = r.get("tag") or "-"
-        mean_r2 = r.get("mean_val_r2")
-        delta = r.get("delta_r2", "base")
-        rows.append({
-            "version": ver, "tag": tag, "mean_val_r2": mean_r2, "delta_r2": delta,
+        task = r.get("task", TASK_REGRESSION)
+        score = r.get("mean_val_score", r.get("mean_val_r2"))
+        delta = r.get("delta_score", r.get("delta_r2", "base"))
+        row = {
+            "version": ver, "tag": tag, "task": task,
+            "primary_metric": r.get("primary_metric", PRIMARY_METRIC.get(task, "val_r2")),
+            "mean_val_score": score, "delta_score": delta,
             "is_best": bool(r.get("is_best")), "targets": r.get("targets", []),
-        })
+        }
+        if task == TASK_REGRESSION:
+            row.update({"mean_val_r2": score, "delta_r2": delta})
+        rows.append(row)
 
         tag_s = tag if len(tag) <= 15 else tag[:13] + ".."
-        r2_s = f"{mean_r2:<9.4f}" if isinstance(mean_r2, (int, float)) else f"{'-':<9}"
+        short = "R2" if task == TASK_REGRESSION else "F1"
+        score_s = f"{short} {score:.4f}" if isinstance(score, (int, float)) else "-"
         delta_str = f"{delta:+.4f}" if isinstance(delta, (int, float)) else str(delta)
         dur = f"{r.get('duration_sec', 0.0):.1f}s" if "duration_sec" in r else "-"
         targets_str = ", ".join(r.get("targets", []))
         if len(targets_str) > 20:
             targets_str = targets_str[:18] + ".."
         status = "[BEST 챔피언]" if r.get("is_best") else "[수렴]"
-        out.write(f" {ver:<7} | {tag_s:<16} | {r2_s} | {delta_str:<10} | {dur:<7} | {targets_str:<22} | {status}\n")
+        out.write(f" {ver:<7} | {tag_s:<16} | {score_s:<16} | {delta_str:<10} | {dur:<7} | {targets_str:<22} | {status}\n")
 
     out.write("=" * 125 + "\n\n")
 
-    scored = [x for x in rows if isinstance(x["mean_val_r2"], (int, float))]
-    best = max(scored, key=lambda x: x["mean_val_r2"]) if scored else None
+    # Scores are only comparable within the same task
+    best_by_task: Dict[str, Dict[str, Any]] = {}
+    for x in rows:
+        if isinstance(x["mean_val_score"], (int, float)):
+            cur = best_by_task.get(x["task"])
+            if cur is None or x["mean_val_score"] > cur["mean_val_score"]:
+                best_by_task[x["task"]] = {"version": x["version"], "mean_val_score": x["mean_val_score"]}
+    latest_task = rows[-1]["task"]
+    best = best_by_task.get(latest_task)
     return {
         "status": "ok",
         "data_root": data_root,
         "description": proj_desc,
         "record_count": len(rows),
         "best_version": best["version"] if best else None,
-        "best_mean_val_r2": best["mean_val_r2"] if best else None,
+        "best_mean_val_score": best["mean_val_score"] if best else None,
+        "best_mean_val_r2": best_by_task.get(TASK_REGRESSION, {}).get("mean_val_score"),
+        "best_by_task": best_by_task,
         "latest_version": rows[-1]["version"],
         "records": rows,
         "agent_directive": "VERIFIED: History summary returned. Do not re-read history.json for the same information.",
@@ -903,7 +1218,7 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
 
 def main():
     parser = JsonArgumentParser(
-        description="Autonomous Regression ML Engine with 5-Model Competitive Benchmark & Version Lineage"
+        description="Autonomous Regression / Classification ML Engine with 5-Model Competitive Benchmark & Version Lineage"
     )
     parser.add_argument("--file", "-f", help="입력 데이터 파일 경로 (.xlsx, .csv)")
     parser.add_argument("--features", "-x", help="독립변수(피처) 목록 (쉼표 구분 문자열 또는 파일 경로: .txt, .json, .csv)")
@@ -920,6 +1235,8 @@ def main():
     parser.add_argument("--dtypes", help="데이터 타입 수동 오버라이드 (예: '일시:datetime,설비코드:str')")
     parser.add_argument("--encoding", help="model_dataset.csv 저장 인코딩 (기본값: Windows Excel 최적화 cp949, 특수문자 발생 시 utf-8-sig 자동 폴백)")
     parser.add_argument("--version", "-v", help="버전 수동 지정 (미지정 시 자동 계산 v1, v2...)")
+    parser.add_argument("--task", choices=[TASK_REGRESSION, TASK_CLASSIFICATION], default=TASK_REGRESSION,
+                        help="학습 유형: regression(기본값, 연속 수치 예측) 또는 classification(범주/라벨 예측)")
     parser.add_argument("--seed", type=int, default=42, help="재현용 난수 시드 (기본값: 42)")
     parser.add_argument("--history", action="store_true", help="누적 실험 이력 조회 모드 (표는 stderr, 요약 JSON은 stdout)")
 

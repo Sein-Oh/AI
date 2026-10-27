@@ -303,6 +303,24 @@ def generate_engineering_word_report(
             target_name = alias_hits[0]
     target_records = [r for r in records if target_name in r.get("targets", [])]
 
+    # Word report currently supports regression only (classification report: next release)
+    def _task(r: Dict[str, Any]) -> str:
+        return r.get("task", "regression")
+
+    if specified_version:
+        v_recs = [r for r in target_records if normalize_version(r.get("version")) == normalize_version(specified_version)]
+        if v_recs and _task(v_recs[-1]) != "regression":
+            raise InputError(
+                f"버전 '{specified_version}'의 타겟 '{target_name}'은(는) 분류(classification) 모델입니다. "
+                f"분류 보고서는 다음 버전에서 지원됩니다. 현재는 ml_train.py의 결과 JSON과 vX/leaderboard.json을 참고하십시오."
+            )
+    if target_records and all(_task(r) != "regression" for r in target_records):
+        raise InputError(
+            f"타겟 '{target_name}'의 학습 기록이 모두 분류(classification)입니다. "
+            f"분류 보고서는 다음 버전에서 지원됩니다. 현재는 ml_train.py의 결과 JSON과 vX/leaderboard.json을 참고하십시오."
+        )
+    target_records = [r for r in target_records if _task(r) == "regression"]
+
     if not target_records:
         available_targets = set()
         for r in records:
