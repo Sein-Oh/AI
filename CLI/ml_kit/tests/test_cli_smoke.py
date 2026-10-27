@@ -183,6 +183,23 @@ def test_predict_missing_feature(trained):
 
 # ---------------------------------------------------------------- report
 
+try:
+    import docx  # noqa: F401
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+needs_docx = pytest.mark.skipif(not HAS_DOCX, reason="python-docx not installed in this environment")
+
+
+@pytest.mark.skipif(HAS_DOCX, reason="only meaningful when python-docx is missing")
+def test_report_without_docx_returns_json(trained):
+    work, _, _ = trained
+    payload = run_fail("ml_report.py", "-d", str(work / "sample_ml_data"))
+    assert payload["agent_directive"].startswith("STOP_RETRY") and "python-docx" in payload["message"]
+
+
+@needs_docx
 def test_report(trained):
     work, _, _ = trained
     out = work / "report.docx"
@@ -190,6 +207,7 @@ def test_report(trained):
     assert out.is_file() and payload["best_version"]
 
 
+@needs_docx
 def test_report_version_without_v_and_jsonl_only(trained):
     """history.json missing -> must fall back to history.jsonl (was reading the wrong file)."""
     work, _, _ = trained
@@ -203,6 +221,7 @@ def test_report_version_without_v_and_jsonl_only(trained):
         (root / "history.json.bak").rename(root / "history.json")
 
 
+@needs_docx
 def test_report_unknown_version_fails(trained):
     work, _, _ = trained
     payload = run_fail("ml_report.py", "-d", str(work / "sample_ml_data"), "-v", "v99")

@@ -5,16 +5,17 @@
 
 ## 1. 인터넷 PC에서 준비
 
-폐쇄망 PC의 Python 버전을 먼저 확인합니다 (`python --version`, 예: 3.11).
+표준 환경은 Python 3.13 입니다 ([`ENVIRONMENT.md`](ENVIRONMENT.md)). 대부분의 패키지는 이미 설치되어 있으므로
+**표준 환경에 없는 패키지만** 반입하면 됩니다 (현재 ml_kit 기준: `python-docx`와 의존성 `lxml`).
 
 ```bat
 cd CLI\ml_kit
-python -m pip download -r requirements.txt -d wheels ^
-  --only-binary=:all: --platform win_amd64 --python-version 3.11 --implementation cp
+python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
+  --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp
 ```
 - 인터넷 PC가 폐쇄망과 **같은 Windows + 같은 Python 버전**이면 `--platform` 이하 옵션은 생략 가능합니다.
 - 테스트까지 돌리려면 `requirements-dev.txt`로 한 번 더 받습니다.
-- Python 설치 파일(`python-3.11.x-amd64.exe`)도 함께 반입합니다.
+- `-c constraints.txt`로 표준 환경과 같은 버전이 받아지므로, 이미 설치된 패키지는 재설치되지 않습니다.
 
 ## 2. 반입 후 폐쇄망 PC에서 설치
 

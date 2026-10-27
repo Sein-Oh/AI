@@ -29,12 +29,17 @@ from typing import Dict, Any, List, Optional, Tuple
 
 import numpy as np
 
-import docx
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+# python-docx is optional at import time so a missing package is reported as protocol JSON
+try:
+    import docx
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    _DOCX_IMPORT_ERROR = None
+except ImportError as _e:
+    _DOCX_IMPORT_ERROR = _e
 
 
 def _num(v: Any) -> Optional[float]:
@@ -848,6 +853,11 @@ def generate_engineering_word_report(
 # ==============================================================================
 
 def build_reports(args: argparse.Namespace) -> Dict[str, Any]:
+    if _DOCX_IMPORT_ERROR is not None:
+        raise InputError(
+            f"Word 보고서 생성에 필요한 python-docx 패키지가 설치되어 있지 않습니다 ({_DOCX_IMPORT_ERROR}). "
+            f"관리자에게 python-docx 설치를 요청하십시오 (docs/ENVIRONMENT.md 참고). 학습/예측 기능은 영향 없음."
+        )
     # Parse slots if provided (file written by Notepad/PowerShell: UTF-8, UTF-8 BOM, UTF-16, CP949)
     slot_dict: Dict[str, Any] = {}
     if args.slots:

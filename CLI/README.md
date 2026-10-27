@@ -28,4 +28,4 @@ CLI/<tool>/
    - `ERROR:` – 내부 오류. 재시도 금지.
 4. 에이전트가 판단할 일을 줄인다: 이름 자동 매칭, 기본값, 자동 상속, 오타 추천을 도구가 처리.
 5. 이모지 금지, 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`.
-6. 폐쇄망: 실행 중 네트워크 접근 금지, 순수 pip wheel로 설치 가능한 패키지만 사용 ([`docs/WINDOWS_OFFLINE.md`](../docs/WINDOWS_OFFLINE.md)).
+6. 폐쇄망: 실행 중 네트워크 접근 금지. [표준 환경](../docs/ENVIRONMENT.md)에 있는 라이브러리만 사용 ([`docs/WINDOWS_OFFLINE.md`](../docs/WINDOWS_OFFLINE.md)).

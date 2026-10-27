@@ -18,7 +18,9 @@
 - 런타임 네트워크 접근 금지. 새 의존성은 win_amd64 wheel이 있는 순수 pip 패키지만, `requirements.txt`에 추가.
 - 파일 저장은 잠금(Excel/Word) 대비 `save_with_lock_fallback`, 폴더 조작은 `retry_fs`/`remove_tree` 사용.
 - 텍스트 입력 파일은 `read_text_file`(UTF-8/BOM/UTF-16/CP949 자동)로 읽는다.
-- Python 3.9 문법 호환 유지 (폐쇄망 PC의 Python 버전이 낮을 수 있음).
+- 대상 환경: Windows 11 + Python 3.13.13 + `constraints.txt`의 라이브러리 버전 (상세: docs/ENVIRONMENT.md).
+- 새 기능/도구는 표준 환경에 있는 라이브러리만 사용. 없는 패키지가 필요하면 ENVIRONMENT.md에 기록하고 미설치 시 JSON 오류로 안내.
+- 테스트는 `constraints.txt` 버전 기준으로 통과해야 한다.
 
 ## 작업 절차
 1. 변경 전 `python -m pytest -q`로 기준선 확인.
