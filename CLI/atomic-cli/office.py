@@ -661,7 +661,7 @@ def _backup_path(kind: str, ext: str) -> str:
 def _word_from_flat_xml(app: Any, xml_path: str, dest: str) -> Any:
     doc = app.Documents.Open(os.path.normpath(xml_path), ConfirmConversions=False, AddToRecentFiles=False)
     fmt = off.EXTENSIONS["word"].get(os.path.splitext(dest)[1].lower())
-    doc.SaveAs2(os.path.normpath(dest), FileFormat=fmt) if fmt is not None else doc.SaveAs2(os.path.normpath(dest))
+    off.word_save_as(doc, os.path.normpath(dest), fmt)
     return doc
 
 

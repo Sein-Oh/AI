@@ -522,7 +522,7 @@ def cmd_export(args) -> Dict[str, Any]:
                         raise rt.InputError("Word PDF 내보내기 기능이 없습니다. --save에 .docx를 쓰세요.")
                     raise
             else:
-                target_doc.SaveAs2(os.path.normpath(out), FileFormat=16)
+                off.word_save_as(target_doc, os.path.normpath(out), 16)
         finally:
             if work is not None:
                 try:

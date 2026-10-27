@@ -415,6 +415,15 @@ def _open_file(kind: str, app: Any, path: str, readonly: bool) -> Any:
     return app.Presentations.Open(path, -1 if readonly else 0, 0, 0)   # ReadOnly, Untitled, WithWindow=False
 
 
+def word_save_as(doc: Any, path: str, fmt: Optional[int] = None) -> None:
+    """Word SaveAs2(2010+)를 쓰고, 없는 버전(Word 2007)은 SaveAs로 저장합니다."""
+    try:
+        save = doc.SaveAs2
+    except AttributeError:
+        save = doc.SaveAs
+    save(path, FileFormat=fmt) if fmt is not None else save(path)
+
+
 def _create_file(kind: str, app: Any, path: str) -> Any:
     fmt = EXTENSIONS[kind].get(os.path.splitext(path)[1].lower())
     if kind == "excel":
@@ -422,7 +431,7 @@ def _create_file(kind: str, app: Any, path: str) -> Any:
         doc.SaveAs(path, FileFormat=fmt) if fmt is not None else doc.SaveAs(path)
     elif kind == "word":
         doc = app.Documents.Add(Visible=False)
-        doc.SaveAs2(path, FileFormat=fmt) if fmt is not None else doc.SaveAs2(path)
+        word_save_as(doc, path, fmt)
     else:
         doc = app.Presentations.Add(0)
         doc.SaveAs(path, fmt) if fmt is not None else doc.SaveAs(path)

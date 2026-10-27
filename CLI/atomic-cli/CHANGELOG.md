@@ -2,6 +2,21 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.0.1] - 2026-10-27
+
+Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 2007 32비트) 결과 반영. 35개 중 PASS 33, ENV-SKIP 2(PDF 추가 기능 없음).
+
+### 수정
+- `ppt.py export --save *.pdf`가 항상 내부 오류(`TypeError: The Python instance can not be converted to a COM object`)를 내던 문제. `ExportAsFixedFormat`의 개체 인자 `PrintRange`를 생략하면 pywin32가 인자 변환에서 실패하므로 `PrintRange=None`을 명시합니다.
+- PowerPoint 2007(12.x)에 PDF 추가 기능이 없을 때 E_FAIL이 내부 오류로 나가던 문제. `.pptx`로 저장하라는 STOP_RETRY 입력 오류로 안내합니다. 다른 버전의 E_FAIL은 그대로 Office 오류로 보고합니다.
+- Word 2007에 없는 `SaveAs2` 호출(새 파일 만들기, `word.py export --save *.docx`, undo의 Flat XML 복원)이 AttributeError로 실패하던 문제. 공통 `_office.word_save_as()`가 `SaveAs`로 대체합니다.
+
+### 테스트 러너 (`tools/run_win_tests.py`)
+- 테스트 파일 준비가 Word 2007에서 `SaveAs2`로 멈추던 문제.
+- 더블클릭으로 연 Excel은 포커스를 잃기 전까지 ROT에 등록되지 않아(`GetActiveObject` 실패, MS KB 238610) "A.xlsx가 열리지 않았습니다"로 중단되던 문제. 도구와 같은 창 핸들 바인딩(`_office.find_apps`)을 씁니다.
+- 이전 실행의 스냅샷이 남아 같은 경로로 다시 만든 A 파일에 undo가 이어져 C7이 두 번째 실행부터 실패하던 문제. 도구 캐시/data를 테스트 폴더의 `_cache`(실행마다 비움), `_data`로 분리합니다.
+- PDF 기능이 없는 PC의 D1, D4를 FAIL 대신 `ENV-SKIP`으로 기록합니다.
+
 ## [1.0.0] - 2026-10-27
 
 첫 배포. 기존 atomic_cli(마이크로 CLI 34개)를 진입점 6개로 다시 설계했습니다. 이전 버전과의 CLI 호환은 없습니다.
@@ -45,6 +60,7 @@
 - Outlook 날짜 범위 검색 (`--since`).
 
 ### 확인 필요
-- Windows 실기 검증: `tools/run_win_tests.py`를 1.0 명령 체계로 갱신한 뒤 회사 PC에서 실행.
+- Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 남은 것: 회사 PC(Office 16)에서 전체 실행, 눈 확인 항목(`--auto` 없이), Outlook G 그룹, PDF 내보내기(D1, D4).
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증.
-- 회사 PC에서 `office.py transfer --probe` 결과 확인.
+- 회사 PC에서 `office.py transfer --probe` 결과 확인. (집 PC Office 2007: export, redraw 성공 / relay는 "워드에 붙여넣기 안 됨"으로 실패)
+- 스냅샷은 문서 경로 기준으로 쌓이므로, 같은 경로에 파일을 새로 만들어도 이전 파일의 스냅샷이 undo 대상에 남습니다. 의도한 동작인지 결정 필요.

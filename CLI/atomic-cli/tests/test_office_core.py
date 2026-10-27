@@ -46,6 +46,29 @@ def test_excel_file_read_uses_dedicated_instance_readonly(tmp_path, fake_com):
     assert app.quit_called
 
 
+class _Doc2007:
+    """Word 2007 문서: SaveAs2가 없음 (pywin32 동적 디스패치는 AttributeError)."""
+    def __init__(self):
+        self.calls = []
+
+    def SaveAs(self, path, **kw):
+        self.calls.append(("SaveAs", path, kw))
+
+
+class _Doc2010(_Doc2007):
+    def SaveAs2(self, path, **kw):
+        self.calls.append(("SaveAs2", path, kw))
+
+
+def test_word_save_as_falls_back_to_saveas_on_word2007():
+    old, new = _Doc2007(), _Doc2010()
+    off.word_save_as(old, "C:/x/a.docx", 16)
+    off.word_save_as(new, "C:/x/a.docx", 16)
+    off.word_save_as(new, "C:/x/b.docx")
+    assert old.calls == [("SaveAs", "C:/x/a.docx", {"FileFormat": 16})]
+    assert new.calls == [("SaveAs2", "C:/x/a.docx", {"FileFormat": 16}), ("SaveAs2", "C:/x/b.docx", {})]
+
+
 def test_missing_file_readonly_suggests_open_documents(fake_com):
     fake_com["open"]["excel"] = [{"name": "10월보고.xlsx", "path": "C:/x/10월보고.xlsx", "app": None, "doc": None}]
     with pytest.raises(rt.InputError) as ei:

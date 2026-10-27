@@ -103,7 +103,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 | `info` | 슬라이드별 제목, 도형/표/그림 수. `--all` |
 | `write` | `--slide N\|new`, `--title`, `--text`(`-` 줄은 글머리), `--file (.md: 제목마다 새 슬라이드, .csv: 표)`, `--image`, `--cards "제목:내용\|..."`, `--theme` |
 | `replace` | `--find/--replace` 또는 `--map`, `--slide`, 서식 옵션. 표와 그룹 도형 포함 |
-| `export` | `--save 경로.pdf\|.pptx` |
+| `export` | `--save 경로.pdf\|.pptx`. PDF 기능이 없는 Office(2007 기본 설치 등)는 `.pptx`로 저장하라는 STOP_RETRY를 돌려줍니다 |
 | `slide` | `--action list\|add\|duplicate\|move\|delete\|clear --slide --to --layout`. `clear`는 `--slide` 또는 `--all-slides`가 필요 |
 
 ### outlook.py
@@ -160,5 +160,6 @@ python word.py write --file "<결과의 output_file>"
 
 ```bat
 python -m pytest -q CLI/atomic-cli          :: 오프라인 (가짜 COM + 실제 샘플 파일)
-python CLI/atomic-cli/tools/run_win_tests.py  :: Windows + Office 실기 (아직 1.0 명령 체계로 갱신 전)
+python CLI/atomic-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세한 내용: TEST_CHECKLIST.md)
 ```
+- 대상은 Office 16.0(2016/2019/2021/365)입니다. Word 2007의 `SaveAs2` 부재는 `SaveAs`로 대체하므로 Office 2007에서도 실기 테스트가 돕니다. 다만 PDF 추가 기능이 없으면 PDF 내보내기 항목은 `ENV-SKIP`으로 기록됩니다.

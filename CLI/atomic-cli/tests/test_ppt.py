@@ -169,3 +169,46 @@ def test_read_closed_pptx_uses_python_pptx(tmp_path, capsys, monkeypatch):
     code, out = run(capsys, "read", "--target", str(p))
     assert code == 0 and out["slides"][0]["title"] == "제목"
     assert not calls
+
+
+class com_error(Exception):
+    """pywintypes.com_error 흉내 (args: hresult, 설명, excepinfo, argerr)."""
+
+
+E_FAIL = (-2147352567, "예외가 발생했습니다.", (0, None, None, None, 0, -2147467259), None)
+
+
+def _pdf_export(pp, behavior, version="16.0"):
+    calls = []
+
+    def export(path, fmt, **kw):
+        calls.append((path, fmt, kw))
+        if "PrintRange" not in kw:      # 실제 pywin32: 생략하면 인자 변환 단계에서 TypeError
+            raise TypeError("The Python instance can not be converted to a COM object")
+        if behavior == "ok":
+            open(path, "wb").close()
+        else:
+            raise behavior
+    pp["prs"].ExportAsFixedFormat = export
+    pp["app"].Version = version
+    return calls
+
+
+def test_export_pdf_passes_print_range_none(pp, capsys):
+    calls = _pdf_export(pp, "ok")
+    code, out = run(capsys, "export", "--save", "deck.pdf")
+    assert code == 0 and out["output_file"].endswith("deck.pdf")
+    assert calls[0][1] == 2 and calls[0][2] == {"PrintRange": None}
+
+
+def test_export_pdf_ppt2007_without_addin_is_input_error(pp, capsys):
+    _pdf_export(pp, com_error(*E_FAIL), version="12.0")
+    code, out = run(capsys, "export", "--save", "deck.pdf")
+    assert code == 1 and out["error_type"] == "input"
+    assert out["agent_directive"].startswith("STOP_RETRY:") and ".pptx" in out["message"]
+
+
+def test_export_pdf_e_fail_on_newer_office_is_not_relabelled(pp, capsys):
+    _pdf_export(pp, com_error(*E_FAIL), version="16.0")
+    code, out = run(capsys, "export", "--save", "deck.pdf")
+    assert code == 1 and out["error_type"] == "office" and "PDF 내보내기 기능이 없습니다" not in out["message"]
