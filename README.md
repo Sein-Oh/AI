@@ -22,9 +22,8 @@ AI_WORK/
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md / ROADMAP.md
         ├── requirements.txt / requirements-dev.txt / install_offline.bat
-        ├── ml_common.py       # 공통 모듈 (로딩, 수치 변환, 수식 엔진, JSON 규약, Windows 파일 처리)
         ├── ml_train.py        # 1단계: 학습
-        ├── ml_predict.py      # 2단계: 예측
+        ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
         ├── ml_report.py       # 3단계: Word 보고서
         └── tests/             # CLI 계약 + 회귀 테스트
 ```

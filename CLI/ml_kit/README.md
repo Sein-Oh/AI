@@ -39,9 +39,6 @@ ml_kit/
 ├── requirements.txt        # 런타임 의존성 (폐쇄망 wheel 반입 기준)
 ├── install_offline.bat     # 폐쇄망 오프라인 설치 (wheels/ 폴더 사용)
 │
-├── [공통 모듈]
-│   └── ml_common.py        # 데이터 로딩, 수치 변환, AST 수식 엔진, JSON 규약, Windows 파일 처리 (학습/추론 공용)
-│
 ├── [1단계: 학습 엔진]
 │   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀 경쟁, 리더보드, SSOT 패키징
 │

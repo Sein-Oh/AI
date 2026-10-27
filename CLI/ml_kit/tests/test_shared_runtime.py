@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for ml_common shared helpers."""
+"""Unit tests for the shared runtime (section C of ml_predict.py)."""
 import os
 import sys
 
@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import ml_common as mc  # noqa: E402
+import ml_predict as mc  # noqa: E402
 
 
 def test_coerce_numeric_object_and_str_dtypes():

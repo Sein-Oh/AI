@@ -181,6 +181,21 @@ def test_predict_missing_feature(trained):
     assert "누락" in payload["message"]
 
 
+def test_predict_standalone_deployment(trained, tmp_path):
+    """ml_predict.py + version folder alone must be a complete inference package."""
+    import shutil
+    work, _, _ = trained
+    shutil.copy(os.path.join(KIT, "ml_predict.py"), tmp_path / "ml_predict.py")
+    shutil.copytree(work / "sample_ml_data" / "v1", tmp_path / "v1")
+    proc = subprocess.run(
+        [sys.executable, "-I", str(tmp_path / "ml_predict.py"), "-m", str(tmp_path / "v1"), "-i", INLINE],
+        capture_output=True, text=True, encoding="utf-8", timeout=300, cwd=str(tmp_path),
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["status"] == "ok" and payload["predictions_summary"][TARGET]["predictions"]
+
+
 # ---------------------------------------------------------------- report
 
 try:

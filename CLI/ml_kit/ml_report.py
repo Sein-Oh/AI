@@ -13,7 +13,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ml_common import (  # noqa: E402
+from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError,
     sanitize_filename, normalize_version, load_json_file, strip_unit,
     save_with_lock_fallback, warn_long_path,
