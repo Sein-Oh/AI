@@ -28,7 +28,7 @@ AI_WORK/
     │   ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
     │   ├── ml_report.py       # 3단계: Word 보고서
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    └── atomic-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.0.0)
+    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.1.0)
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
@@ -46,7 +46,7 @@ AI_WORK/
 
 ```bash
 python -m pip install -r CLI/ml-kit/requirements.txt -c constraints.txt
-python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
+python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.

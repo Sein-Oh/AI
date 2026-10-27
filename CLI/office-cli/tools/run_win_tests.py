@@ -1,14 +1,14 @@
-"""atomic-cli 1.0 Windows 실기 테스트 러너
+"""office-cli 1.0 Windows 실기 테스트 러너
 
-사용법 (CLI/atomic-cli 폴더에서 실행):
+사용법 (CLI/office-cli 폴더에서 실행):
     python tools/run_win_tests.py                     # 전체 진행 (눈으로 확인할 항목은 y/n 질문)
     python tools/run_win_tests.py --only A,C          # 특정 그룹만
     python tools/run_win_tests.py --self-email me@company.com   # G3 실제 발송 테스트 포함
     python tools/run_win_tests.py --auto              # 질문 없이 자동 판정 항목만
-    python tools/run_win_tests.py --dir D:\\atomic_test --skip-outlook
+    python tools/run_win_tests.py --dir D:\\office_test --skip-outlook
 
 진행 방식:
-    1) 테스트 폴더(기본 C:\\atomic_test)에 A/B 테스트 파일(xlsx, docx, pptx)을 새로 만듭니다.
+    1) 테스트 폴더(기본 C:\\office_test)에 A/B 테스트 파일(xlsx, docx, pptx)을 새로 만듭니다.
     2) A.xlsx, A.docx, A.pptx를 더블클릭한 것처럼 화면에 엽니다.
     3) 체크리스트 순서대로 도구를 실행하고, COM으로 결과(셀 값, 파일 수정 시각, 슬라이드 수 등)를 자동 검증합니다.
     4) 화면 깜빡임처럼 눈으로만 확인 가능한 항목은 y/n으로 묻습니다.
@@ -204,7 +204,7 @@ def run_test(ctx, tid, title, fn):
 
 
 # ---------------------------------------------------------------------------
-# Office 객체 조회 (테스트 검증용, atomic-cli 코드와 독립)
+# Office 객체 조회 (테스트 검증용, office-cli 코드와 독립)
 # ---------------------------------------------------------------------------
 def office_app(kind):
     """사용자가 띄운 Office 앱. 더블클릭으로 연 Excel은 포커스를 잃기 전까지 ROT에 등록되지 않아
@@ -290,7 +290,7 @@ def isolate_tool_dirs(ctx):
     shutil.rmtree(cache, ignore_errors=True)
     os.makedirs(cache, exist_ok=True)
     os.makedirs(data, exist_ok=True)
-    RUN_ENV.update(ATOMIC_CACHE_DIR=cache, ATOMIC_DATA_DIR=data)
+    RUN_ENV.update(OFFICE_CLI_CACHE_DIR=cache, OFFICE_CLI_DATA_DIR=data)
 
 
 def setup_files(ctx):
@@ -641,7 +641,7 @@ def test_D(ctx):
         com_retry(lambda: doc.Activate())
         footer_before = com_retry(lambda: doc.Sections(1).Footers(1).PageNumbers.Count)
         saved_before = com_retry(lambda: bool(doc.Saved))
-        data, code, raw, err = run_cli("word.py", "export", "--save", "atomic_test_pagenum.pdf", "--page-number")
+        data, code, raw, err = run_cli("word.py", "export", "--save", "office_test_pagenum.pdf", "--page-number")
         doc = wd_doc("A.docx")
         footer_after = com_retry(lambda: doc.Sections(1).Footers(1).PageNumbers.Count)
         saved_after = com_retry(lambda: bool(doc.Saved))
@@ -661,7 +661,7 @@ def test_D(ctx):
     def d2():
         doc = wd_doc("A.docx")
         full_before = com_retry(lambda: doc.FullName)
-        data, code, raw, err = run_cli("word.py", "export", "--save", "atomic_test_copy.docx")
+        data, code, raw, err = run_cli("word.py", "export", "--save", "office_test_copy.docx")
         fp = (data or {}).get("output_file", "")
         full_after = com_retry(lambda: wd_doc("A.docx").FullName)
         ok = (data or {}).get("status") == "ok" and os.path.exists(fp) and full_before == full_after
@@ -670,14 +670,14 @@ def test_D(ctx):
     def d3():
         activate_xl("A.xlsx", "Sheet1")
         before = com_retry(lambda: xl_app().Workbooks.Count)
-        data, code, raw, err = run_cli("excel.py", "export", "--save", "atomic_test_t.xlsx")
+        data, code, raw, err = run_cli("excel.py", "export", "--save", "office_test_t.xlsx")
         after = com_retry(lambda: xl_app().Workbooks.Count)
         fp = (data or {}).get("output_file", "")
         ok = (data or {}).get("status") == "ok" and os.path.exists(fp) and before == after
         record(ctx, "D3", "XLSX 내보내기 후 임시 통합문서 미잔류", ok, f"통합문서 수 {before}->{after}", data, code, raw, err)
 
     def d4():
-        data, code, raw, err = run_cli("ppt.py", "export", "--save", "atomic_test_deck.pdf")
+        data, code, raw, err = run_cli("ppt.py", "export", "--save", "office_test_deck.pdf")
         fp = (data or {}).get("output_file", "")
         if pdf_unavailable(data):
             record(ctx, "D4", "PPT PDF 내보내기", ENV_SKIP, "이 PC의 PowerPoint에 PDF 내보내기 기능이 없음", data, code, raw, err)
@@ -824,16 +824,16 @@ def test_G(ctx):
     me = ctx.args.self_email
 
     def g1():
-        to = me or "atomic-test@example.com"
-        data, code, raw, err = run_cli("outlook.py", "new", "--to", to, "--subject", "[atomic-cli 테스트] 표시 전용",
+        to = me or "office-test@example.com"
+        data, code, raw, err = run_cli("outlook.py", "new", "--to", to, "--subject", "[office-cli 테스트] 표시 전용",
                                        "--body", "본문 테스트")
         ok = (data or {}).get("status") == "ok" and (data or {}).get("sent") is False
         manual = ask(ctx, "메일 작성 창이 떴나요? (서명을 등록해 두었다면 본문 아래 서명도 보여야 합니다. 확인 후 저장하지 않고 닫아 주세요)")
         record(ctx, "G1", "기본 동작: 작성 창만 표시, 미발송", ok and manual is not False, "", data, code, raw, err)
 
     def g2():
-        data, code, raw, err = run_cli("outlook.py", "new", "--to", "zz_atomic_invalid_recipient_000",
-                                       "--subject", "[atomic-cli 테스트] 잘못된 수신자", "--body", "발송되면 안 됨", "--send")
+        data, code, raw, err = run_cli("outlook.py", "new", "--to", "zz_office_invalid_recipient_000",
+                                       "--subject", "[office-cli 테스트] 잘못된 수신자", "--body", "발송되면 안 됨", "--send")
         ok = (data or {}).get("status") == "error" and (data or {}).get("sent") is False
         ask(ctx, "작성 창이 떴다면 저장하지 않고 닫아 주세요. 닫았나요?")
         record(ctx, "G2", "잘못된 수신자 + --send -> 발송 안 됨", ok,
@@ -846,7 +846,7 @@ def test_G(ctx):
         if not ctx.auto and ask(ctx, f"{me} 주소로 실제 테스트 메일을 1통 발송합니다. 진행할까요?") is not True:
             record(ctx, "G3", "명시적 --send 실제 발송", None, "사용자가 건너뜀")
             return
-        data, code, raw, err = run_cli("outlook.py", "new", "--to", me, "--subject", "[atomic-cli 테스트] 발송 테스트",
+        data, code, raw, err = run_cli("outlook.py", "new", "--to", me, "--subject", "[office-cli 테스트] 발송 테스트",
                                        "--body", "자동 발송 테스트 메일입니다.", "--send")
         record(ctx, "G3", "명시적 --send 실제 발송", (data or {}).get("sent") is True, "", data, code, raw, err)
 
@@ -1542,7 +1542,7 @@ def write_report(ctx):
     for r in ctx.results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     lines = [
-        f"atomic-cli 1.0 Windows 테스트 보고서 ({stamp})",
+        f"office-cli 1.0 Windows 테스트 보고서 ({stamp})",
         f"Python {sys.version.split()[0]} / 테스트 폴더 {ctx.dir}",
         "요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
         "",
@@ -1570,8 +1570,8 @@ GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test
 
 
 def main():
-    parser = argparse.ArgumentParser(description="atomic-cli 1.0 Windows 실기 테스트 러너")
-    parser.add_argument("--dir", default=r"C:\atomic_test", help="테스트 파일을 만들 폴더 (기본 C:\\atomic_test)")
+    parser = argparse.ArgumentParser(description="office-cli 1.0 Windows 실기 테스트 러너")
+    parser.add_argument("--dir", default=r"C:\office_test", help="테스트 파일을 만들 폴더 (기본 C:\\office_test)")
     parser.add_argument("--only", help="실행할 그룹 (예: A,C,E)")
     parser.add_argument("--self-email", help="G3 실제 발송 테스트에 쓸 본인 메일 주소 (생략 시 G3 건너뜀)")
     parser.add_argument("--skip-outlook", action="store_true", help="G 그룹(Outlook) 건너뜀")
@@ -1587,7 +1587,7 @@ def main():
         selected.discard("G")
 
     log("=" * 70)
-    log(" atomic-cli 1.0 Windows 테스트")
+    log(" office-cli 1.0 Windows 테스트")
     log(f" 대상 그룹: {','.join(sorted(selected))} / 테스트 폴더: {ctx.dir}")
     log(" 실행 전 다른 Excel/Word/PowerPoint 문서는 저장 후 모두 닫아 주세요.")
     log(" 테스트 중에는 Office 창을 직접 조작하지 마세요 (질문 응답 제외).")
