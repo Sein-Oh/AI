@@ -470,6 +470,7 @@ def train_and_benchmark_models(
     Prediction interval: 5%/95% quantiles of the champion's OOF residuals (90% level).
     """
     valid_mask = y_series.notna().values
+    row_ids = np.flatnonzero(valid_mask)  # position in the loaded data (reported as 1-based data_row)
     X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(float).values
 
@@ -491,8 +492,9 @@ def train_and_benchmark_models(
         params = {}
 
         for fold, (train_idx, val_idx) in enumerate(kf.split(X, y), 1):
-            pct = log_offset + int(log_weight * (m_idx * n_splits + fold) / (model_count * n_splits))
-            log_progress(pct, f"Target '{target_name}' | {model_name} (Fold {fold}/{n_splits})...")
+            if fold == 1:
+                pct = log_offset + int(log_weight * m_idx / model_count)
+                log_progress(pct, f"Target '{target_name}' | {model_name} 교차검증 ({n_splits}-fold)...")
 
             # Leakage-Free Pipeline: fitted ONLY on training fold
             pipe = build_pipeline(clone(regressor), schema, "regressor")
@@ -570,8 +572,13 @@ def train_and_benchmark_models(
         "champion": champion_summary,
         "leaderboard": leaderboard
     }
-
-    return target_benchmark_res, final_pipeline, champion_summary
+    oof_df = pd.DataFrame({
+        "data_row": row_ids + 1,
+        "actual": y,
+        "predicted": np.round(model_oof_map[champion_name], 6),
+        "residual": np.round(residuals, 6),
+    })
+    return target_benchmark_res, final_pipeline, champion_summary, oof_df
 
 
 # ==============================================================================
@@ -678,6 +685,7 @@ def train_and_benchmark_classifiers(
     OOF probabilities to maximize the positive-class F1.
     """
     valid_mask = y_series.notna().values
+    row_ids = np.flatnonzero(valid_mask)  # position in the loaded data (reported as 1-based data_row)
     X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(str).values
 
@@ -727,8 +735,9 @@ def train_and_benchmark_classifiers(
         params = {}
 
         for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
-            pct = log_offset + int(log_weight * (m_idx * n_splits + fold) / (model_count * n_splits))
-            log_progress(pct, f"Target '{target_name}' | {model_name} (Fold {fold}/{n_splits})...")
+            if fold == 1:
+                pct = log_offset + int(log_weight * m_idx / model_count)
+                log_progress(pct, f"Target '{target_name}' | {model_name} 교차검증 ({n_splits}-fold)...")
 
             pipe = build_pipeline(clone(clf), schema, "classifier")
             pipe.fit(X.iloc[train_idx], y[train_idx])
@@ -824,7 +833,10 @@ def train_and_benchmark_classifiers(
         "champion": champion_summary,
         "leaderboard": leaderboard
     }
-    return target_benchmark_res, final_pipeline, champion_summary
+    oof_df = pd.DataFrame({"data_row": row_ids + 1, "actual": y, "predicted": champion_oof})
+    for i, c in enumerate(classes):
+        oof_df[f"proba_{c}"] = np.round(model_proba_map[champion_name][:, i], 6)
+    return target_benchmark_res, final_pipeline, champion_summary, oof_df
 
 
 # ==============================================================================
@@ -927,24 +939,10 @@ class TransactionGuard:
 # ==============================================================================
 
 def append_history_ledger(ledger_path: str, record: Dict[str, Any]) -> None:
-    """
-    Appends experiment record to history.jsonl and automatically synchronizes
-    history.json (standard indented JSON array) as Single Source of Truth (SSOT).
-    """
-    data_root = os.path.dirname(ledger_path)
-    os.makedirs(data_root, exist_ok=True)
-
-    # 1. Append to history.jsonl (streaming ledger)
+    """Appends one experiment record (one JSON line) to history.jsonl, the single source of truth."""
+    os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
     with open(ledger_path, "a", encoding="utf-8", newline="\n") as f:
         f.write(dumps_json(record) + "\n")
-
-    # 2. Synchronize history.json (standard formatted JSON array), written atomically
-    json_path = os.path.join(data_root, "history.json")
-    all_records = load_history_ledger(ledger_path)
-    try:
-        atomic_write_text(json_path, dumps_json(all_records, indent=2))
-    except OSError as e:
-        sys.stderr.write(f"[WARN] history.json 동기화 실패 (history.jsonl은 정상 기록됨): {e}\n")
 
 
 def load_history_ledger(ledger_path: str) -> List[Dict[str, Any]]:
@@ -1177,7 +1175,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         applied_evals = []
         created_features = []
         if args.eval:
-            log_progress(15, "방탄 AST 파생변수 연산 중 (--eval)...")
+            log_progress(15, "파생변수 계산 중 (--eval)...")
             df_clean, applied_evals, created_features = run_safe_eval(
                 df=df_clean,
                 eval_str=args.eval,
@@ -1221,7 +1219,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
             extra = {"positive_class": positive_class} if task == TASK_CLASSIFICATION else {}
-            t_bench, champion_pipe, champion_info = benchmark_fn(
+            t_bench, champion_pipe, champion_info, oof_df = benchmark_fn(
                 X=X_all,
                 y_series=df_clean[target_name],
                 target_name=target_name,
@@ -1235,7 +1233,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             target_benchmarks[target_name] = t_bench
             target_champions[target_name] = {
                 "pipeline": champion_pipe,
-                "info": champion_info
+                "info": champion_info,
+                "oof": oof_df
             }
             all_champion_scores.append(champion_info["val_score"])
 
@@ -1274,7 +1273,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                      if h.get("task", TASK_REGRESSION) == task and sorted(h.get("targets", [])) == sorted(target_names)]
 
         def _rec_score(h: Dict[str, Any]) -> Optional[float]:
-            v = h.get("mean_val_score", h.get("mean_val_r2", h.get("val_r2")))
+            v = h.get("mean_val_score")
             return float(v) if isinstance(v, (int, float)) else None
 
         prev_scores = [v for v in (_rec_score(h) for h in same_task) if v is not None]
@@ -1310,15 +1309,13 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         if weak_feats:
             recommendations.append(f"기여도가 1% 미만인 피처 {weak_feats[:2]}을(를) 배제하여 노이즈를 감소시키십시오.")
 
-        # Task-specific score keys (regression keeps its historical key names)
+        # Score keys shared by result JSON, leaderboard and ledger
         score_keys: Dict[str, Any] = {
             "task": task,
             "primary_metric": primary_metric,
             "mean_val_score": round(mean_val_score, 4),
             "delta_score": delta_score,
         }
-        if task == TASK_REGRESSION:
-            score_keys.update({"mean_val_r2": round(mean_val_score, 4), "delta_r2": delta_score})
 
         # Stage Artifacts in .tmp_vX/
         log_progress(90, f"버전 산출물 패키징 중 ({current_version})...")
@@ -1341,7 +1338,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             if not dt.empty:
                 datetime_stats[col] = {"min": dt.min().isoformat(), "max": dt.max().isoformat()}
 
-        # Correlation: full matrix as a file, a bounded matrix in the ledger (keeps history.json small)
+        # Correlation: full matrix as a file, a bounded matrix in the ledger (keeps history.jsonl small)
         corr_full.to_csv(os.path.join(staging_dir, "correlation.csv"), encoding="utf-8-sig")
         corr_matrix, corr_truncated = bounded_correlation(
             corr_full, target_champions[target_names[0]]["info"]["feature_importances"],
@@ -1359,6 +1356,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             # Save Model Joblib with safe filename
             joblib_path = os.path.join(staging_dir, f"model_{safe_target}.joblib")
             joblib.dump(pipe, joblib_path, compress=3)
+
+            # Out-of-fold predictions of the champion (report: actual vs predicted, residuals, ROC)
+            champ_data["oof"].to_csv(os.path.join(staging_dir, f"oof_{safe_target}.csv"), index=False, encoding="utf-8-sig")
 
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
@@ -1430,6 +1430,21 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         missing_imputed = int(X_all.isna().sum().sum())
         prescription = recommendations[0] if recommendations else "모델 경쟁 학습 및 평가 완료"
 
+        owner = input_column_owner(feature_schema)
+        feature_missing: Dict[str, int] = {}
+        for col, n_miss in X_all.isna().sum().items():
+            raw_col = owner.get(col, col)
+            feature_missing[raw_col] = max(feature_missing.get(raw_col, 0), int(n_miss))
+        data_profile = {
+            "source_file": os.path.basename(raw_file),
+            "rows_loaded": int(len(df_raw)),
+            "columns_loaded": int(df_raw.shape[1]),
+            "rows_used": {t: int(target_benchmarks[t]["sample_count"]) for t in target_names},
+            "target_missing_rows": {t: int(df_clean[t].isna().sum()) for t in target_names},
+            "feature_missing": feature_missing,
+            "layout": {"header_row": args.header_row, "unit_row": args.unit_row, "data_row": args.data_row},
+        }
+
         history_record = {
             "version": current_version,
             "timestamp": datetime.now().isoformat(),
@@ -1442,6 +1457,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "missing_imputed": missing_imputed
             },
             "file": os.path.basename(raw_file),
+            "data_profile": data_profile,
             "targets": target_names,
             "target_summaries": target_summaries,
             "features_used": feature_names,
@@ -1553,16 +1569,14 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
         ver = r.get("version", "-")
         tag = r.get("tag") or "-"
         task = r.get("task", TASK_REGRESSION)
-        score = r.get("mean_val_score", r.get("mean_val_r2"))
-        delta = r.get("delta_score", r.get("delta_r2", "base"))
+        score = r.get("mean_val_score")
+        delta = r.get("delta_score", "base")
         row = {
             "version": ver, "tag": tag, "task": task,
             "primary_metric": r.get("primary_metric", PRIMARY_METRIC.get(task, "val_r2")),
             "mean_val_score": score, "delta_score": delta,
             "is_best": bool(r.get("is_best")), "targets": r.get("targets", []),
         }
-        if task == TASK_REGRESSION:
-            row.update({"mean_val_r2": score, "delta_r2": delta})
         rows.append(row)
 
         tag_s = tag if len(tag) <= 15 else tag[:13] + ".."
@@ -1594,11 +1608,10 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
         "record_count": len(rows),
         "best_version": best["version"] if best else None,
         "best_mean_val_score": best["mean_val_score"] if best else None,
-        "best_mean_val_r2": best_by_task.get(TASK_REGRESSION, {}).get("mean_val_score"),
         "best_by_task": best_by_task,
         "latest_version": rows[-1]["version"],
         "records": rows,
-        "agent_directive": "VERIFIED: History summary returned. Do not re-read history.json for the same information.",
+        "agent_directive": "VERIFIED: History summary returned. Do not read history.jsonl for the same information.",
     }
 
 

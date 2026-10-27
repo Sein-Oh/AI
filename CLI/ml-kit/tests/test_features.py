@@ -66,7 +66,7 @@ def test_predict_with_categories_dates_and_warnings(mixed):
     warn = run_tool("ml_predict.py", "-m", vdir, "-i", "일시=2027-01-01 10:00,라인=Z라인,반응온도=")
     assert warn["unseen_category_warning"] is True and "Z라인" in warn["unseen_category_warnings"][0]
     assert warn["missing_input_counts"] == {"반응온도(°C)": 1}
-    assert any("학습 기간" in w for w in warn["drift_warnings"])
+    assert any("학습 기간" in w for w in warn["extrapolation_warnings"])
 
 
 def test_predict_standalone_with_new_schema(mixed, tmp_path):
@@ -101,7 +101,8 @@ def test_tuned_linear_models_on_wide_linear_data(tmp_path):
     board = {e["model_name"]: e for e in lb["targets"]["t"]["leaderboard"]}
     assert board["ElasticNet"]["val_r2"] > 0.75 and "alpha" in board["ElasticNet"]["params"]
     assert board["Ridge"]["val_r2"] > 0.6
-    hist = json.loads((tmp_path / "wide_ml_data" / "history.json").read_text(encoding="utf-8"))[-1]
+    lines = (tmp_path / "wide_ml_data" / "history.jsonl").read_text(encoding="utf-8").splitlines()
+    hist = json.loads(lines[-1])
     assert hist["correlation_truncated"] is True and len(hist["correlation_matrix"]) == 31
     assert len(hist["target_correlations"]["t"]) == 60
     assert payload["next_commands"]

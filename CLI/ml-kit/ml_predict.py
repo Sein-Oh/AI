@@ -1080,10 +1080,10 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         req_features = meta.get("features_required", [])
         derived_evals = meta.get("derived_evals", [])
         feature_stats = meta.get("feature_stats", {})
-        if not req_features:
+        if not req_features or "feature_schema" not in meta or "task" not in meta:
             raise InputError(
-                f"타겟 '{target_name}'의 메타데이터(model_*.json)에 features_required가 없습니다. "
-                f"모델과 같은 폴더의 .json 파일을 확인하거나 --meta로 지정하십시오."
+                f"타겟 '{target_name}'의 메타데이터(model_*.json)가 없거나 ml-kit 1.0.0 형식이 아닙니다. "
+                f"모델과 같은 폴더의 .json 파일을 확인하거나(--meta로 지정 가능), 1.0.0으로 다시 학습하십시오."
             )
         derived_names = [e.split("=", 1)[0].strip() for e in derived_evals if "=" in e]
 
@@ -1103,16 +1103,10 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 + f"\n[입력 데이터 컬럼 목록]: {available_cols}"
             )
 
-        schema = meta.get("feature_schema")  # models trained by 2.1.0+; older models use the numeric-array path
-        if schema:
-            X_model = prepare_features(df_evaled, schema)
-            numeric_view = X_model[[c for c in schema["numeric"]]]
-            owner = input_column_owner(schema)
-        else:
-            # Same numeric parsing as training (thousands separators, '-', 'N/A', pandas 2/3 dtypes)
-            X_model = pd.DataFrame({f: coerce_numeric(df_evaled[f]) for f in req_features}, index=df_evaled.index)
-            numeric_view = X_model
-            owner = {f: f for f in req_features}
+        schema = meta["feature_schema"]
+        X_model = prepare_features(df_evaled, schema)
+        numeric_view = X_model[list(schema["numeric"])]
+        owner = input_column_owner(schema)
 
         # Missing / unparseable inputs are imputed by the pipeline -> tell the agent explicitly
         for col, n_miss in X_model.isna().sum().items():
@@ -1121,24 +1115,23 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 missing_counts[raw_col] = max(missing_counts.get(raw_col, 0), int(n_miss))
 
         # Categories never seen in training are encoded as "none of the known categories"
-        if schema:
-            for col, known in schema.get("categorical", {}).items():
-                vals = X_model[col].dropna()
-                unseen = sorted(set(vals) - set(known))
-                if unseen:
-                    category_warnings.append(
-                        f"범주형 피처 '{col}'에 학습 때 없던 값 {unseen[:5]}이(가) {int(vals.isin(unseen).sum())}건 있습니다. "
-                        f"해당 행의 예측 신뢰도가 낮을 수 있습니다. [학습 범주]: {known[:10]}"
+        for col, known in schema.get("categorical", {}).items():
+            vals = X_model[col].dropna()
+            unseen = sorted(set(vals) - set(known))
+            if unseen:
+                category_warnings.append(
+                    f"범주형 피처 '{col}'에 학습 때 없던 값 {unseen[:5]}이(가) {int(vals.isin(unseen).sum())}건 있습니다. "
+                    f"해당 행의 예측 신뢰도가 낮을 수 있습니다. [학습 범주]: {known[:10]}"
+                )
+        for col, rng in (meta.get("datetime_stats") or {}).items():
+            dt = parse_datetime(df_evaled[col]).dropna()
+            if not dt.empty:
+                lo, hi = pd.Timestamp(rng["min"]), pd.Timestamp(rng["max"])
+                n_out = int(((dt < lo) | (dt > hi)).sum())
+                if n_out:
+                    drift_warnings.append(
+                        f"날짜 피처 '{col}' 학습 기간({lo.date()} ~ {hi.date()}) 밖의 값 {n_out}건 (외삽)"
                     )
-            for col, rng in (meta.get("datetime_stats") or {}).items():
-                dt = parse_datetime(df_evaled[col]).dropna()
-                if not dt.empty:
-                    lo, hi = pd.Timestamp(rng["min"]), pd.Timestamp(rng["max"])
-                    n_out = int(((dt < lo) | (dt > hi)).sum())
-                    if n_out:
-                        drift_warnings.append(
-                            f"날짜 피처 '{col}' 학습 기간({lo.date()} ~ {hi.date()}) 밖의 값 {n_out}건 (외삽)"
-                        )
 
         # Data Drift / Out-of-bounds Check (with quantitative severity ratio)
         if feature_stats:
@@ -1165,10 +1158,10 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                                     f"피처 '{fname}' 하한 미달 외삽(Extrapolation) 감지: 학습 최소={f_min:.2f}, 입력 최소={c_min:.2f} (범위 대비 -{under_pct}% 미달 이탈, 범위 밖 {n_out}건)"
                                 )
 
-        X_input = X_model if schema else X_model.values
+        X_input = X_model
 
         # Execute Prediction
-        task = meta.get("task", "regression")  # models trained before 2.0.0 have no task -> regression
+        task = meta["task"]
         estimator = pipe.named_steps.get("regressor") or pipe.named_steps.get("classifier") or pipe
         desc = meta.get("description", "")
 
@@ -1285,13 +1278,11 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     result = {
         "status": "ok",
         "source": source_desc,
-        "sample_count": len(df_result),
         "total_rows": len(df_result),
         "targets_predicted": list(predictions_summary.keys()),
         "output_file": saved_file,
         "predictions_summary": predictions_summary,
-        "drift_warning": bool(drift_warnings),
-        "drift_warnings": drift_warnings,
+        "extrapolation_warning": bool(drift_warnings),
         "extrapolation_warnings": drift_warnings,
         "low_confidence_warning": bool(low_conf_warnings),
         "low_confidence_warnings": low_conf_warnings,

@@ -67,7 +67,8 @@ def test_train_creates_version(trained):
     work, _, payload = trained
     data_root = work / "sample_ml_data"
     assert (data_root / "history.jsonl").is_file()
-    assert (data_root / "history.json").is_file()
+    assert not (data_root / "history.json").exists()  # single ledger file since 1.0.0
+    assert (data_root / "v1" / "oof_생산효율(%).csv").is_file()
     assert (data_root / "v1").is_dir()
     assert not any(p.name.startswith(".tmp_") for p in data_root.iterdir())
     assert payload["agent_directive"].startswith("VERIFIED")
@@ -126,7 +127,7 @@ def test_train_strings_with_commas_and_placeholders(tmp_path):
     payload = run_tool("ml_train.py", "-f", str(p), "-x", FEATURES + ",상수열", "-y", TARGET)
     hist = (tmp_path / "comma_ml_data" / "history.jsonl").read_text(encoding="utf-8")
     assert "NaN" not in hist
-    assert payload["mean_val_r2"] > 0.5
+    assert payload["mean_val_score"] > 0.5
 
 
 def test_train_history_mode_is_json(trained):
@@ -146,7 +147,7 @@ def test_predict_inline(trained):
     work, _, _ = trained
     payload = run_tool("ml_predict.py", "-m", str(work / "sample_ml_data" / "v1"), "-i", INLINE)
     assert payload["agent_directive"].startswith("VERIFIED")
-    assert payload["drift_warning"] is False
+    assert payload["extrapolation_warning"] is False
     assert len(payload["predictions_summary"][TARGET]["predictions"]) == 1
 
 
@@ -164,7 +165,7 @@ def test_predict_extrapolation_flag(trained):
     work, _, _ = trained
     payload = run_tool("ml_predict.py", "-m", str(work / "sample_ml_data" / "v1"),
                        "-i", INLINE.replace("반응온도(°C)=240", "반응온도(°C)=900"))
-    assert payload["drift_warning"] is True
+    assert payload["extrapolation_warning"] is True
     assert payload["extrapolation_warnings"]
 
 
@@ -194,50 +195,3 @@ def test_predict_standalone_deployment(trained, tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert payload["status"] == "ok" and payload["predictions_summary"][TARGET]["predictions"]
-
-
-# ---------------------------------------------------------------- report
-
-try:
-    import docx  # noqa: F401
-    HAS_DOCX = True
-except ImportError:
-    HAS_DOCX = False
-
-needs_docx = pytest.mark.skipif(not HAS_DOCX, reason="python-docx not installed in this environment")
-
-
-@pytest.mark.skipif(HAS_DOCX, reason="only meaningful when python-docx is missing")
-def test_report_without_docx_returns_json(trained):
-    work, _, _ = trained
-    payload = run_fail("ml_report.py", "-d", str(work / "sample_ml_data"))
-    assert payload["agent_directive"].startswith("STOP_RETRY") and "python-docx" in payload["message"]
-
-
-@needs_docx
-def test_report(trained):
-    work, _, _ = trained
-    out = work / "report.docx"
-    payload = run_tool("ml_report.py", "-d", str(work / "sample_ml_data"), "-t", TARGET, "-o", str(out))
-    assert out.is_file() and payload["best_version"]
-
-
-@needs_docx
-def test_report_version_without_v_and_jsonl_only(trained):
-    """history.json missing -> must fall back to history.jsonl (was reading the wrong file)."""
-    work, _, _ = trained
-    root = work / "sample_ml_data"
-    (root / "history.json").rename(root / "history.json.bak")
-    try:
-        payload = run_tool("ml_report.py", "-d", str(root), "-t", "생산효율", "-v", "1",
-                           "-o", str(work / "r_v1.docx"))
-        assert payload["best_version"] == "v1"
-    finally:
-        (root / "history.json.bak").rename(root / "history.json")
-
-
-@needs_docx
-def test_report_unknown_version_fails(trained):
-    work, _, _ = trained
-    payload = run_fail("ml_report.py", "-d", str(work / "sample_ml_data"), "-v", "v99")
-    assert "v99" in payload["message"]

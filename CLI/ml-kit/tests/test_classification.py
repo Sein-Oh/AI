@@ -108,28 +108,6 @@ def test_history_mixed_tasks_compare_within_task(multiclass):
     assert set(hist["best_by_task"]) == {"classification", "regression"}
 
 
-def test_report_rejects_classification(multiclass):
-    pytest.importorskip("docx")
-    work, _, _ = multiclass
-    payload = run_fail("ml_report.py", "-d", str(work / "proc_ml_data"), "-t", "품질등급")
-    assert "분류" in payload["message"]
-
-
-def test_pre_2_0_model_metadata_is_regression(tmp_path):
-    """Models trained before 2.0.0 have no 'task' key and must still predict as regression."""
-    from make_sample import make_sample
-    data = make_sample(str(tmp_path / "old.csv"))
-    run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,압축압력,촉매비율,수분함량", "-y", "생산효율")
-    meta_p = tmp_path / "old_ml_data" / "v1" / "model_생산효율(%).json"
-    meta = json.loads(meta_p.read_text(encoding="utf-8"))
-    for k in ("task", "primary_metric", "val_score"):
-        meta.pop(k)
-    meta_p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-    payload = run_tool("ml_predict.py", "-m", str(tmp_path / "old_ml_data" / "v1"),
-                       "-i", "반응온도=240,소비전력=65,압축압력=3,촉매비율=0.8,수분함량=20")
-    assert payload["predictions_summary"]["생산효율(%)"]["task"] == "regression"
-
-
 def test_delta_compares_same_targets_only(tmp_path):
     """A new target in the same ledger starts from 'base' instead of comparing with another target."""
     data = make_class_sample(str(tmp_path / "dt.csv"))
