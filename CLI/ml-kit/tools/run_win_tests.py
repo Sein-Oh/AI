@@ -13,12 +13,20 @@
     - 단독 배포 폴더, 학습 강제 종료 뒤 복구, 동시 학습 잠금, 2만 행 처리 시간
     - 모든 호출의 stdout 1줄 JSON / stderr 진행 로그 계약 (에이전트 서브프로세스 조건)
 Office는 DispatchEx 전용 인스턴스로만 쓰고 끝나면 닫습니다(사용자 창은 건드리지 않음).
-결과는 테스트 폴더의 report_*.txt로 저장됩니다.
+
+결과 파일 (실행 결과와 상관없이 항상 생성, 준비 단계에서 실패해도 생성):
+    <테스트 폴더>/report_<시각>.txt               사람이 보는 요약
+    tools/test_logs/testlog_<라벨>_<시각>.txt     AI 판독용 상세 로그 (환경, 통과 기준, 호출별 전체 JSON/stderr,
+                                                  실패 시 관련 폴더 상태, 계약 위반, 전체 호출 기록)
+    AI에게 판단을 맡기려면 testlog 파일을 그대로 전달하거나 git으로 커밋/푸시하세요.
+    python tools/run_win_tests.py --label 집PC     # 로그 파일 이름에 붙일 라벨
 """
 import argparse
 import datetime as dt
 import json
+import locale
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -29,6 +37,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 PY = sys.executable
 CONTRACT = []       # (호출, 문제) - stdout/stderr 계약 위반 기록
+CALLS = []          # 모든 도구 호출 기록 (AI 판독용 로그)
+CURRENT = {"test": "SETUP"}
+LOG_STDERR_CHARS = 4000
+
+# 각 항목의 통과 기준 (로그에 그대로 기록해 실패 원인을 판단할 수 있게 함)
+EXPECT = {
+    "M1": "status=ok, feature_types에 categorical '라인'과 datetime '일시', mean_val_score >= 0.8, targets에 '생산효율(%)'",
+    "M2": "입력 xlsx가 Excel에 열려(잠겨) 있어도 status=ok, description이 M1의 '공정 효율 예측 (실기 테스트)'로 상속",
+    "M3": "Excel이 저장한 CSV의 실제 인코딩이 cp949이고 status=ok, mean_val_score >= 0.8",
+    "M4": "예측 status=ok, 결과 CSV를 Excel로 열었을 때 머리글에 'pred_생산효율(%)'와 '반응온도(°C)'가 깨지지 않고 보임",
+    "M5": "결과 CSV가 Excel에 열려 있으면 status=ok이고 output_file이 요청 경로와 다른(시각이 붙은) 새 파일",
+    "M6": "보고서 status=ok, Word로 열림, 표 5개 이상, 문서 첫 문단에 '보고서' 포함",
+    "M7": "보고서가 Word에 열려 있으면 status=ok이고 report_file이 기존 파일과 다른 새 파일",
+    "M8": "next_commands의 needs_input이 자리표시자('<') 유무와 일치, needs_input=false인 첫 명령을 cmd.exe와 PowerShell에 그대로 넣어 둘 다 status=ok",
+    "M9": "ml_predict.py + v1 폴더만 있는 배포 폴더에서 단건 예측 status=ok, predictions와 intervals 존재",
+    "M10": "2만 행 학습 300초 미만, 예측 60초 미만, 둘 다 status=ok",
+    "M11": "같은 데이터 동시 학습: 두 번째는 status=error + STOP_RETRY + exit 1, 첫 번째는 status=ok",
+    "M12": "학습 강제 종료 뒤 재학습 status=ok, .tmp_* 임시 폴더가 남지 않고 새 버전 생성",
+    "M13": "--history status=ok, 컬럼 오타는 exit 1 + message에 '[추천]', 없는 옵션은 exit 2 + status=error",
+    "M14": "모든 호출의 stdout이 정확히 1줄 JSON, stderr에 \\r 덮어쓰기 없음",
+}
 
 try:
     import numpy as np
@@ -60,43 +89,60 @@ def run_tool(script, *args, cwd=None, timeout=900, label=None):
     """도구를 에이전트처럼 서브프로세스로 실행하고 (JSON, 종료코드, stdout, stderr)를 돌려줍니다.
     stdout은 정확히 1줄 JSON이어야 하고, stderr 진행 로그는 줄 단위(\\r 덮어쓰기 없음)여야 합니다."""
     cmd = [PY, os.path.join(ROOT, script) if not os.path.isabs(script) else script] + [str(a) for a in args]
-    log(f"    $ python {os.path.basename(script)} {' '.join(str(a) for a in args)}"[:300])
+    shown = f"python {os.path.basename(script)} {' '.join(str(a) for a in args)}"
+    log(f"    $ {shown}"[:300])
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
-    proc = subprocess.run(cmd, cwd=cwd or ROOT, capture_output=True, timeout=timeout, env=env)
-    return _parse(proc, label or os.path.basename(script))
+    t0 = time.time()
+    try:
+        proc = subprocess.run(cmd, cwd=cwd or ROOT, capture_output=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as e:
+        CALLS.append({"test": CURRENT["test"], "label": label or os.path.basename(script), "command": shown,
+                      "cwd": cwd or ROOT, "exit_code": "TIMEOUT", "sec": round(time.time() - t0, 1),
+                      "stdout": (e.stdout or b"").decode("utf-8", "replace")[-2000:],
+                      "stderr_tail": (e.stderr or b"").decode("utf-8", "replace")[-LOG_STDERR_CHARS:], "contract": []})
+        raise
+    return _parse(proc, label or os.path.basename(script), command=shown, cwd=cwd or ROOT, sec=time.time() - t0)
 
 
-def _parse(proc, label):
+def _parse(proc, label, command=None, cwd=None, sec=None):
     out = proc.stdout.decode("utf-8", errors="replace")
     err = proc.stderr.decode("utf-8", errors="replace")
     lines = [ln for ln in out.splitlines() if ln.strip()]
     data = None
+    issues = []
     if len(lines) != 1:
-        CONTRACT.append((label, f"stdout {len(lines)}줄"))
+        issues.append(f"stdout {len(lines)}줄")
     if lines:
         try:
             data = json.loads(lines[-1])
         except Exception:
-            CONTRACT.append((label, "stdout 마지막 줄이 JSON이 아님"))
+            issues.append("stdout 마지막 줄이 JSON이 아님")
     if "\r" in err.replace("\r\n", "\n"):
-        CONTRACT.append((label, "stderr에 \\r 덮어쓰기 (서브프로세스에서는 줄바꿈이어야 함)"))
+        issues.append("stderr에 \\r 덮어쓰기 (서브프로세스에서는 줄바꿈이어야 함)")
+    CONTRACT.extend((label, x) for x in issues)
+    CALLS.append({"test": CURRENT["test"], "label": label, "command": command or label, "cwd": cwd,
+                  "exit_code": proc.returncode, "sec": None if sec is None else round(sec, 1),
+                  "json": data, "stdout": "" if data is not None else out[-2000:],
+                  "stderr_tail": err[-LOG_STDERR_CHARS:], "contract": issues})
     return data, proc.returncode, out, err[-1500:]
 
 
 def run_shell(command, shell_kind, label):
     """next_commands 문자열을 그대로 셸에 넣어 실행합니다."""
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    t0 = time.time()
     if shell_kind == "cmd":
         proc = subprocess.run(command, shell=True, capture_output=True, timeout=900, env=env)
     else:
         ps = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; " + command
         proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=900, env=env)
-    return _parse(proc, label)
+    return _parse(proc, label, command=f"[{shell_kind}] {command}", sec=time.time() - t0)
 
 
 def record(ctx, tid, title, ok, detail="", data=None, code=None, err=""):
     status = "PASS" if ok else "FAIL"
     entry = {"id": tid, "title": title, "status": status, "detail": detail, "exit_code": code,
+             "expect": EXPECT.get(tid, ""), "data": data,
              "json": "" if data is None else json.dumps(data, ensure_ascii=False)[:400]}
     if not ok and err:
         entry["stderr_tail"] = err.strip()[-600:]
@@ -106,12 +152,16 @@ def record(ctx, tid, title, ok, detail="", data=None, code=None, err=""):
 
 def run_test(ctx, tid, title, fn):
     log(f"\n[{tid}] {title}")
+    CURRENT["test"] = tid
+    t0 = time.time()
     try:
         fn()
     except Exception as e:
         ctx.results.append({"id": tid, "title": title, "status": "ERROR", "detail": f"{type(e).__name__}: {e}",
-                            "trace": traceback.format_exc()[-1000:]})
+                            "expect": EXPECT.get(tid, ""), "trace": traceback.format_exc()[-4000:]})
         log(f"  => [ERROR] {tid} {e}")
+    if ctx.results and ctx.results[-1]["id"] == tid:
+        ctx.results[-1]["sec"] = round(time.time() - t0, 1)
 
 
 def ok_(d):
@@ -157,6 +207,7 @@ def setup(ctx):
     os.makedirs(ctx.dir, exist_ok=True)
     rows = process_xl_rows()
     xl = Office("Excel.Application")
+    ctx.state.setdefault("office", {})["Excel"] = str(getattr(xl.app, "Version", "?"))
     try:
         # 1) 실제 Excel이 만든 보고서형 xlsx: 1행 제목, 3행 머리글, 4행 단위, 5행부터 데이터(날짜 셀 포함)
         wb = xl.app.Workbooks.Add()
@@ -270,6 +321,7 @@ def test_all(ctx, only):
         info = None
         if rep and os.path.exists(rep):
             wd = Office("Word.Application")
+            s.setdefault("office", {})["Word"] = str(getattr(wd.app, "Version", "?"))
             try:
                 doc = wd.app.Documents.Open(rep, ReadOnly=True, AddToRecentFiles=False, Visible=False)
                 info = {"tables": int(doc.Tables.Count), "pages": int(doc.ComputeStatistics(2)),
@@ -430,20 +482,140 @@ def write_report(ctx):
     return path, counts
 
 
+def _safe(fn, default="?"):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def env_info(ctx):
+    from importlib import metadata
+    pkgs = {}
+    for name in ("numpy", "pandas", "scikit-learn", "joblib", "openpyxl", "python-docx", "matplotlib", "pywin32"):
+        pkgs[name] = _safe(lambda n=name: metadata.version(n), "미설치")
+    skill_ver = _safe(lambda: next(ln.split(":", 1)[1].strip().strip('"') for ln in
+                                   open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8") if ln.strip().startswith("version:")))
+    git = _safe(lambda: subprocess.run(["git", "-C", ROOT, "log", "-1", "--format=%h %ad %s", "--date=short"],
+                                       capture_output=True, text=True, encoding="utf-8").stdout.strip() or "?")
+    dirty = _safe(lambda: len([x for x in subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "."],
+                                                         capture_output=True, text=True, encoding="utf-8").stdout.splitlines() if x]), "?")
+    codepage = _safe(lambda: subprocess.run("chcp", shell=True, capture_output=True).stdout.decode("ascii", "replace").strip())
+    return [
+        ("OS", f"{platform.platform()} ({platform.version()})"),
+        ("Python", f"{sys.version.split()[0]} ({PY})"),
+        ("패키지", ", ".join(f"{k} {v}" for k, v in pkgs.items())),
+        ("Office", ", ".join(f"{k} {v}" for k, v in (ctx.state.get("office") or {}).items()) or "확인 전"),
+        ("ml-kit", f"SKILL.md version {skill_ver}, git {git}, 커밋 안 된 변경 {dirty}개"),
+        ("인코딩", f"locale={locale.getpreferredencoding(False)}, stdout={sys.stdout.encoding}, {codepage}"),
+        ("테스트 폴더", ctx.dir),
+    ]
+
+
+def _paths_in(data):
+    paths = []
+    for key in ("data_root", "version_dir", "output_file", "report_file"):
+        v = (data or {}).get(key)
+        if isinstance(v, str) and v:
+            paths.append(v)
+    return paths
+
+
+def _folder_state(path, max_items=40):
+    """실패한 호출이 가리킨 폴더의 실제 상태 (파일 이름과 크기)."""
+    folder = path if os.path.isdir(path) else os.path.dirname(path)
+    if not os.path.isdir(folder):
+        return [f"{folder}: 폴더 없음"]
+    items = []
+    for name in sorted(os.listdir(folder))[:max_items]:
+        full = os.path.join(folder, name)
+        items.append(f"{name}/" if os.path.isdir(full) else f"{name} ({_safe(lambda: os.path.getsize(full), '?')} B)")
+    return [f"{folder}: " + ", ".join(items)]
+
+
+def write_testlog(ctx, log_dir, label, stamp, fatal=None):
+    """AI가 이 파일 하나만 읽고 실패 원인을 판단할 수 있도록 모든 근거를 남깁니다."""
+    os.makedirs(log_dir, exist_ok=True)
+    safe_label = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (label or "PC"))
+    path = os.path.join(log_dir, f"testlog_{safe_label}_{stamp}.txt")
+    counts = {}
+    for r in ctx.results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    bad = [r for r in ctx.results if r["status"] != "PASS"]
+    L = ["=" * 78, f"ml-kit 실기 테스트 로그 (AI 판독용)  라벨={label}  생성={stamp}", "=" * 78,
+         "결과: " + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "실행된 항목 없음")
+         + (f"  /  치명적 오류: {fatal.splitlines()[0]}" if fatal else ""), ""]
+    L.append("[판정 표]")
+    for r in ctx.results:
+        L.append(f"  {r['status']:<5} {r['id']:<6} {r.get('sec', '-')!s:>6}s  {r['title']}")
+    L += ["", "[환경]"] + [f"  {k}: {v}" for k, v in env_info(ctx)] + [""]
+    if fatal:
+        L += ["[치명적 오류 - 테스트를 끝까지 실행하지 못함]", "  " + fatal.replace("\n", "\n  "), ""]
+
+    L.append(f"[실패 상세] {len(bad)}건" + ("" if bad else " - 실패 없음"))
+    for r in bad:
+        L += ["", "-" * 78, f"[{r['status']}] {r['id']} {r['title']}",
+              f"  통과 기준: {r.get('expect') or '-'}", f"  관측 결과: {r.get('detail') or '-'}"]
+        if r.get("trace"):
+            L.append("  예외 traceback:\n    " + r["trace"].strip().replace("\n", "\n    "))
+        calls = [c for c in CALLS if c["test"] == r["id"]]
+        for i, c in enumerate(calls, 1):
+            L += [f"  호출 {i}: $ {c['command']}",
+                  f"    cwd={c.get('cwd')}  exit={c['exit_code']}  {c.get('sec')}s"
+                  + (f"  계약위반={c['contract']}" if c.get("contract") else "")]
+            if c.get("json") is not None:
+                L.append("    stdout JSON: " + json.dumps(c["json"], ensure_ascii=False))
+            elif c.get("stdout"):
+                L.append("    stdout(끝부분): " + c["stdout"].strip().replace("\n", "\n      "))
+            if c.get("stderr_tail", "").strip():
+                L.append("    stderr(끝부분):\n      " + c["stderr_tail"].strip().replace("\n", "\n      "))
+            for pth in _paths_in(c.get("json")):
+                L += ["    폴더 상태: " + x for x in _folder_state(pth)]
+        if not calls and r.get("data") is not None:
+            L.append("  JSON: " + json.dumps(r["data"], ensure_ascii=False))
+    L += ["", "[출력 계약 위반]"] + ([f"  {lab}: {prob}" for lab, prob in CONTRACT] or ["  없음"])
+    L += ["", "[전체 호출 기록] (항목, 호출, 종료코드, 시간, status / agent_directive 앞부분)"]
+    for c in CALLS:
+        j = c.get("json") or {}
+        L.append(f"  {c['test']:<6} {c['label'][:40]:<40} exit={c['exit_code']!s:<7} {c.get('sec')!s:>6}s  "
+                 f"{j.get('status', '-')} / {str(j.get('agent_directive', ''))[:70]}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description="ml-kit Windows 실기 테스트 러너")
     parser.add_argument("--dir", default=r"C:\ml_test\ml 테스트", help="테스트 폴더 (실행 때마다 새로 만듦, 한글/공백 경로 권장)")
     parser.add_argument("--only", help="실행할 항목 (예: M1,M4). M1이 만든 모델을 쓰는 항목은 M1도 함께 지정")
+    parser.add_argument("--label", default="PC", help="로그 파일 이름에 붙일 PC 라벨 (예: 집PC, 회사PC)")
+    parser.add_argument("--log-dir", default=os.path.join(ROOT, "tools", "test_logs"),
+                        help="AI 판독용 로그 폴더 (기본: tools/test_logs, git으로 커밋해 전달 가능)")
     args = parser.parse_args()
     pythoncom.CoInitialize()
     ctx = Ctx(args)
     only = {x.strip().upper() for x in args.only.split(",")} if args.only else None
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     log("=" * 70)
     log(f" ml-kit Windows 테스트 / 테스트 폴더: {ctx.dir}")
     log("=" * 70)
-    log("[준비] Excel로 테스트 데이터(xlsx, CP949 CSV) 생성")
-    setup(ctx)
-    test_all(ctx, only)
+    fatal = None
+    try:
+        log("[준비] Excel로 테스트 데이터(xlsx, CP949 CSV) 생성")
+        try:
+            setup(ctx)
+        except Exception as e:
+            ctx.results.append({"id": "SETUP", "title": "테스트 데이터 준비 (Excel로 xlsx/CSV 생성)", "status": "ERROR",
+                                "detail": f"{type(e).__name__}: {e}", "expect": "Excel 실행, xlsx/CSV 저장 성공",
+                                "trace": traceback.format_exc()[-4000:]})
+            raise
+        test_all(ctx, only)
+    except BaseException:
+        fatal = traceback.format_exc()[-4000:]
+        log(f"[ERROR] 테스트 중단: {fatal.splitlines()[-1]}")
+    finally:
+        os.makedirs(ctx.dir, exist_ok=True)
+        testlog = write_testlog(ctx, args.log_dir, args.label, stamp, fatal)
     path, counts = write_report(ctx)
     log("\n" + "=" * 70)
     log(" 결과 요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
@@ -451,6 +623,8 @@ def main():
         if r["status"] != "PASS":
             log(f"   [{r['status']}] {r['id']} {r['title']} {r.get('detail', '')}")
     log(f" 보고서: {path}")
+    log(f" AI 판독용 로그: {testlog}")
+    log("   (이 파일을 Claude에게 전달하거나 git add/commit/push 하세요)")
     log("=" * 70)
 
 
