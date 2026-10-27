@@ -54,6 +54,7 @@ def test_regression_report_structure(regression_report):
     for sec in SECTIONS:
         assert sec in heads, sec
     assert "4.1. 생산효율(%)" in heads
+    assert d.paragraphs[0].text == "ML 결과 보고서"  # tools/run_win_tests.py M6 reads the first paragraph
     assert len(d.inline_shapes) == payload["figure_count"] >= 6
     assert payload["table_count"] >= 8 and payload["verdicts"]["생산효율(%)"] in ("적합", "조건부", "부적합")
 

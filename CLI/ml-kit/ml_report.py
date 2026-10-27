@@ -914,9 +914,9 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     d = R.doc
 
     # -- Cover ---------------------------------------------------------------
-    for _ in range(5):
-        d.add_paragraph()
-    R.para(REPORT_TITLE, size=28, bold=True, color=C_ACCENT, space_after=6)
+    # Title is the first paragraph of the document (top margin via spacing, not empty paragraphs)
+    title_p = R.para(REPORT_TITLE, size=28, bold=True, color=C_ACCENT, space_after=6)
+    title_p.paragraph_format.space_before = Pt(110)
     R.para(rec.get("description") or "머신러닝 모델 학습 결과", size=13, color=C_INK, space_after=2)
     p = R.para(f"{data_name}  ·  {', '.join(t['name'] for t in targets)}", size=10, color=C_MUTED, space_after=28)
     _para_border_bottom(p, color=C_ACCENT, size=12)

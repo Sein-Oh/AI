@@ -75,6 +75,9 @@ def test_train_creates_version(trained):
     assert rec["data_profile"]["rows_loaded"] == 120 and "feature_missing" in rec["data_profile"]
     assert not any(p.name.startswith(".tmp_") for p in data_root.iterdir())
     assert payload["agent_directive"].startswith("VERIFIED")
+    assert payload["goal_met"] == (payload["mean_val_score"] >= 0.9 and all(
+        b["champion"]["val_score"] >= 0.9 for b in json.loads(
+            (data_root / "v1" / "leaderboard.json").read_text(encoding="utf-8"))["targets"].values()))
     meta = json.loads((data_root / "v1" / "model_생산효율(%).json").read_text(encoding="utf-8"))
     assert "sklearn_version" in meta
 

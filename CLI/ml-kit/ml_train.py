@@ -1310,7 +1310,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         primary_target = min(target_names, key=lambda t: target_champions[t]["info"]["val_score"])
         prim_champ = target_champions[primary_target]["info"]
         top_feats = prim_champ.get("top_features", [])
-        weak_feats = prim_champ.get("weak_features", [])
+        # A feature is only "weak" if it is weak for EVERY target (multi-target runs share one feature list)
+        weak_sets = [set(target_champions[t]["info"].get("weak_features", [])) for t in target_names]
+        weak_feats = [f for f in prim_champ.get("weak_features", []) if all(f in ws for ws in weak_sets)]
         below = [t for t in target_names if target_champions[t]["info"]["val_score"] < 0.90]
 
         recommendations = []
@@ -1506,7 +1508,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         next_commands = build_next_commands(
             args=args, raw_file=raw_file, task=task, positive_class=positive_class,
             feature_names=feature_names, created_features=created_features, applied_evals=applied_evals,
-            target_names=target_names, champion=prim_champ, schema=feature_schema,
+            target_names=target_names, champion={**prim_champ, "weak_features": weak_feats}, schema=feature_schema,
             mean_score=min_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
         )
         history_record["next_commands"] = next_commands
@@ -1545,6 +1547,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "targets": target_names,
             **score_keys,
             "is_best": is_best,
+            "goal_met": bool(min_score >= 0.90),
             "recommendations": recommendations,
             "next_commands": next_commands,
             "feature_types": history_record["feature_types"],
