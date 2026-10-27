@@ -168,7 +168,7 @@ def _active_doc(app: Any, kind: str) -> Optional[Any]:
     return None
 
 
-def _is_saved(doc: Any) -> bool:
+def is_saved(doc: Any) -> bool:
     saved = getattr(doc, "Saved", True)
     return saved != 0 if isinstance(saved, int) and not isinstance(saved, bool) else bool(saved)
 
@@ -189,7 +189,7 @@ def list_open(kind: str) -> List[Dict[str, Any]]:
                     continue
                 seen.add(full.lower())
                 docs.append({"name": str(doc.Name), "path": full if os.path.isabs(full) else "",
-                             "saved": _is_saved(doc),
+                             "saved": is_saved(doc),
                              "active": full == active_full, "app": app, "doc": doc})
         except Exception as e:
             rt.debug(f"{APP_LABEL[kind]} 문서 목록 수집 예외: {e}")
@@ -491,7 +491,7 @@ def open_target(kind: str, target: str = "active", readonly: bool = True, snapsh
 
         if not readonly and focus:
             t.apply_focus()
-        if owns_doc and not readonly and not _is_saved(t.doc):
+        if owns_doc and not readonly and not is_saved(t.doc):
             rt.log("PROGRESS", "변경사항 저장 중")
             t.doc.Save()
     finally:
@@ -566,3 +566,76 @@ def open_documents_summary() -> List[Dict[str, Any]]:
         except Exception as e:
             rt.debug(f"{APP_LABEL[kind]} 목록 실패: {e}")
     return result
+
+
+# ==============================================================================
+# 4. 색상과 테마 (Excel/Word/PPT 공통)
+# ==============================================================================
+
+# 이름 -> #RRGGBB
+COLOR_NAMES = {
+    "black": "#000000", "white": "#FFFFFF", "red": "#FF0000", "green": "#008000", "blue": "#0000FF",
+    "yellow": "#FFFF00", "orange": "#FFA500", "purple": "#800080", "gray": "#808080", "grey": "#808080",
+    "lightgray": "#D3D3D3", "lightblue": "#ADD8E6", "lightgreen": "#90EE90", "lightyellow": "#FFFFE0",
+    "pink": "#FFC0CB", "navy": "#1B365D", "darkblue": "#00008B", "darkred": "#8B0000", "skyblue": "#87CEEB",
+    "빨강": "#FF0000", "빨간색": "#FF0000", "파랑": "#0000FF", "파란색": "#0000FF", "초록": "#008000", "초록색": "#008000",
+    "노랑": "#FFFF00", "노란색": "#FFFF00", "주황": "#FFA500", "주황색": "#FFA500", "회색": "#808080", "검정": "#000000",
+    "검은색": "#000000", "흰색": "#FFFFFF", "하늘색": "#87CEEB", "분홍": "#FFC0CB", "보라": "#800080",
+}
+
+
+def parse_color(value: Any) -> Optional[int]:
+    """'#RRGGBB', 'RRGGBB', 색 이름(영문/한글) -> Office COM용 BGR 정수. 검정(0)도 올바르게 처리합니다.
+    값이 없으면 None, 해석할 수 없으면 InputError."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise rt.InputError(f"색상 값이 잘못되었습니다: {value}")
+    if isinstance(value, int):
+        return value
+    s = str(value).strip()
+    hexval = COLOR_NAMES.get(s.lower(), s)
+    h = hexval.lstrip("#")
+    if len(h) == 6:
+        try:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return (b << 16) | (g << 8) | r
+        except ValueError:
+            pass
+    raise rt.not_found("색상", s, list(COLOR_NAMES), extra=" ('#RRGGBB' 형식도 가능)")
+
+
+def bgr_to_hex(value: Any) -> Optional[str]:
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    if v < 0 or v > 0xFFFFFF:
+        return None
+    return f"#{v & 0xFF:02X}{(v >> 8) & 0xFF:02X}{(v >> 16) & 0xFF:02X}"
+
+
+THEMES: Dict[str, Dict[str, Any]] = {
+    "navy": {"label": "네이비", "primary": "#1B365D", "secondary": "#4A777A", "accent": "#D9381E",
+             "header_bg": "#1B365D", "header_fg": "#FFFFFF", "zebra": "#F4F7FB", "summary_bg": "#E8EEF5",
+             "light": "#E8EEF5", "number_format": "#,##0"},
+    "slate": {"label": "슬레이트", "primary": "#2B2D42", "secondary": "#8D99AE", "accent": "#EF233C",
+              "header_bg": "#2B2D42", "header_fg": "#FFFFFF", "zebra": "#F8F9FA", "summary_bg": "#EDF2F4",
+              "light": "#EDF2F4", "number_format": "#,##0"},
+    "teal": {"label": "틸", "primary": "#004D40", "secondary": "#00897B", "accent": "#FF6F00",
+             "header_bg": "#004D40", "header_fg": "#FFFFFF", "zebra": "#F0FDF4", "summary_bg": "#E0F2F1",
+             "light": "#E0F2F1", "number_format": "#,##0"},
+    "emerald": {"label": "에메랄드", "primary": "#1E4620", "secondary": "#3E7B43", "accent": "#E65100",
+                "header_bg": "#1E4620", "header_fg": "#FFFFFF", "zebra": "#F2F8F2", "summary_bg": "#E5EFE5",
+                "light": "#E5EFE5", "number_format": "#,##0"},
+}
+
+
+def get_theme(name: Optional[str]) -> Optional[Dict[str, Any]]:
+    """테마 프리셋 (navy, slate, teal, emerald). 없으면 None, 모르는 이름이면 [추천]과 함께 InputError."""
+    if not name:
+        return None
+    key = str(name).strip().lower()
+    if key in THEMES:
+        return dict(THEMES[key], name=key)
+    raise rt.not_found("테마", str(name), list(THEMES))

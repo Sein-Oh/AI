@@ -117,7 +117,7 @@ python word.py write --file "<output_file>"
 | 2 | `_runtime.py` + 계약 테스트 | 완료 (`tests/test_runtime.py`) |
 | 3 | `reader.py` (라이브러리 기반, Linux에서 실제 파일로 테스트) | 완료 (`tests/test_reader.py`). HWP 5.0은 실제 파일 검증 필요 |
 | 4 | `_office.py` (COM 세션, 스냅샷, 화면 이동 규칙) | 완료 (`tests/test_office_core.py`, 가짜 COM) |
-| 5 | `excel.py` → `word.py` → `ppt.py` (부록 A의 버그 함께 수정) | 대기 |
+| 5 | `excel.py` → `word.py` → `ppt.py` (부록 A의 버그 함께 수정) | excel.py 완료 (`tests/test_excel.py`), word.py 진행 중 |
 | 6 | `outlook.py`, `office.py` (transfer 3방식 + probe, undo) | 대기 |
 | 7 | SKILL.md, README, CHANGELOG 1.0.0, requirements.txt, run_win_tests 갱신, 기존 파일 삭제 | 대기 |
 
