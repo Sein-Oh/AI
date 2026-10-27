@@ -1,4 +1,129 @@
-# atomic-cli 작업계획서 (오류 수정 / 최적화 / 고도화)
+# atomic-cli 1.0 작업계획서
+
+- 최종 갱신: 2026-10-27
+- 전제: 이전 이력과 상관없이 **첫 배포(1.0.0)**로 보고 구조를 다시 설계합니다. 기존 34개 파일은 새 진입점이 테스트를 통과하면 한꺼번에 삭제합니다.
+- 부록 A에 기존 코드 분석(버그 목록 포함)을 남겨 둡니다. 기능을 새 구조로 옮길 때 이 목록의 버그를 함께 고칩니다.
+
+---
+
+## 1. 확정된 결정
+
+| # | 결정 | 근거 |
+|---|---|---|
+| D1 | **진입점 6개 + 공통 모듈 2개**로 통합 | 26B 에이전트의 도구 선택 부담과 SKILL.md 길이를 줄임. 소스 파일은 진입점당 1,500줄 안팎으로 유지(넘으면 `_<앱>_*.py` 내부 모듈로 분리) |
+| D2 | **닫힌 파일 읽기는 라이브러리**(openpyxl, python-docx, python-pptx, pymupdf, olefile), **열린 문서와 쓰기는 COM** | Office를 띄우지 않아 빠르고 창 간섭이 없음. 회사 PC에서 라이브러리 직접 읽기 확인됨 |
+| D3 | olefile 0.47을 표준 환경에 추가 | HWP 5.0 읽기. constraints / ENVIRONMENT.md / AGENTS.md 반영 완료 |
+| D4 | 제거 기능은 과감히 삭제하고, 나중에 필요하면 다시 추가 | 6절 "재추가 후보" 목록으로 관리 |
+| D5 | merged_code.md와 merge 도구 삭제 | 반입은 개별 파일로 함 |
+| D6 | 메일은 기본으로 작성 창만 표시하고, `--send`를 명시했을 때만 발송 (수신자 확인 후) | 사용자 결정 |
+| D7 | **회사 DRM 대응**: 앱 간 차트 전달은 여러 방식을 두고 회사 PC에서 동작하는 방식을 자동 선택 | Excel이 쓴 PNG를 Word는 읽지만 PPT는 못 읽음. 클립보드도 회사에서 불안정 |
+| D8 | **화면 이동 규칙**: 읽기·조회는 사용자 화면(슬라이드, 시트, 스크롤)을 절대 움직이지 않음. 쓰기는 실제로 고친 위치로만 이동(`--no-focus`로 끔) | PPT를 읽기만 해도 마지막 슬라이드로 이동하던 문제 |
+| D9 | 저장소 ACI 계약 준수 (stdout 1줄 JSON, exit 0/1/2/130, `STOP_RETRY:`/`ERROR:`, 로그 태그) | AGENTS.md, CLI/README.md |
+
+## 2. 구조
+
+```text
+CLI/atomic-cli/
+├── SKILL.md         # OpenCode 스킬 (짧게)
+├── README.md        # 사람용 상세 설명서
+├── CHANGELOG.md     # 1.0.0부터 관리 + 하단 "남은 할 일"
+├── requirements.txt # pywin32, openpyxl, python-docx, python-pptx, pymupdf, matplotlib, olefile
+├── excel.py         # 엑셀
+├── word.py          # 워드
+├── ppt.py           # 파워포인트
+├── outlook.py       # 메일
+├── reader.py        # PDF/HWP/EML 등 파일 읽기 + 읽은 문서 전체 검색 (Office 불필요)
+├── office.py        # 창 목록/전환, 앱 간 전달, 되돌리기
+├── _runtime.py      # 공통: 응답 계약(run_cli, JsonArgumentParser), 경로, 텍스트/CSV 입출력, 작업 폴더, 설정
+├── _office.py       # 공통: COM 세션(active/파일), 스냅샷, 화면 이동 규칙
+├── tools/run_win_tests.py  # Windows 실기 테스트 러너 (1.0 명령 체계로 갱신 예정)
+└── tests/           # 계약 테스트 + 라이브러리 기반 실제 파일 테스트 + 가짜 COM 테스트
+```
+- `reader.py`와 `_runtime.py`는 pywin32 없이도 import·실행되어야 합니다.
+
+## 3. 명령 체계
+
+파일 이름은 프로그램이고, 서브커맨드는 하고 싶은 일(동사)입니다. 같은 일은 앱이 달라도 같은 동사를 씁니다.
+
+| 명령 | 뜻 | 기존 파일 |
+|---|---|---|
+| `excel.py / word.py / ppt.py read` | 내용 읽기 (`--save`로 CSV/md 저장) | excel_read, word_read, ppt_read |
+| `... info` | 문서 상태 요약 (열린 문서 목록 포함) | *_inspect |
+| `... write` | 값·표·수식·텍스트·이미지 쓰기와 추가 (`--file`로 CSV/md 입력) | excel_fill, word_write, ppt_write |
+| `... replace` | 찾아 바꾸기 (+서식) | *_edit의 치환 기능 |
+| `... export` | PDF나 사본으로 저장 | *_export |
+| `excel.py sheet` | 시트 추가·이름변경·복사·삭제·선택 | excel_sheet |
+| `excel.py range` | 너비·높이·병합·틀고정·숨김·이동·복사·지우기 | excel_range |
+| `excel.py style` | 테마·조건 강조·배경·글꼴·숫자 서식 | excel_edit의 서식 기능 |
+| `excel.py chart` | 차트 만들기·지우기 | excel_chart |
+| `ppt.py slide` | 슬라이드 추가·복제·이동·삭제·비우기 | ppt_slide |
+| `outlook.py list / search / read / current / folders` | 메일 조회 | outlook_read |
+| `outlook.py new / reply / forward` | 메일 작성 (D6) | outlook_write |
+| `reader.py read / search / list` | 파일 읽기 / 읽은 문서 전체 검색 / 색인 목록 | pdf_read, hwp_read, eml_read, search |
+| `office.py windows / focus` | 열린 Office 창 목록과 화면 전환 | office_window |
+| `office.py transfer` | 앱 간 전달 (차트, 표, 텍스트) | office_bridge |
+| `office.py undo` | 직전 작업 되돌리기 (`--list`로 목록 보고 선택) | clean |
+
+공통 옵션: `--target`(active, 열린 문서 이름, 경로), `--file`(입력), `--save`(결과 파일), `--range`, `--sheet`, `--slide`, `--no-focus`
+
+## 4. 체이닝 규칙 (데이터는 파일이나 Office 객체로, LLM은 짧은 참조만)
+
+1. **교환 형식**: 표는 CSV(utf-8-sig), 텍스트는 마크다운(.md), 이미지는 PNG(Python이 쓴 파일)
+2. **결과 JSON의 참조값**: `target_resolved`(실제 작업한 문서), `output_file`, `chart_name`, `sheet`, `slide`, `range_written`
+3. **`next_commands`**: 자주 이어지는 다음 명령을 완성된 형태로 제공 (chart 다음 transfer, search 다음 write 등)
+4. **작업 폴더**: `--save`에 경로를 주지 않으면 `data_dir\_work\`에 자동으로 이름을 붙여 저장. 오래된 파일은 자동 정리
+5. **결과 길이 제한**: 읽기 결과가 상한(기본 200행 또는 8KB)을 넘으면 `truncated: true`로 자르고, 다음 구간을 읽는 명령을 `next_commands`로 제공
+
+대표 시나리오:
+```bat
+python excel.py write --range A1:B101 --header "x,sin(x)" --formula "=(ROW()-2)*4*PI()/99" "=SIN(A2)"
+python excel.py chart --range A1:B101 --type line --title "사인 2주기"
+python office.py transfer --from excel --chart "사인 2주기" --to word,ppt
+python office.py transfer --from word --what text --to excel
+python reader.py search --query "마일스톤" --save
+python word.py write --file "<output_file>"
+```
+
+## 5. 앱 간 차트 전달 방식 (D7)
+
+| 방식 | 동작 | 비고 |
+|---|---|---|
+| `export` | Excel `Chart.Export` PNG → 삽입 | PNG 첫 바이트를 검사해 암호화됐으면 즉시 다음 방식으로. **PPT 대상에는 쓰지 않음** (회사 DRM에서 PPT가 못 읽음) |
+| `redraw` | COM으로 계열 데이터(숫자)만 읽고 matplotlib으로 PNG를 그려 삽입 | 클립보드·Office 파일 쓰기 없음. 원본 서식은 근사치 |
+| `relay` | Excel 차트 → Word에 그림으로 넣은 뒤 → PPT로 넘김 | 회사에서 Word는 받아들인 이력 반영 |
+
+- `office.py transfer --probe`: 세 방식을 실제로 시험해 대상 앱별로 동작하는 방식을 `config.json`에 저장합니다. 이후 자동 사용합니다.
+- 결과 JSON의 `method`에 실제 사용한 방식을 적습니다.
+
+## 6. 1.0에서 제거하는 기능 (재추가 후보)
+
+사용자가 추가 기능을 물으면 이 목록을 안내합니다.
+- 스타일 DNA 추출 (`office_theme --action extract`). 테마 프리셋(`--theme navy` 등)은 유지
+- 검색 결과를 Office로 바로 넣기 (`search --to`). `--save` 후 `write --file`로 대체
+- 검색어가 파일명과 같으면 파일을 반환하는 처리
+- 샌드박스 가상 데스크톱 전환 (exebox, `SetThreadDesktop`)
+- `clean fix-env`, JIT 자가복구의 "유령 프로세스 정리"
+- 캐시의 "파일당 최근 2개 버전" 정책. 파일당 텍스트 캐시 1개와 색인으로 단순화
+- recipe 관련 코드, `run.py` 호환 흔적, `excel_style.py` 등 별칭 진입점
+- 새 문서 만들기, 파일 열기 (`office_window --new/--open`)
+- EML 마스터 JSON 빌드·병합·스레드 (`eml_read build/merge/thread`). EML 단일 파일 읽기는 `reader.py read`로 유지
+
+## 7. 진행 단계
+
+| 단계 | 내용 | 상태 |
+|---|---|---|
+| 0 | `.py` 복원, 정적 검사, 가짜 COM 테스트, CLI/atomic-cli 이동 | 완료 |
+| 1 | (구 구조) 데이터 손상·창 간섭 P0 수정 15건 | 완료. 새 구조로 그대로 옮김 |
+| 2 | `_runtime.py` + 계약 테스트 | 진행 중 |
+| 3 | `reader.py` (라이브러리 기반, Linux에서 실제 파일로 테스트) | 대기 |
+| 4 | `_office.py` (COM 세션, 스냅샷, 화면 이동 규칙) | 대기 |
+| 5 | `excel.py` → `word.py` → `ppt.py` (부록 A의 버그 함께 수정) | 대기 |
+| 6 | `outlook.py`, `office.py` (transfer 3방식 + probe, undo) | 대기 |
+| 7 | SKILL.md, README, CHANGELOG 1.0.0, requirements.txt, run_win_tests 갱신, 기존 파일 삭제 | 대기 |
+
+---
+
+# 부록 A. 기존 코드 분석과 1차 수정 기록 (2026-10-27)
 
 - 작성일: 2026-10-27
 - 분석 대상: `merged_code.md`에 담긴 루트 소스 파일 34개(약 11,000줄)와 `README.md`(구버전)
