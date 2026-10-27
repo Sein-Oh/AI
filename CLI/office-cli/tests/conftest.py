@@ -18,6 +18,6 @@ def isolated_dirs(tmp_path, monkeypatch):
     data = tmp_path / "data"
     cache.mkdir()
     data.mkdir()
-    monkeypatch.setenv("ATOMIC_CACHE_DIR", str(cache))
-    monkeypatch.setenv("ATOMIC_DATA_DIR", str(data))
+    monkeypatch.setenv("OFFICE_CLI_CACHE_DIR", str(cache))
+    monkeypatch.setenv("OFFICE_CLI_DATA_DIR", str(data))
     return {"cache": cache, "data": data}

@@ -23,8 +23,8 @@ def run_script(tmp_path, body, *args):
         encoding="utf-8",
     )
     proc = subprocess.run([sys.executable, str(script), *args], capture_output=True, timeout=60,
-                          env=dict(os.environ, ATOMIC_DATA_DIR=str(tmp_path / "data"),
-                                   ATOMIC_CACHE_DIR=str(tmp_path / "cache")))
+                          env=dict(os.environ, OFFICE_CLI_DATA_DIR=str(tmp_path / "data"),
+                                   OFFICE_CLI_CACHE_DIR=str(tmp_path / "cache")))
     out = proc.stdout.decode("utf-8")
     lines = [ln for ln in out.splitlines() if ln.strip()]
     assert len(lines) == 1, f"stdout은 정확히 1줄이어야 함: {out!r} / stderr: {proc.stderr.decode('utf-8', 'replace')}"

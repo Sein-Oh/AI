@@ -8,7 +8,7 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 
 ### 구조
 - 진입점 `doc_classifier.py` (`scan`, `jobs`). 내부 모듈 `_dc_runtime.py`(응답 계약), `_dc_store.py`(SQLite, 작업 잠금), `_dc_scan.py`(목록화).
-  저장소 pytest가 한 세션에서 모든 도구를 돌리므로 atomic-cli의 `_runtime`과 겹치지 않게 `_dc_` 접두어를 씁니다.
+  저장소 pytest가 한 세션에서 모든 도구를 돌리므로 office-cli의 `_runtime`과 겹치지 않게 `_dc_` 접두어를 씁니다.
 - 작업 1개 = SQLite 파일 1개(`data\<작업>.db`, `DOCCLS_DATA_DIR`로 변경). classify/peek가 채울 열을 미리 둡니다.
 - 저장소 ACI 계약: stdout 1줄 JSON, exit 0/1/2/130, `VERIFIED:`/`STOP_RETRY:`/`ERROR:`, `next_commands`의 `needs_input`.
 

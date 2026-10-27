@@ -1,4 +1,4 @@
-# atomic-cli 1.0
+# office-cli 1.1
 
 Excel, Word, PowerPoint, Outlook을 AI 에이전트(26B~30B 경량 LLM)가 명령 한 줄로 다루게 하는 CLI 도구입니다.
 PDF, HWP, EML, Office 파일은 Office 없이 읽고 검색합니다.
@@ -10,7 +10,7 @@ PDF, HWP, EML, Office 파일은 Office 없이 읽고 검색합니다.
 ## 1. 구성
 
 ```text
-CLI/atomic-cli/
+CLI/office-cli/
 ├── excel.py     엑셀   read / info / write / replace / style / export / sheet / range / chart
 ├── word.py      워드   read / info / write / replace / export
 ├── ppt.py       PPT    read / info / write / replace / export / slide
@@ -25,7 +25,7 @@ CLI/atomic-cli/
 
 설치 (폐쇄망은 [`docs/WINDOWS_OFFLINE.md`](../../docs/WINDOWS_OFFLINE.md) 참고):
 ```bat
-python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
+python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 ```
 
 ## 2. 공통 규칙
@@ -60,9 +60,9 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 ### 파일과 폴더
 | 항목 | 기본 위치 | 바꾸는 방법 |
 |---|---|---|
-| data 폴더 (파일명만 쓴 입력/출력) | `<도구폴더>\data` | 환경변수 `ATOMIC_DATA_DIR` 또는 `config.json`의 `data_dir` |
+| data 폴더 (파일명만 쓴 입력/출력) | `<도구폴더>\data` | 환경변수 `OFFICE_CLI_DATA_DIR` 또는 `config.json`의 `data_dir` |
 | 작업 폴더 (`--save` 경로 생략 시, 7일 후 자동 정리) | `data\_work` | - |
-| 캐시 (읽은 문서 색인, 스냅샷) | `<도구폴더>\cache` | `ATOMIC_CACHE_DIR` 또는 `cache_dir` |
+| 캐시 (읽은 문서 색인, 스냅샷) | `<도구폴더>\cache` | `OFFICE_CLI_CACHE_DIR` 또는 `cache_dir` |
 | 설정 (`transfer --probe` 결과 등) | `<도구폴더>\config.json` | - |
 
 - 입력 파일은 절대경로 → data 폴더 → 작업 폴더 순서로 찾습니다. 없으면 비슷한 파일명을 `[추천]`으로 알려 줍니다.
@@ -160,7 +160,7 @@ python word.py write --file "<결과의 output_file>"
 ## 6. 테스트
 
 ```bat
-python -m pytest -q CLI/atomic-cli          :: 오프라인 (가짜 COM + 실제 샘플 파일)
-python CLI/atomic-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세한 내용: TEST_CHECKLIST.md)
+python -m pytest -q CLI/office-cli          :: 오프라인 (가짜 COM + 실제 샘플 파일)
+python CLI/office-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세한 내용: TEST_CHECKLIST.md)
 ```
 - 대상은 Office 16.0(2016/2019/2021/365)입니다. Word 2007의 `SaveAs2` 부재는 `SaveAs`로 대체하므로 Office 2007에서도 실기 테스트가 돕니다. 다만 PDF 추가 기능이 없으면 PDF 내보내기 항목은 `ENV-SKIP`으로 기록됩니다.
