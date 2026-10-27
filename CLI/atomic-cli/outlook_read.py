@@ -2,7 +2,7 @@
 outlook_read.py - Native Outlook COM Mail Reader & High-Speed Search Engine.
 Operates 100% in the background without disturbing user screen.
 Supports current active mail capture, built-in Outlook search, folder tree,
-and automatic attachment downloading to atomic_cli/data/.
+and automatic attachment downloading to atomic-cli/data/.
 """
 import sys
 import os

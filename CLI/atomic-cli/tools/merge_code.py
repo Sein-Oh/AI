@@ -1,4 +1,4 @@
-"""atomic_cli 루트의 *.py 소스를 반출용 단일 마크다운(merged_code.md)으로 병합하거나, 역으로 분리합니다.
+"""atomic-cli 루트의 *.py 소스를 반출용 단일 마크다운(merged_code.md)으로 병합하거나, 역으로 분리합니다.
 
 사용법:
     python tools/merge_code.py merge            # *.py -> merged_code.md
@@ -19,7 +19,7 @@ FILE_BLOCK_RE = re.compile(
 def merge(md_path: str = DEFAULT_MD) -> int:
     files = sorted(f for f in os.listdir(ROOT) if f.endswith(".py"))
     parts = [
-        "# atomic_cli 소스 코드 (루트 폴더만, 하위 폴더 제외)\n\n",
+        "# atomic-cli 소스 코드 (루트 폴더만, 하위 폴더 제외)\n\n",
         f"생성일: {date.today().isoformat()}\n",
         f"총 파일 수: {len(files)}\n\n---\n\n",
     ]

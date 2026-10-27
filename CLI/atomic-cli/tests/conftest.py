@@ -3,9 +3,12 @@ import sys
 
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(TESTS_DIR)
+# 저장소 루트 pytest.ini는 --import-mode=importlib를 쓰므로 테스트 폴더(fake_com)와 도구 폴더를 직접 경로에 등록
+for p in (ROOT, TESTS_DIR):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 
 @pytest.fixture(autouse=True)

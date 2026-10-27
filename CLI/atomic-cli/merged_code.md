@@ -1,4 +1,4 @@
-# atomic_cli 소스 코드 (루트 폴더만, 하위 폴더 제외)
+# atomic-cli 소스 코드 (루트 폴더만, 하위 폴더 제외)
 
 생성일: 2026-10-27
 총 파일 수: 34
@@ -7148,7 +7148,7 @@ if __name__ == "__main__":
 outlook_read.py - Native Outlook COM Mail Reader & High-Speed Search Engine.
 Operates 100% in the background without disturbing user screen.
 Supports current active mail capture, built-in Outlook search, folder tree,
-and automatic attachment downloading to atomic_cli/data/.
+and automatic attachment downloading to atomic-cli/data/.
 """
 import sys
 import os

@@ -1,4 +1,4 @@
-# atomic_cli 작업계획서 (오류 수정 / 최적화 / 고도화)
+# atomic-cli 작업계획서 (오류 수정 / 최적화 / 고도화)
 
 - 작성일: 2026-10-27
 - 분석 대상: `merged_code.md`에 담긴 루트 소스 파일 34개(약 11,000줄)와 `README.md`(구버전)
@@ -49,7 +49,7 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
 
 ## 2. Phase 0: 기반 정비
 
-1. **소스 복원**: merged_code.md를 `atomic_cli/*.py`로 다시 나눠 저장소에서 diff로 추적할 수 있게 합니다. merged_code.md는 반출용 산출물로만 남깁니다.
+1. **소스 복원**: merged_code.md를 `atomic-cli/*.py`로 다시 나눠 저장소에서 diff로 추적할 수 있게 합니다. merged_code.md는 반출용 산출물로만 남깁니다.
 2. **정적 검사**: `ruff`(pyflakes와 import 정리 규칙)와 `python -m compileall`을 기본 검사로 둡니다.
 3. **오프라인 테스트 장치** (COM이 없어도 돌아가는 부분부터):
    - 순수 로직 단위 테스트:
