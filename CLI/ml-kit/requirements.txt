@@ -1,0 +1,9 @@
+# ml-kit runtime dependencies (no network access needed at runtime)
+# Standard environment pins: ../../constraints.txt (pip install -r requirements.txt -c ../../constraints.txt)
+# Install the SAME versions on the training PC and the serving PC (joblib models are version-sensitive).
+numpy>=1.26
+pandas>=2.1          # standard env: 3.0.5
+scikit-learn>=1.4    # standard env: 1.9.0 (root_mean_squared_error requires 1.4+)
+joblib>=1.3
+openpyxl>=3.1        # standard env: 3.1.5 (.xlsx input/output)
+python-docx>=1.1     # standard env: 1.2.0 (ml_report.py)

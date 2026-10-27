@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# ml_kit runtime outputs (generated next to input data)
+*_ml_data/
+*_pred_*.csv
+report_*.docx
+
+# Archives (code lives in ml_kit/ as plain files)
+*.7z
+*.zip
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Offline wheel bundles (prepared per environment, not versioned)
+wheels/
