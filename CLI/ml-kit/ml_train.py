@@ -1119,6 +1119,11 @@ def build_next_commands(
 # 8. Main Execution Controller
 # ==============================================================================
 
+def _same_experiment(record: Dict[str, Any], task: str, targets: List[str]) -> bool:
+    """Ledger records are comparable (delta_score, is_best) only for the same task and target set."""
+    return record.get("task", TASK_REGRESSION) == task and sorted(record.get("targets", [])) == sorted(targets)
+
+
 def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     """Orchestrates 1-Turn declarative regression / classification pipeline."""
     start_time = time.time()
@@ -1276,7 +1281,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         if not project_desc and history_records:
             project_desc = history_records[-1].get("description", "")
 
-        same_task = [h for h in history_records if h.get("task", TASK_REGRESSION) == task]
+        # Scores are comparable only for the same task AND the same target set
+        same_task = [h for h in history_records if _same_experiment(h, task, target_names)]
 
         def _rec_score(h: Dict[str, Any]) -> Optional[float]:
             v = h.get("mean_val_score", h.get("mean_val_r2", h.get("val_r2")))
@@ -1584,15 +1590,19 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
 
     out.write("=" * 125 + "\n\n")
 
-    # Scores are only comparable within the same task
+    # best_version: best record of the latest experiment (same task AND same targets as the latest run)
+    latest = rows[-1]
+    same = [x for x in rows if x["task"] == latest["task"] and sorted(x["targets"]) == sorted(latest["targets"])
+            and isinstance(x["mean_val_score"], (int, float))]
+    best = max(same, key=lambda x: x["mean_val_score"]) if same else None
+
+    # best_by_task: best record per task (across all target sets)
     best_by_task: Dict[str, Dict[str, Any]] = {}
     for x in rows:
         if isinstance(x["mean_val_score"], (int, float)):
             cur = best_by_task.get(x["task"])
             if cur is None or x["mean_val_score"] > cur["mean_val_score"]:
                 best_by_task[x["task"]] = {"version": x["version"], "mean_val_score": x["mean_val_score"]}
-    latest_task = rows[-1]["task"]
-    best = best_by_task.get(latest_task)
     return {
         "status": "ok",
         "data_root": data_root,
