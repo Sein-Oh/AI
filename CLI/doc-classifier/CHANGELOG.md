@@ -2,6 +2,50 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 설계는 [WORK_PLAN.md](WORK_PLAN.md).
 
+## [0.9.0] - 2026-10-27
+
+WORK_PLAN 2~4단계: 파일명 분류(classify), 표본 확인(peek), 요약/엑셀 보고서(summary), 조건 조회(list).
+기능은 1.0 범위를 모두 갖췄고, Windows 실기(5단계, `tools/run_win_tests.py` S10~S15)를 통과하면 1.0.0으로 올립니다.
+
+### 구조
+- 새 내부 모듈: `_dc_rules.py`(규칙 JSON 검증, 정규화, 점수, 형식 표, 파일명 속 정보), `_dc_classify.py`(DB 묶음 분류, 상위 폴더, 중복 후보),
+  `_dc_peek.py`(형식별 앞부분 읽기, 작업 프로세스와 시간 상한, 표본 고르기, 판정), `_dc_report.py`(요약, 엑셀, list 조회).
+- DB 스키마 2: `dirs.top_id`, `files.name_date/name_version/name_flags/peek_category/peek_reason/peek_ms` 추가.
+  0.1.0 DB는 열을 추가만 하므로 다시 scan하지 않고 그대로 classify할 수 있습니다. classify가 `files(category)` 색인을 만듭니다.
+- 런타임에 `read_text_file`(UTF-8/BOM/UTF-16/CP949)과 `save_with_lock_fallback`(임시 파일 후 교체, 잠겼으면 `이름_시각`으로) 추가.
+- SQLite `temp_store`를 MEMORY에서 FILE로: 큰 GROUP BY/색인 정렬이 메모리를 키우지 않게 (가짜 100만 행 classify 최대 메모리 171MB -> 88MB).
+
+### 기능
+- `classify --job --rules`: 규칙 JSON `{"카테고리": ["키워드", ".확장자"]}`(확장 형식 `{"keywords", "exclude"}`)으로 디스크를 읽지 않고 분류.
+  - 점수: 확장자 3, 파일명 2, 바로 위 폴더 1, 더 위 폴더 0.5 (대상 폴더 자신은 보지 않음). 키워드는 가장 높은 위치에서 한 번, 카테고리 안에서 합산.
+    동점은 JSON에 먼저 적은 카테고리. 신뢰도 high/medium/low. 근거(`matches`)를 기록.
+  - 비교: NFC(맥 자모 분리), 대소문자, 공백·`_`·`-` 무시. 영문·숫자 4글자 이하 키워드(`PO`, `MOU`, `spec`)는 단어로만 비교(`report` 속 `po` 제외).
+  - 함께 기록: 형식(kind 14종), 파일명 속 날짜/버전/사본·임시 표시, 상위 폴더, 중복 후보(이름+크기), 키워드별 맞은 수, 미분류 파일명의 자주 나오는 단어.
+  - `--rules` 생략 시 지난번 규칙 파일, 처음이면 `rules.example.json`. 규칙 오류는 줄·위치를 짚어 `STOP_RETRY`, 1글자 키워드는 `[WARN]`.
+  - 규칙이 바뀌면 이전 peek 결과를 지움(같은 규칙이면 유지). 목록화가 덜 된 작업도 분류 가능(알림 + 이어서 목록화 명령).
+- `peek --job`: 분류별 표본(기본 20개, 전체 500개)만 앞부분을 읽어 `confirmed/changed/no_match/no_text/encrypted_or_drm/unreadable/timeout/...` 판정.
+  - PDF 2쪽, DOCX 단락 20개, PPTX 슬라이드 10장, XLSX 시트 이름+10행, HWP/HWPX 미리보기 텍스트, 텍스트 8KB, EML, 옛 Office(doc/xls/ppt/msg) 본문 스트림 글자.
+  - 별도 작업 프로세스가 읽고, 파일당 시간 상한(`--timeout`, 기본 10초)을 넘기거나 죽으면 새로 띄워 다음 파일로. 크기 상한 200MB.
+  - `no_read`(클라우드/오프라인/링크)는 절대 열지 않고, 열기 직전에도 속성을 다시 확인. 서명이 형식과 다르면 DRM/암호로 판별.
+  - 신뢰도 low부터, 여러 폴더에 고르게. 다시 실행하면 모자란 표본만 더 읽음(`--redo`로 새로). `--time-limit`, Ctrl+C(exit 130) 후 같은 명령으로 이어서.
+- `summary --job [--save [경로]]`: 카테고리·형식·상위 폴더·수정 시기·중복 후보·확인 결과·권장 사항(JSON은 상위 N개로 자름).
+  엑셀 시트 7개(요약, 카테고리별, 확인 결과, 미분류 단어, 중복 후보, 오류·건너뜀, 파일 목록). 시트 한도 넘으면 시트 분할, 300만 행 넘으면 목록은 CSV.
+  `=`로 시작하는 파일명이 수식이 되지 않게 문자열로 고정. 보고서가 열려 있으면 다른 이름으로 저장.
+- `list --job`: `--category --ext --kind --confidence --peek --since --until --folder --name --min-size --flag`, 정렬, 페이지(기본 100행),
+  다음 페이지와 atomic-cli `reader.py read` 명령을 `next_commands`로. 없는 카테고리/형식은 `[추천]`.
+- `scan` 완료 시 `next_commands`로 분류 명령 2개(`[0]` 사용자 규칙 `needs_input`, `[1]` 예시 규칙). `jobs`에 `classify_status`, `peek_files`.
+- classify/peek/summary 결과에 `peak_memory_mb`.
+
+### 테스트
+- 오프라인 82개 (기존 13 + 규칙 39, classify 11, peek 12, 보고서/list 8). 실제 형식 샘플(docx/pptx/xlsx/pdf/hwp/hwpx/eml/doc)을 테스트 안에서 만듭니다
+  (HWP/doc은 `tests/dc_samples.py`의 최소 OLE 작성기). 가짜 작업 프로세스로 시간 초과·비정상 종료 후 재시작을 확인.
+- Linux 가짜 100만 행 측정 (파일을 만들지 않고 DB에 직접 넣은 이름 데이터):
+  - classify 42초(초당 약 2.4만 개), 최대 메모리 88MB. DB 90MB -> 227MB(색인과 분류 열 포함, 파일당 약 230바이트)
+  - summary(JSON) 6.4초 61MB, `--save` 엑셀(파일 목록 100만 행) 206초 84MB, 80MB 파일
+  - list 조회 0.4~1.2초, peek 표본 고르기 약 8초
+- Windows 실기 러너에 S10~S15 추가(분류 속도, 형식별 확인과 잠긴 파일, OneDrive 자리표시자, 엑셀 보고서와 열린 보고서, Windows 경로 list, 실제 드라이브 전체 흐름).
+  Linux에서 S10, S14, S11(독점 잠금 제외)을 미리 돌려 확인. 결과 SKIP(조건 없음)도 보고서에 표시. 계약 검사(S9)는 맨 마지막에.
+
 ## [0.1.0] - 2026-10-27
 
 WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
@@ -34,7 +78,9 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
   - DB 크기: 파일 54만 개에 61.5MB(파일당 약 114바이트). 2천만 개면 약 2.3GB로 추정
 
 ## 남은 할 일
-- [ ] 2단계 `classify` (규칙 JSON), 3단계 `peek`, 4단계 `summary`/`list`/엑셀 보고서 (WORK_PLAN 6절)
-- [ ] 회사 PC(12TB, 네트워크 공유 중)에서 `tools/run_win_tests.py`와 실제 드라이브 목록화: 속도, DB 크기, 공유 사용자 체감
-- [ ] 실제 OneDrive 클라우드 자리표시자로 `cloud` 판정 확인 (집 PC에는 자리표시자 파일이 없음)
-- [ ] 증분 스캔(바뀐 폴더만), 1.1 후보
+- [ ] 집 PC에서 `tools/run_win_tests.py` S10~S15 (특히 S11 독점 중 파일, S13 열린 보고서, S15 실제 문서로 peek 속도와 판정) -> 통과하면 1.0.0
+- [ ] 회사 PC(12TB, 네트워크 공유 중)에서 실제 드라이브 목록화 -> 분류 -> 확인 -> 보고서: 속도, DB 크기, 공유 사용자 체감
+- [ ] 실제 OneDrive 클라우드 자리표시자로 `cloud` 판정과 peek 제외 확인 (S12, 집 PC에는 자리표시자 파일이 없었음)
+- [ ] 회사 PC DRM 문서: HWP/HWPX가 olefile/zip으로 읽히는지, 공유 중인 파일을 다른 PC가 열고 있을 때 peek 동작 (WORK_PLAN 9절 남은 확인)
+- [ ] 큰 엑셀 보고서 시간: 100만 행 약 3.5분(Linux). 회사 PC 파일 수가 수백만 개면 `--file-list csv`를 기본으로 할지 실측 후 결정
+- [ ] 1.1 후보: 증분 스캔(바뀐 폴더만), peek 확인 결과를 학습 데이터로 한 파일명 n-gram 분류기, 압축 파일 내부 목록, 내용 해시 중복

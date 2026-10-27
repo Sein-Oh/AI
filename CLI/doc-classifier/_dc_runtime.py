@@ -175,6 +175,47 @@ def timestamp() -> str:
     return _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def read_text_file(path: str) -> str:
+    """텍스트 파일 읽기: UTF-8(BOM 포함), UTF-16(BOM), CP949를 자동으로 판별합니다."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw[3:].decode("utf-8", errors="replace")
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", errors="replace")
+    for enc in ("utf-8", "cp949"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def save_with_lock_fallback(path: str, write: Callable[[str], None]) -> str:
+    """임시 파일에 쓴 뒤 바꿔 넣습니다. 대상이 열려 있어 잠겼으면(엑셀) 이름 뒤에 시각을 붙여 따로 저장합니다.
+    실제로 저장한 경로를 돌려줍니다."""
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.abspath(path))
+    tmp = f"{stem}.saving{ext}"
+    try:
+        write(tmp)
+        try:
+            os.replace(tmp, path)
+            return os.path.abspath(path)
+        except PermissionError:
+            alt = f"{stem}_{timestamp()}{ext}"
+            os.replace(tmp, alt)
+            log("WARN", f"{os.path.basename(path)} 파일이 열려 있어(잠김) {os.path.basename(alt)}(으)로 저장했습니다.")
+            return alt
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def human_size(n: Optional[float]) -> str:
     n = float(n or 0)
     for unit in ("B", "KB", "MB", "GB", "TB"):

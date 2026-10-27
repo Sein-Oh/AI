@@ -37,7 +37,7 @@ def test_scan_lists_every_file_with_metadata(tmp_path, run, data_dir):
     root = tmp_path / "자료"
     n = make_tree(str(root), SPEC)
     code, out = run("scan", "--root", str(root), "--job", "t1")
-    assert code == 0 and out["complete"] is True and out["next_commands"] == []
+    assert code == 0 and out["complete"] is True and "classify --job t1" in out["next_commands"][1]["command"]
     assert out["totals"]["files"] == n and out["totals"]["dirs_pending"] == 0 and out["totals"]["dirs_error"] == 0
     assert out["totals"]["bytes"] == sum(v for v in SPEC.values() if v)
     con = _db(data_dir, "t1")
