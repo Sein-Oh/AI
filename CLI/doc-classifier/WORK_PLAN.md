@@ -136,21 +136,23 @@ CLI/doc-classifier/
 ├── WORK_PLAN.md        # 이 문서
 ├── requirements.txt    # pywin32, pymupdf, olefile, openpyxl, python-docx, python-pptx (모두 표준 환경, WinPython 복사본에 포함)
 ├── doc_classifier.py   # 진입점 (scan / classify / peek / summary / list / jobs)
-├── _runtime.py         # 응답 계약, 로그, 경로 (atomic-cli 것과 같은 계약, 단독 배포를 위해 복사)
-├── _store.py           # SQLite 스키마, 묶음 기록, 진행 상태
-├── _rules.py           # 규칙 JSON 읽기·검증, 키워드 정규화, 점수 계산, 형식(kind) 표
-├── _peek.py            # 형식별 "앞부분만" 읽기 + 작업 프로세스/시간 상한
+├── _dc_runtime.py      # 응답 계약, 로그, 경로 (atomic-cli 것과 같은 계약, 단독 배포를 위해 복사)
+├── _dc_store.py        # SQLite 스키마, 묶음 기록, 진행 상태, 작업 잠금
+├── _dc_scan.py         # 목록화: 폴더 대기열(DB), 속성/링크/클라우드 판정, 우선순위, 상한
+├── _dc_rules.py        # 규칙 JSON 읽기·검증, 키워드 정규화, 점수 계산, 형식(kind) 표
+├── _dc_peek.py         # 형식별 "앞부분만" 읽기 + 작업 프로세스/시간 상한
 ├── rules.example.json  # 분류 규칙 예시 ({"카테고리": ["키워드", ".확장자"]})
 ├── tools/run_win_tests.py   # Windows 실기 테스트 (대용량 트리, 자리표시자, 정션, 긴 경로, 잠긴 파일)
 └── tests/              # 오프라인 테스트 (가짜 트리 생성기 포함)
 ```
+- 내부 모듈은 `_dc_` 접두어: 저장소 pytest가 한 세션에서 모든 도구를 돌리므로 atomic-cli의 `_runtime` 등과 이름이 겹치지 않게 합니다.
 
 ## 6. 진행 단계
 
 | 단계 | 내용 | 검증 |
 |---|---|---|
-| 0 | 폴더, `_runtime.py`, SQLite 스키마, `jobs`, 계약 테스트 | pytest |
-| 1 | `scan`: 순회, 속성 기록, 제외 규칙, 중단/재개, 우선순위 낮추기 | 가짜 트리 10만 파일(속도·메모리), 권한 오류, 긴 경로, 재개 |
+| 0 | 폴더, `_dc_runtime.py`, SQLite 스키마, `jobs`, 계약 테스트 | pytest. **완료 (0.1.0)** |
+| 1 | `scan`: 순회, 속성 기록, 제외 규칙, 중단/재개, 우선순위 낮추기 | 가짜 트리 10만 파일(속도·메모리), 권한 오류, 긴 경로, 재개. **완료 (0.1.0)**: 집 PC 실기 9/9 통과, 결과는 CHANGELOG |
 | 2 | `classify`: 규칙 JSON 읽기·검증, 키워드 정규화, 점수와 우선순위, 형식 표, 날짜/버전/사본 추출 | 규칙 단위 테스트(확장자/포함/폴더/동점/미분류/잘못된 JSON), 한글 파일명 사례 모음(NFD, 공백 변형) |
 | 3 | `peek`: 형식별 앞부분 읽기, 작업 프로세스 시간 상한, DRM/암호 판별, 판정 | 실제 샘플 파일(pdf/docx/pptx/xlsx/hwp/hwpx/eml), 깨진 파일, 거대 파일, 무한 대기 파일 |
 | 4 | `summary`, `list`, 보고서 저장, SKILL/README/CHANGELOG | 계약 테스트, LLM 크기 상한 |
@@ -158,6 +160,7 @@ CLI/doc-classifier/
 
 - 1~4단계는 클라우드(Linux)에서 개발·테스트 가능. Windows 전용 부분(파일 속성, 우선순위, 자리표시자, `\\?\`)은 Linux에서는 건너뛰도록 분기하고 5단계 실기에서 확인.
 - 성능 목표는 실기에서 측정 후 확정(예: 로컬 SSD에서 목록화 초당 수만 개, 메모리 200MB 이하 유지).
+- 집 PC 측정(0.1.0): 실제 C:\ 초당 약 1.1만 개, 메모리 20~32MB, DB 파일당 약 114바이트. 12TB에 파일 2천만 개라면 목록화 약 30분~1시간, DB 약 2.3GB로 추정(회사 PC에서 확인).
 
 ## 7. 1.0 범위 밖 (후보)
 
