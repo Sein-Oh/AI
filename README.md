@@ -27,6 +27,7 @@ AI_WORK/
         ├── ml_train.py        # 1단계: 학습
         ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
         ├── ml_report.py       # 3단계: Word 보고서
+        ├── samples/           # PC 실기 테스트 샘플 + PC_TEST.md
         └── tests/             # CLI 계약 + 회귀 테스트
 ```
 
