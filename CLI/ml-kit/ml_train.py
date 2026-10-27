@@ -470,6 +470,7 @@ def train_and_benchmark_models(
     Prediction interval: 5%/95% quantiles of the champion's OOF residuals (90% level).
     """
     valid_mask = y_series.notna().values
+    row_ids = np.flatnonzero(valid_mask)  # position in the loaded data (reported as 1-based data_row)
     X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(float).values
 
@@ -571,7 +572,13 @@ def train_and_benchmark_models(
         "leaderboard": leaderboard
     }
 
-    return target_benchmark_res, final_pipeline, champion_summary
+    oof_df = pd.DataFrame({
+        "data_row": row_ids + 1,
+        "actual": y,
+        "predicted": np.round(model_oof_map[champion_name], 6),
+        "residual": np.round(residuals, 6),
+    })
+    return target_benchmark_res, final_pipeline, champion_summary, oof_df
 
 
 # ==============================================================================
@@ -678,6 +685,7 @@ def train_and_benchmark_classifiers(
     OOF probabilities to maximize the positive-class F1.
     """
     valid_mask = y_series.notna().values
+    row_ids = np.flatnonzero(valid_mask)  # position in the loaded data (reported as 1-based data_row)
     X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(str).values
 
@@ -824,7 +832,10 @@ def train_and_benchmark_classifiers(
         "champion": champion_summary,
         "leaderboard": leaderboard
     }
-    return target_benchmark_res, final_pipeline, champion_summary
+    oof_df = pd.DataFrame({"data_row": row_ids + 1, "actual": y, "predicted": champion_oof})
+    for i_c, c in enumerate(classes):
+        oof_df[f"proba_{c}"] = np.round(model_proba_map[champion_name][:, i_c], 6)
+    return target_benchmark_res, final_pipeline, champion_summary, oof_df
 
 
 # ==============================================================================
@@ -1233,7 +1244,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
             extra = {"positive_class": positive_class} if task == TASK_CLASSIFICATION else {}
-            t_bench, champion_pipe, champion_info = benchmark_fn(
+            t_bench, champion_pipe, champion_info, oof_df = benchmark_fn(
                 X=X_all,
                 y_series=df_clean[target_name],
                 target_name=target_name,
@@ -1247,7 +1258,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             target_benchmarks[target_name] = t_bench
             target_champions[target_name] = {
                 "pipeline": champion_pipe,
-                "info": champion_info
+                "info": champion_info,
+                "oof": oof_df
             }
             all_champion_scores.append(champion_info["val_score"])
 
@@ -1371,6 +1383,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             joblib_path = os.path.join(staging_dir, f"model_{safe_target}.joblib")
             joblib.dump(pipe, joblib_path, compress=3)
 
+            # Out-of-fold predictions of the champion (report: actual vs predicted, residuals, ROC)
+            champ_data["oof"].to_csv(os.path.join(staging_dir, f"oof_{safe_target}.csv"), index=False, encoding="utf-8-sig")
+
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
             for fname in feature_schema["numeric"]:
@@ -1441,6 +1456,22 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         missing_imputed = int(X_all.isna().sum().sum())
         prescription = recommendations[0] if recommendations else "모델 경쟁 학습 및 평가 완료"
 
+        owner = input_column_owner(feature_schema)
+        feature_missing: Dict[str, int] = {}
+        for col, n_miss in X_all.isna().sum().items():
+            raw_col = owner.get(col, col)
+            feature_missing[raw_col] = max(feature_missing.get(raw_col, 0), int(n_miss))
+        data_profile = {
+            "source_file": os.path.basename(raw_file),
+            "rows_loaded": int(len(df_raw)),
+            "columns_loaded": int(df_raw.shape[1]),
+            "rows_used": {t: int(target_benchmarks[t]["sample_count"]) for t in target_names},
+            "target_missing_rows": {t: int(df_clean[t].isna().sum()) for t in target_names},
+            "feature_missing": feature_missing,
+            "missing_imputed_cells": missing_imputed,
+            "layout": {"header_row": args.header_row, "unit_row": args.unit_row, "data_row": args.data_row},
+        }
+
         history_record = {
             "version": current_version,
             "timestamp": datetime.now().isoformat(),
@@ -1453,6 +1484,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "missing_imputed": missing_imputed
             },
             "file": os.path.basename(raw_file),
+            "data_profile": data_profile,
             "targets": target_names,
             "target_summaries": target_summaries,
             "features_used": feature_names,

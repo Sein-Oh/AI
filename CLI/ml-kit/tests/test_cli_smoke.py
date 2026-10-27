@@ -69,6 +69,10 @@ def test_train_creates_version(trained):
     assert (data_root / "history.jsonl").is_file()
     assert (data_root / "history.json").is_file()
     assert (data_root / "v1").is_dir()
+    oof = (data_root / "v1" / "oof_생산효율(%).csv")
+    assert oof.is_file() and oof.read_text(encoding="utf-8-sig").splitlines()[0] == "data_row,actual,predicted,residual"
+    rec = json.loads((data_root / "history.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert rec["data_profile"]["rows_loaded"] == 120 and "feature_missing" in rec["data_profile"]
     assert not any(p.name.startswith(".tmp_") for p in data_root.iterdir())
     assert payload["agent_directive"].startswith("VERIFIED")
     meta = json.loads((data_root / "v1" / "model_생산효율(%).json").read_text(encoding="utf-8"))

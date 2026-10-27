@@ -41,6 +41,8 @@ def test_multiclass_train_contract(multiclass):
     assert len(lb["targets"]["품질등급"]["leaderboard"]) == 5
     assert champ["confusion_matrix"]["labels"] == ["A등급", "B등급", "C등급"]
     assert set(champ["per_class"]) == {"A등급", "B등급", "C등급"}
+    oof_head = (work / "proc_ml_data" / "v1" / "oof_품질등급.csv").read_text(encoding="utf-8-sig").splitlines()[0]
+    assert oof_head == "data_row,actual,predicted,proba_A등급,proba_B등급,proba_C등급"
 
 
 def test_multiclass_predict_inline_probabilities(multiclass):
