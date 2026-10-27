@@ -1,6 +1,6 @@
 ---
 name: autonomous-regression-ml
-description: 표(Excel/CSV) 데이터로 회귀 예측 모델을 학습(ml_train), 예측(ml_predict), Word 감사 보고서 생성(ml_report)하는 1-Turn CLI 스킬. 데이터 정제, 5개 모델 경쟁, 버전 관리, 외삽 경고까지 도구가 자동 처리하므로 에이전트는 명령 1회 실행 후 JSON 결과만 읽으면 된다.
+description: 표(Excel/CSV) 데이터로 회귀(수치) 또는 분류(범주) 예측 모델을 학습(ml_train), 예측(ml_predict), Word 감사 보고서 생성(ml_report, 회귀만)하는 1-Turn CLI 스킬. 데이터 정제, 5개 모델 경쟁, 버전 관리, 외삽 경고까지 도구가 자동 처리하므로 에이전트는 명령 1회 실행 후 JSON 결과만 읽으면 된다.
 tools:
   - run_command
   - read_file
@@ -16,7 +16,10 @@ tools:
 
 ```bat
 python "<SKILL_DIR>\ml_train.py" -f "<데이터.xlsx>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --desc "<데이터 목적 한 줄>" --tag "베이스라인"
+python "<SKILL_DIR>\ml_train.py" -f "<데이터.xlsx>" -x "<피처1>,<피처2>" -y "<타겟>" --task classification
 ```
+- 작업 유형은 사용자가 정한다. 수치 예측은 생략(기본 regression), 등급/양불/종류 같은 범주 예측은 `--task classification`.
+  사용자가 정하지 않았으면 물어본다.
 - 컬럼명은 단위를 빼고 써도 된다: `반응온도` -> `반응온도(°C)` 자동 매칭 (같은 이름이 하나뿐일 때).
 - 엑셀 위쪽에 제목/단위 행이 있으면: `--header-row 3 --unit-row 4` (1부터 센 행 번호).
 - 피처가 10개 이상이면 `features.txt` 에 한 줄에 하나씩 써서 `-x "features.txt"`.
@@ -25,7 +28,7 @@ python "<SKILL_DIR>\ml_train.py" -f "<데이터.xlsx>" -x "<피처1>,<피처2>,<
 - 2회차부터 `--desc` 는 생략한다 (자동 상속). `--tag` 에는 이번에 바꾼 점을 짧게 쓴다.
 - 이력 확인: `python "<SKILL_DIR>\ml_train.py" -f "<데이터.xlsx>" --history`
 
-결과 JSON에서 볼 것: `version`, `mean_val_r2`, `delta_r2`, `is_best`, `recommendations`, `version_dir`.
+결과 JSON에서 볼 것: `version`, `task`, `mean_val_score`(회귀=R2, 분류=Macro-F1), `delta_score`, `is_best`, `recommendations`, `version_dir`.
 
 ## 2. 예측
 
@@ -36,8 +39,11 @@ python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -f "<새데이터.xlsx>"
 - `<version_dir>` 은 학습 결과 JSON 의 `version_dir` 값을 그대로 쓴다.
 - `-i` 는 `키=값,키=값` 형식을 쓴다. 레코드가 여러 개면 JSON 파일을 만들어 `-i "input.json"` 으로 넘긴다.
 - 결과 JSON에서 볼 것: `predictions_summary`, `output_file`, `drift_warning`, `extrapolation_warnings`.
+- 분류 모델이면 `predictions_summary.<타겟>` 에 `predictions`(라벨), `probabilities`, `predicted_class_counts` 가 있고,
+  `low_confidence_warning: true` 이면 확신도가 낮은 예측이 있다고 함께 알린다.
+- 예측만 다른 PC에 배포할 때: `ml_predict.py` 와 `<version_dir>` 폴더 2가지만 복사하면 된다.
 
-## 3. Word 보고서
+## 3. Word 보고서 (회귀 모델만 지원)
 
 ```bat
 python "<SKILL_DIR>\ml_report.py" -d "<data_root>"
@@ -56,5 +62,6 @@ python "<SKILL_DIR>\ml_report.py" -d "<data_root>" -v v2 -t "<타겟>"
 | `ERROR:` | 재시도 금지. `message` 를 사용자에게 그대로 보고. |
 
 - `drift_warning: true` 이면 "입력값이 학습 범위를 벗어나 예측 신뢰도가 낮음"을 함께 알린다.
-- 성능 개선 반복: `recommendations` 를 따라 `--eval` 추가 또는 기여도 낮은 피처 제외 후 재학습. `mean_val_r2 >= 0.90` 이면 반복을 멈추고 보고서를 만든다. 최대 5회.
+- 성능 개선 반복: `recommendations` 를 따라 `--eval` 추가 또는 기여도 낮은 피처 제외 후 재학습. 재학습 때도 같은 `--task` 를 쓴다.
+  `mean_val_score >= 0.90` 이면 반복을 멈춘다 (회귀는 보고서 생성). 최대 5회.
 - 파일 경로는 `file:///C:/...` 형식 링크로 보고한다. 이모지 금지.

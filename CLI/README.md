@@ -4,7 +4,7 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 
 | 도구 | 설명 | 스킬 |
 |---|---|---|
-| [`ml_kit/`](ml_kit/) | 회귀 ML 학습 / 예측 / Word 감사 보고서 | [`ml_kit/SKILL.md`](ml_kit/SKILL.md) |
+| [`ml_kit/`](ml_kit/) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`ml_kit/SKILL.md`](ml_kit/SKILL.md) |
 
 ## 새 도구 폴더 구성
 
@@ -12,9 +12,8 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 CLI/<tool>/
 ├── SKILL.md            # 에이전트가 읽는 짧은 사용법 (명령 템플릿 + 결과 처리 규칙). 짧게 유지
 ├── README.md           # 사람용 상세 설명서
-├── CHANGELOG.md / ROADMAP.md
+├── CHANGELOG.md        # 변경 이력 + 남은 할 일
 ├── requirements.txt    # 런타임 의존성 (폐쇄망 wheel 반입 기준)
-├── install_offline.bat
 ├── <tool>_*.py         # CLI 진입점 (폴더째 복사해도 단독 실행 가능)
 └── tests/              # CLI 계약 테스트 (python -m pytest CLI 로 전체 실행)
 ```

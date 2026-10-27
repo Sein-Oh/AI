@@ -1,7 +1,7 @@
-# ml_kit: 경량 AI 에이전트를 위한 자율 회귀 머신러닝 툴킷 (Autonomous Regression ML Toolkit)
+# ml_kit 2.0: 경량 AI 에이전트를 위한 자율 회귀·분류 머신러닝 툴킷 (Autonomous Regression / Classification ML Toolkit)
 
 > **26B~30B 경량화 LLM(Glimmer-30B, OpenCode 등)에 최적화된 1-Turn 완결형 머신러닝 학습, 추론 및 기술 감사 엔진**  
-> 복잡한 다단계 판단이나 인간의 개입 없이, 단 1회의 선언적 CLI 명령으로 데이터 자동 정제, 방탄 파생변수 생성, 5대 회귀 모델 경쟁 학습, 단일 진실 공급원(SSOT) 원장 누적, 초고속 서빙 추론, 그리고 공식 엔지니어링 Word(.docx) 감사 보고서 생성을 100% 자율 완결합니다.
+> 복잡한 다단계 판단이나 인간의 개입 없이, 단 1회의 선언적 CLI 명령으로 데이터 자동 정제, 방탄 파생변수 생성, 5대 회귀/분류 모델 경쟁 학습, 단일 진실 공급원(SSOT) 원장 누적, 초고속 서빙 추론, 그리고 공식 엔지니어링 Word(.docx) 감사 보고서 생성을 100% 자율 완결합니다.
 
 ---
 
@@ -36,14 +36,15 @@
 ml_kit/
 ├── README.md               # [본 문서] 툴킷 종합 안내서, 완전 CLI 레퍼런스
 ├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
-├── requirements.txt        # 런타임 의존성 (폐쇄망 wheel 반입 기준)
-├── install_offline.bat     # 폐쇄망 오프라인 설치 (wheels/ 폴더 사용)
+├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
+├── requirements.txt        # 런타임 의존성
 │
 ├── [1단계: 학습 엔진]
-│   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀 경쟁, 리더보드, SSOT 패키징
+│   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀/분류 경쟁, 리더보드, SSOT 패키징
 │
-├── [2단계: 추론 엔진]
-│   └── ml_predict.py       # 폴더/파일 바인딩, 파생 수식 자동 재현, 외삽 드리프트 검사, 초고속 서빙 추론
+├── [2단계: 추론 엔진 + 공통 런타임]
+│   └── ml_predict.py       # 단독 배포 가능. 파생 수식 재현, 외삽/저확신 경고, 회귀·분류 자동 분기
+│                           # PART C: 데이터 로딩, 수치 변환, 수식 엔진, JSON 규약, Windows 파일 처리 (train/report가 import)
 │
 └── [3단계: 기술 감사 보고서 생성기]
     └── ml_report.py        # python-docx 기반 슬롯 필링 아키텍처 공식 Word (.docx) 감사 보고서 생성기
@@ -110,6 +111,22 @@ flowchart TD
 4. **Ridge**: L2 정규화(릿지 패널티)를 적용하여 독립변수 간 다중공선성을 방어하는 선형 베이스라인.
 5. **ElasticNet**: L1(Lasso)과 L2(Ridge) 패널티를 결합하여 불필요한 노이즈 피처의 계수를 0으로 축소하는 희소 선형 모델.
 
+### 1-B) 분류 모드 (`--task classification`)
+작업 유형은 사용자가 `--task`로 지정합니다 (기본값 `regression`, 자동 판별 없음). 분류 모드는 같은 누수 방지 파이프라인(`SimpleImputer(median) -> StandardScaler() -> Classifier`)으로 **Stratified K-Fold** 교차검증을 수행하고, **OOF Macro-F1** 최상위 모델을 챔피언으로 선정합니다.
+
+1. **HistGradientBoostingClassifier** 2. **RandomForestClassifier** 3. **ExtraTreesClassifier** 4. **LogisticRegression** 5. **KNeighborsClassifier**
+
+- **지표**: Macro-F1(선정 기준), Accuracy, Balanced Accuracy, ROC-AUC(이진/다중 ovr), 혼동행렬, 클래스별 Precision·Recall·F1 (`vX/leaderboard.json`)
+- **라벨 정규화**: `1`, `1.0`, `"1"`은 같은 클래스 `"1"`로, 공백·`-`·`N/A`는 결측으로 처리하며 결측 라벨 행은 학습에서 제외
+- **불균형 대응**: 최소 클래스 비율이 20% 미만이면 `class_weight='balanced'` 자동 적용 (`[WARN]` 출력, 처방에 기록)
+- **검증**: 클래스 2개 미만, 샘플 1개짜리 클래스, 클래스 50개 초과는 `STOP_RETRY`. fold 수는 최소 클래스 샘플 수에 맞춰 자동 축소
+- **이력 비교**: `delta_score`, `is_best`는 같은 task의 이전 기록끼리만 비교 (같은 원장에 회귀/분류 기록 공존 가능)
+- **보고서**: 분류 Word 보고서는 다음 버전 예정. 현재 `ml_report.py`는 분류 기록에 대해 `STOP_RETRY`로 안내
+
+```bash
+python ml_train.py -f "공정.xlsx" -x "반응온도,촉매비율,수분함량" -y "품질등급" --task classification --tag "분류_베이스라인"
+```
+
 ### 2) 방탄 AST 파생변수 엔진 (`--eval`)
 파이썬의 위험한 `eval()` 함수를 일체 배제하고, `ast.parse`를 통한 화이트리스트 수학 연산자 구문 분석기(AST Evaluator)를 내장하였습니다:
 - **지원 연산자**: 덧셈(`+`), 뺄셈(`-`), 곱셈(`*`), 나눗셈(`/`), 거듭제곱(`**`), 괄호 연산
@@ -156,6 +173,7 @@ flowchart TD
 | `--dtypes` | - | 선택 | 데이터 타입 수동 오버라이드 (예: `일시:datetime,코드:str`) |
 | `--version` | `-v` | 선택 | 버전 폴더 수동 지정 (미지정 시 `v1`, `v2`, ... 자동 채번) |
 | `--encoding` | - | 선택 | 산출물 CSV 저장 인코딩 (기본값: Windows Excel 호환 `cp949`) |
+| `--task` | - | 선택 | 학습 유형 `regression`(기본값) / `classification` |
 | `--seed` | - | 선택 | 교차검증 난수 시드 (기본값: 42) |
 | `--history` | - | 선택 | 누적 실험 원장 조회 (요약 표는 stderr, 버전별 요약 JSON은 stdout) |
 
@@ -198,7 +216,20 @@ python ml_train.py \
 
 학습 단계에서 패키징된 아티팩트를 로드하여, 단일 레코드 인라인 추론(Zero-File) 또는 배치 파일 대량 예측을 0.1초 만에 수행합니다.
 
+### 0) 단독 배포 (Standalone Deployment)
+`ml_predict.py`는 다른 ml_kit 파일을 import하지 않습니다. 예측 PC에는 아래 2가지만 복사하면 됩니다:
+```text
+배포폴더/
+├── ml_predict.py
+└── v3/                 # 학습 결과 버전 폴더 (model_*.joblib, model_*.json)
+```
+```bat
+python ml_predict.py -m v3 -i "반응온도=240,소비전력=65"
+```
+필요 라이브러리: numpy, pandas, scikit-learn, joblib (+ xlsx 입출력 시 openpyxl). 학습 PC와 같은 scikit-learn 버전을 권장하며, 다르면 `[WARN]`이 출력됩니다.
+
 ### 1) 핵심 안전장치 및 기능
+- **회귀/분류 자동 분기**: 모델 메타데이터의 `task`로 분기합니다 (`task`가 없는 1.x 모델은 회귀). 분류 모델은 `pred_<타겟>`(라벨), `proba_<타겟>_<클래스>`(클래스별 확률), `conf_<타겟>`(최대 확률) 컬럼을 만들고, 확신도 0.6 미만 예측이 있으면 `low_confidence_warning: true`를 반환합니다.
 - **폴더 대상 일괄 추론 (`--model <버전폴더>`)**: 특정 버전 디렉토리(`v1/`, `v2/`)를 지정하면 폴더 내에 저장된 모든 타겟 모델을 자동 스캔하여 다중 타겟 예측 컬럼(`pred_<타겟1>`, `pred_<타겟2>`)을 자동 일괄 생성합니다.
 - **파생변수 수식 자동 재현 (Replay Evaluator)**: 학습 당시 적용되었던 `--eval` 수식이 메타데이터에 보존되어 있으므로, 새로운 추론 데이터가 입력되면 동일한 파생변수를 자동으로 사전 계산하여 모델에 투입합니다.
 - **외삽 및 데이터 드리프트 실시간 진단 (Extrapolation Guard)**: 입력 피처 값이 학습 시점의 동적 경계선(`[min, max]`)을 벗어날 경우, 터미널 로그에 `[WARN] Extrapolation detected`를 출력하고 예측 결과 데이터셋에 경고 플래그(`drift_warning`)를 부착합니다.
@@ -253,6 +284,8 @@ python ml_predict.py \
 ---
 
 ## 6. 기술 감사 보고서 생성기 (`ml_report.py`) 상세 가이드
+
+> **현재 회귀 모델만 지원합니다.** 분류 기록을 지정하면 `STOP_RETRY`로 안내합니다 (분류 보고서는 다음 버전).
 
 `python-docx` 라이브러리를 활용하여, MS Office COM 없이 순수 파이썬 환경에서 현장 엔지니어 및 기술자를 위한 **공식 엔지니어링 기술 감사 Word (.docx) 보고서**를 0.5초 만에 생성합니다.
 
@@ -401,6 +434,8 @@ python ml_report.py \
 
 ### 1) 학습 엔진 (`ml_train.py`) 반환 규격
 
+2.0.0부터 모든 결과에 `task`, `primary_metric`(`val_r2` 또는 `val_f1_macro`), `mean_val_score`, `delta_score`가 포함됩니다. 회귀는 기존 키 `mean_val_r2`, `delta_r2`도 그대로 함께 반환합니다.
+
 #### [성공 시 반환 JSON]
 ```json
 {
@@ -459,6 +494,28 @@ python ml_report.py \
 }
 ```
 입력 키를 단위 없이(`반응온도=240`) 주면 학습 컬럼명으로 자동 매칭되고 `column_aliases`에 매칭 내역이 포함됩니다.
+
+#### [분류 모델 인라인 추론 성공]
+```json
+{
+  "status": "ok",
+  "predictions_summary": {
+    "품질등급": {
+      "task": "classification",
+      "model": "LogisticRegression",
+      "classes": ["A등급", "B등급", "C등급"],
+      "predictions": ["A등급"],
+      "probabilities": [{"A등급": 0.7774, "B등급": 0.2135, "C등급": 0.0091}],
+      "confidences": [0.7774],
+      "predicted_class_counts": {"A등급": 1, "B등급": 0, "C등급": 0},
+      "mean_confidence": 0.7774, "min_confidence": 0.7774, "low_confidence_count": 0
+    }
+  },
+  "drift_warning": false,
+  "low_confidence_warning": false,
+  "agent_directive": "VERIFIED: Prediction completed for 1 target(s). Inline predictions returned. Next step: report inference results to user."
+}
+```
 
 #### [배치 파일 대량 추론 성공 (`--file`)]
 ```json

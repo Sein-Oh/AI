@@ -28,5 +28,5 @@
 1. 변경 전 `python -m pytest -q`로 기준선 확인.
 2. 리팩터링(동작 불변)과 기능 변경은 별도 커밋/PR.
 3. 버그 수정에는 회귀 테스트 추가. 동작이 바뀌면 `SKILL.md`, `README.md`, `CHANGELOG.md` 갱신.
-4. 처리한 항목은 `ROADMAP.md`에서 체크.
+4. 남은 할 일은 각 도구 `CHANGELOG.md` 하단 "남은 할 일"에서 관리 (처리 시 해당 버전 항목으로 이동).
 5. `SKILL.md`는 경량 LLM 컨텍스트에 들어가므로 짧게 유지 (상세는 README.md).

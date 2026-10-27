@@ -14,7 +14,6 @@ python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
   --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp
 ```
 - 인터넷 PC가 폐쇄망과 **같은 Windows + 같은 Python 버전**이면 `--platform` 이하 옵션은 생략 가능합니다.
-- 테스트까지 돌리려면 `requirements-dev.txt`로 한 번 더 받습니다.
 - `-c constraints.txt`로 표준 환경과 같은 버전이 받아지므로, 이미 설치된 패키지는 재설치되지 않습니다.
 
 ## 2. 반입 후 폐쇄망 PC에서 설치
@@ -22,9 +21,10 @@ python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
 PATH에 잡힌 `python`이 WinPython인지 먼저 확인합니다: `python -c "import sys; print(sys.executable)"`
 
 ```bat
-CLI\ml_kit\install_offline.bat
+cd CLI\ml_kit
+python -m pip install --no-index --find-links wheels -r requirements.txt
 ```
-`wheels\` 폴더만 사용하며(`--no-index`), 마지막 줄에 `[STATUS] ml_kit dependencies OK`가 나오면 완료입니다.
+`wheels\` 폴더만 사용합니다(`--no-index`).
 
 ## 3. 버전 일치 (중요)
 
