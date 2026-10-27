@@ -231,6 +231,23 @@ def test_chart_numeric_x_becomes_scatter_and_offers_transfer(xl, capsys):
     assert [c["name"] for c in out["charts"]] == ["사인 2주기", "사인 2주기 2"]
 
 
+@pytest.mark.parametrize("kind,expected", [("scatter", -4169), ("scatter_lines", 75), ("line", 75), ("column", 51)])
+def test_chart_type_survives_set_source_data(xl, capsys, kind, expected):
+    # 실기 I5: 종류를 SetSourceData 앞에서만 정하면 Excel 2007이 분산형을 74(선+표식)로 바꾸고,
+    # 뒤에서만 정하면 첫 열(x)이 계열로 그려짐. 앞뒤로 모두 정해야 함. 'scatter' 상수도 74로 잘못돼 있었음
+    app, wb = xl
+    ws = ws_of(wb)
+    ws.set(1, 1, "x")
+    ws.set(1, 2, "y")
+    for r in range(2, 6):
+        ws.set(r, 1, float(r))
+        ws.set(r, 2, float(r * r))
+    code, out = run(capsys, "chart", "--range", "A1:B5", "--type", kind, "--title", "c")
+    assert code == 0, out
+    chart = ws.charts[-1]
+    assert chart.type_at_source == expected and chart.Chart.ChartType == expected
+
+
 def test_chart_delete_rules(xl, capsys):
     app, wb = xl
     ws = ws_of(wb)

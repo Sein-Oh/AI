@@ -34,7 +34,7 @@ import _runtime as rt  # noqa: E402
 TOOL = "excel"
 
 XL_CHART = {"column": 51, "bar": 57, "line": 4, "line_markers": 65, "pie": 5, "area": 1,
-            "scatter": 74, "scatter_lines": 75, "combo": 51}
+            "scatter": -4169, "scatter_lines": 75, "combo": 51}   # -4169 표식만, 75 선만(표식 없음)
 XL_LEGEND = {"bottom": -4107, "right": -4152, "top": -4160, "left": -4131}
 XL_ALIGN = {"left": -4131, "center": -4108, "right": -4152}
 XL_WEIGHT = {"hairline": 1, "thin": 2, "medium": -4138, "thick": 4}
@@ -993,8 +993,11 @@ def cmd_chart(args) -> Dict[str, Any]:
         anchor = ws.Range(args.at) if args.at else ws.Cells(int(rng.Row), int(rng.Column) + int(rng.Columns.Count) + 1)
         obj = ws.ChartObjects().Add(anchor.Left, anchor.Top, args.width, args.height)
         chart = obj.Chart
+        # 종류 -> 데이터 -> 종류: 데이터 앞에 정해야 분산형이 첫 열을 x값으로 쓰고(뒤에만 정하면 x가 계열이 됨),
+        # 데이터 뒤에 다시 정해야 세부 종류가 유지됨 (Excel 2007은 SetSourceData 때 분산형을 선+표식으로 바꿈)
         chart.ChartType = XL_CHART[chart_type]
         chart.SetSourceData(rng)
+        chart.ChartType = XL_CHART[chart_type]
         if args.title:
             chart.HasTitle = True
             chart.ChartTitle.Text = args.title

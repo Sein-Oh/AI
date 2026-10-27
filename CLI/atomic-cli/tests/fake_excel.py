@@ -218,6 +218,11 @@ class FakeChartObject:
         def set_source(rng):
             ncols = rng.Columns.Count
             self.series = [Props() for _ in range(max(1, ncols - 1))]
+            # 데이터를 넣을 때의 종류 (분산형은 이때 이미 분산형이어야 첫 열을 x값으로 씀)
+            self.type_at_source = object.__getattribute__(chart, "_d").get("ChartType")
+            # 실제 Excel 2007: 종류를 먼저 정하고 SetSourceData를 하면 분산형 세부 종류가 74(선+표식)로 바뀜
+            if self.type_at_source in (-4169, 75):
+                chart.ChartType = 74
         chart.SetSourceData = set_source
         chart.SeriesCollection = self._series
         chart.ApplyDataLabels = lambda: None
