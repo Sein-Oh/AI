@@ -124,6 +124,33 @@ def process_count(image):
         return -1
 
 
+def describe_com_error(e):
+    """pywintypes.com_error를 사람이 읽을 수 있게 풀어 씁니다 (HRESULT, Office가 준 설명 문구)."""
+    args = getattr(e, "args", ())
+    if len(args) >= 3 and isinstance(args[0], int):
+        hr, msg, exc = args[0], args[1], args[2]
+        text = f"HRESULT={hr} (0x{hr & 0xFFFFFFFF:08X}) {msg}"
+        if exc and len(exc) >= 6:
+            src, desc, scode = exc[1], exc[2], exc[5]
+            text += f" | 원본={src} | 설명={desc}"
+            if isinstance(scode, int):
+                text += f" | scode=0x{scode & 0xFFFFFFFF:08X}"
+        return text
+    return f"{type(e).__name__}: {e}"
+
+
+def step(label, fn):
+    """준비 단계 하나를 실행하고, 실패하면 어느 단계에서 왜 실패했는지 출력한 뒤 종료합니다."""
+    try:
+        return fn()
+    except Exception as e:
+        log(f"[ERROR] 준비 단계 실패: {label}")
+        log(f"        {describe_com_error(e)}")
+        log("        위 두 줄을 그대로 알려 주세요.")
+        log(traceback.format_exc())
+        raise SystemExit(1)
+
+
 def mtime(path):
     return os.path.getmtime(path) if os.path.exists(path) else None
 
@@ -157,7 +184,7 @@ def run_test(ctx, tid, title, fn):
         fn()
     except Exception as e:
         ctx.results.append({"id": tid, "title": title, "status": "ERROR",
-                            "detail": f"테스트 스크립트 예외: {e}", "trace": traceback.format_exc()[-800:]})
+                            "detail": f"테스트 스크립트 예외: {describe_com_error(e)}", "trace": traceback.format_exc()[-800:]})
         log(f"  => [ERROR] {tid} {e}")
 
 
@@ -196,8 +223,27 @@ def activate_xl(name, sheet=None):
 FILES = ["A.xlsx", "B.xlsx", "A.docx", "B.docx", "A.pptx", "B.pptx"]
 
 
+def _set_sheet_name(wb, idx, name):
+    """이미 같은 이름이면 건너뛰고, 다른 시트가 그 이름을 쓰고 있으면 먼저 비켜 줍니다."""
+    ws = wb.Worksheets(idx)
+    if ws.Name == name:
+        return
+    for other in wb.Worksheets:
+        if other.Name == name:
+            other.Name = f"{name}_old"
+    ws.Name = name
+
+
+def _save_workbook(wb, path):
+    try:
+        wb.SaveAs(path, FileFormat=51)  # xlOpenXMLWorkbook
+    except Exception as e:
+        log(f"        SaveAs(FileFormat=51) 실패 -> 형식 지정 없이 재시도: {describe_com_error(e)}")
+        wb.SaveAs(path)
+
+
 def setup_files(ctx):
-    os.makedirs(ctx.dir, exist_ok=True)
+    step(f"테스트 폴더 생성/쓰기 확인 ({ctx.dir})", lambda: _check_writable(ctx.dir))
     for f in FILES:
         p = ctx.path(f)
         if os.path.exists(p):
@@ -208,35 +254,46 @@ def setup_files(ctx):
                 sys.exit(1)
 
     log("[준비] Excel 테스트 파일 생성")
-    xl = win32com.client.DispatchEx("Excel.Application")
+    xl = step("Excel 백그라운드 실행 (DispatchEx)", lambda: win32com.client.DispatchEx("Excel.Application"))
     try:
-        xl.Visible = False
-        xl.DisplayAlerts = False
+        step("Excel 표시/경고 설정", lambda: (setattr(xl, "Visible", False), setattr(xl, "DisplayAlerts", False)))
         for name, a1 in (("A.xlsx", "원래값"), ("B.xlsx", "B파일")):
-            wb = xl.Workbooks.Add()
-            while wb.Worksheets.Count < 2:
-                wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
-            wb.Worksheets(1).Name = "Sheet1"
-            wb.Worksheets(2).Name = "Sheet2"
-            wb.Worksheets(1).Range("A1").Value = a1
-            wb.Worksheets(2).Range("A1").Value = "시트2 데이터"
-            wb.SaveAs(ctx.path(name), FileFormat=51)
-            wb.Close(SaveChanges=False)
+            wb = step(f"{name}: 새 통합문서 만들기", lambda: xl.Workbooks.Add())
+
+            def _sheets():
+                while wb.Worksheets.Count < 2:
+                    wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+                _set_sheet_name(wb, 1, "Sheet1")
+                _set_sheet_name(wb, 2, "Sheet2")
+            step(f"{name}: 시트 2개 구성", _sheets)
+
+            def _values():
+                wb.Worksheets(1).Range("A1").Value = a1
+                wb.Worksheets(2).Range("A1").Value = "시트2 데이터"
+            step(f"{name}: 셀 값 입력", _values)
+            step(f"{name}: 저장 ({ctx.path(name)})", lambda: _save_workbook(wb, ctx.path(name)))
+            step(f"{name}: 닫기", lambda: wb.Close(SaveChanges=False))
     finally:
-        xl.Quit()
+        try:
+            xl.Quit()
+        except Exception:
+            pass
 
     log("[준비] Word 테스트 파일 생성")
-    wd = win32com.client.DispatchEx("Word.Application")
+    wd = step("Word 백그라운드 실행 (DispatchEx)", lambda: win32com.client.DispatchEx("Word.Application"))
     try:
-        wd.Visible = False
-        wd.DisplayAlerts = 0
+        step("Word 표시/경고 설정", lambda: (setattr(wd, "Visible", False), setattr(wd, "DisplayAlerts", 0)))
         for name in ("A.docx", "B.docx"):
-            doc = wd.Documents.Add()
-            doc.Content.Text = f"{name} 첫 문단입니다.\r두 번째 문단입니다."
-            doc.SaveAs2(ctx.path(name), FileFormat=16)
-            doc.Close(SaveChanges=0)
+            doc = step(f"{name}: 새 문서 만들기", lambda: wd.Documents.Add())
+            step(f"{name}: 본문 입력",
+                 lambda: setattr(doc.Content, "Text", f"{name} 첫 문단입니다.\r두 번째 문단입니다."))
+            step(f"{name}: 저장 ({ctx.path(name)})", lambda: doc.SaveAs2(ctx.path(name), FileFormat=16))
+            step(f"{name}: 닫기", lambda: doc.Close(SaveChanges=0))
     finally:
-        wd.Quit(SaveChanges=0)
+        try:
+            wd.Quit(SaveChanges=0)
+        except Exception:
+            pass
 
     log("[준비] PowerPoint 테스트 파일 생성")
     running = True
@@ -244,21 +301,32 @@ def setup_files(ctx):
         win32com.client.GetActiveObject("PowerPoint.Application")
     except Exception:
         running = False
-    pp = win32com.client.Dispatch("PowerPoint.Application")
+    pp = step("PowerPoint 실행/연결", lambda: win32com.client.Dispatch("PowerPoint.Application"))
     for name in ("A.pptx", "B.pptx"):
-        prs = pp.Presentations.Add(0)
-        for i in range(1, 4):
-            s = prs.Slides.Add(i, 12)  # ppLayoutBlank
-            s.Shapes.AddTextbox(1, 50, 50, 400, 50).TextFrame.TextRange.Text = f"{name} 슬라이드 {i}"
-            s.Shapes.AddTextbox(1, 50, 150, 400, 50).TextFrame.TextRange.Text = f"본문 {i}"
-        prs.SaveAs(ctx.path(name), 24)
-        prs.Close()
+        prs = step(f"{name}: 새 프레젠테이션 만들기 (창 없이)", lambda: pp.Presentations.Add(0))
+
+        def _slides():
+            for i in range(1, 4):
+                s = prs.Slides.Add(i, 12)  # ppLayoutBlank
+                s.Shapes.AddTextbox(1, 50, 50, 400, 50).TextFrame.TextRange.Text = f"{name} 슬라이드 {i}"
+                s.Shapes.AddTextbox(1, 50, 150, 400, 50).TextFrame.TextRange.Text = f"본문 {i}"
+        step(f"{name}: 슬라이드 3장 구성", _slides)
+        step(f"{name}: 저장 ({ctx.path(name)})", lambda: prs.SaveAs(ctx.path(name), 24))
+        step(f"{name}: 닫기", lambda: prs.Close())
     if not running:
         try:
             if pp.Presentations.Count == 0:
                 pp.Quit()
         except Exception:
             pass
+
+
+def _check_writable(folder):
+    os.makedirs(folder, exist_ok=True)
+    probe = os.path.join(folder, "_write_test.tmp")
+    with open(probe, "w", encoding="utf-8") as f:
+        f.write("ok")
+    os.remove(probe)
 
 
 def open_user_windows(ctx):
