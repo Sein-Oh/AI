@@ -4,13 +4,16 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 
 | 도구 | 설명 | 스킬 |
 |---|---|---|
-| [`ml_kit/`](ml_kit/) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`ml_kit/SKILL.md`](ml_kit/SKILL.md) |
+| [`ml-kit/`](ml-kit/) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`ml-kit/SKILL.md`](ml-kit/SKILL.md) |
+
+에이전트 런타임은 **OpenCode** 입니다. 각 도구 폴더가 그대로 OpenCode 스킬 폴더이며, 폴더 이름 = 스킬 이름
+(소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 설치 위치: `C:\Users\<사용자>\.config\opencode\skills\<tool>\`.
 
 ## 새 도구 폴더 구성
 
 ```text
-CLI/<tool>/
-├── SKILL.md            # 에이전트가 읽는 짧은 사용법 (명령 템플릿 + 결과 처리 규칙). 짧게 유지
+CLI/<tool>/           # 폴더명 = 스킬명 (예: ml-kit)
+├── SKILL.md            # OpenCode 스킬. frontmatter: name(=폴더명), description(1024자 이하), license, compatibility, metadata
 ├── README.md           # 사람용 상세 설명서
 ├── CHANGELOG.md        # 변경 이력 + 남은 할 일
 ├── requirements.txt    # 런타임 의존성 (폐쇄망 wheel 반입 기준)

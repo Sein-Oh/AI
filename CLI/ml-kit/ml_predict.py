@@ -5,10 +5,10 @@ Supports Directory Targeting (v1/, v2/) or Specific Model/Meta File Targeting.
 Handles Batch Files (.csv, .xlsx) or Inline Single/Multi Record Inferences.
 
 DEPLOYMENT: this single file + a trained version folder (vX/) is a complete
-inference package. It has no dependency on the other ml_kit files.
+inference package. It has no dependency on the other ml-kit files.
 Requires only NumPy, Pandas, Scikit-learn, Joblib (+ openpyxl for .xlsx).
 
-This file is also the SHARED RUNTIME of ml_kit (section C*): ml_train.py and
+This file is also the SHARED RUNTIME of ml-kit (section C*): ml_train.py and
 ml_report.py import data loading, numeric coercion, the --eval formula engine,
 the Agent CLI Protocol and Windows-safe file helpers from here, so training and
 inference can never drift apart.

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deterministic synthetic process dataset for ml_kit smoke/regression tests."""
+"""Deterministic synthetic process dataset for ml-kit smoke/regression tests."""
 import sys
 
 import numpy as np

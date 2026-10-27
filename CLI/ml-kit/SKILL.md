@@ -1,15 +1,16 @@
 ---
-name: autonomous-regression-ml
-description: 표(Excel/CSV) 데이터로 회귀(수치) 또는 분류(범주) 예측 모델을 학습(ml_train), 예측(ml_predict), Word 감사 보고서 생성(ml_report, 회귀만)하는 1-Turn CLI 스킬. 데이터 정제, 5개 모델 경쟁, 버전 관리, 외삽 경고까지 도구가 자동 처리하므로 에이전트는 명령 1회 실행 후 JSON 결과만 읽으면 된다.
-tools:
-  - run_command
-  - read_file
-  - write_file
+name: ml-kit
+description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예측(분류) 모델을 학습하고(ml_train.py), 새 데이터를 예측하고(ml_predict.py), Word 감사 보고서(ml_report.py, 회귀만)를 만든다. 데이터 정제, 5개 모델 경쟁, 버전 관리, 외삽 경고를 도구가 자동 처리하므로 명령 1회 실행 후 JSON 결과만 읽으면 된다. 예측 모델 만들기, 성능 개선, 새 조건 예측값 계산, 감사 보고서 요청 시 사용.
+license: Proprietary
+compatibility: opencode
+metadata:
+  version: "2.0.0"
+  platform: windows
 ---
 
-# ml_kit 스킬 (Windows)
+# ml-kit 스킬 (Windows)
 
-`<SKILL_DIR>` 는 이 SKILL.md 가 있는 폴더의 절대 경로로 바꿔서 실행한다.
+`<SKILL_DIR>` 는 이 SKILL.md 가 있는 폴더의 절대 경로다 (설치 시 실제 경로로 바뀌어 있을 수 있다).
 모든 명령은 **1회 실행**으로 끝난다. stdout 의 **마지막 1줄 JSON** 만 읽는다 (stderr 의 `[PROGRESS]` 로그는 무시).
 
 ## 1. 학습: 모델 만들기 / 성능 개선

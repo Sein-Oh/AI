@@ -6,10 +6,10 @@
 ## 1. 인터넷 PC에서 준비
 
 표준 환경은 WinPython (Python 3.13) 입니다 ([`ENVIRONMENT.md`](ENVIRONMENT.md)). 대부분의 패키지는 이미 설치되어 있으므로
-**표준 환경에 없는 패키지만** 반입하면 됩니다. 현재 ml_kit은 추가 반입이 필요 없습니다.
+**표준 환경에 없는 패키지만** 반입하면 됩니다. 현재 ml-kit은 추가 반입이 필요 없습니다.
 
 ```bat
-cd CLI\ml_kit
+cd CLI\ml-kit
 python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
   --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp
 ```
@@ -21,7 +21,7 @@ python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
 PATH에 잡힌 `python`이 WinPython인지 먼저 확인합니다: `python -c "import sys; print(sys.executable)"`
 
 ```bat
-cd CLI\ml_kit
+cd CLI\ml-kit
 python -m pip install --no-index --find-links wheels -r requirements.txt
 ```
 `wheels\` 폴더만 사용합니다(`--no-index`).

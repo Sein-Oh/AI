@@ -17,7 +17,7 @@ AI_WORK/
 │   └── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 └── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
-    └── ml_kit/                # 회귀·분류 ML 툴킷 (2.0.0)
+    └── ml-kit/                # 회귀·분류 ML 툴킷 (2.0.0)
         ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
@@ -31,7 +31,7 @@ AI_WORK/
 ## 빠른 시작
 
 ```bash
-python -m pip install -r CLI/ml_kit/requirements.txt -c constraints.txt
+python -m pip install -r CLI/ml-kit/requirements.txt -c constraints.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.
@@ -43,4 +43,4 @@ python -m pytest -q              # 전체 도구 테스트
 3. **작업 1건 = 브랜치 1개 = PR 1개**, 리팩터링과 동작 변경은 분리.
 4. **모든 PR은 `python -m pytest` 통과가 조건.**
 5. **배포 = 도구 폴더 복사** – `CLI/<tool>/` 폴더를 폐쇄망 PC의 스킬 폴더로 복사.
-   ml_kit 예측만 배포할 때는 `ml_predict.py` + 학습된 `vX\` 폴더 2가지만 복사하면 됩니다.
+   ml-kit 예측만 배포할 때는 `ml_predict.py` + 학습된 `vX\` 폴더 2가지만 복사하면 됩니다.

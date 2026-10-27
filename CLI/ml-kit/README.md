@@ -1,4 +1,4 @@
-# ml_kit 2.0: 경량 AI 에이전트를 위한 자율 회귀·분류 머신러닝 툴킷 (Autonomous Regression / Classification ML Toolkit)
+# ml-kit 2.0: 경량 AI 에이전트를 위한 자율 회귀·분류 머신러닝 툴킷 (Autonomous Regression / Classification ML Toolkit)
 
 > **26B~30B 경량화 LLM(Glimmer-30B, OpenCode 등)에 최적화된 1-Turn 완결형 머신러닝 학습, 추론 및 기술 감사 엔진**  
 > 복잡한 다단계 판단이나 인간의 개입 없이, 단 1회의 선언적 CLI 명령으로 데이터 자동 정제, 방탄 파생변수 생성, 5대 회귀/분류 모델 경쟁 학습, 단일 진실 공급원(SSOT) 원장 누적, 초고속 서빙 추론, 그리고 공식 엔지니어링 Word(.docx) 감사 보고서 생성을 100% 자율 완결합니다.
@@ -33,7 +33,7 @@
 
 ### 1) 코드베이스 디렉토리 구조
 ```text
-ml_kit/
+ml-kit/
 ├── README.md               # [본 문서] 툴킷 종합 안내서, 완전 CLI 레퍼런스
 ├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
@@ -49,6 +49,20 @@ ml_kit/
 └── [3단계: 기술 감사 보고서 생성기]
     └── ml_report.py        # python-docx 기반 슬롯 필링 아키텍처 공식 Word (.docx) 감사 보고서 생성기
 ```
+
+### 1-B) OpenCode 스킬 설치
+
+OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이름(`ml-kit`)과 같아야** 합니다. 이 폴더(`CLI/ml-kit/`)를 그대로 복사합니다.
+
+| 범위 | 설치 위치 (Windows) |
+|---|---|
+| 전체 프로젝트 공용 (권장) | `C:\Users\<사용자>\.config\opencode\skills\ml-kit\` |
+| 특정 프로젝트 전용 | `<프로젝트>\.opencode\skills\ml-kit\` |
+
+1. 위 위치에 `ml-kit` 폴더째 복사합니다 (`SKILL.md`, `ml_*.py` 포함, `tests\`는 생략 가능).
+2. **권장**: 복사한 `SKILL.md` 안의 `<SKILL_DIR>` 를 실제 절대 경로(예: `C:\Users\hong\.config\opencode\skills\ml-kit`)로 모두 바꿔 저장합니다. 경량 LLM이 경로를 추론할 필요가 없어집니다.
+3. 권한을 제한하는 경우 `opencode.json` 에 `"permission": {"skill": {"ml-kit": "allow"}}` 를 추가합니다.
+4. OpenCode에서 에이전트가 `skill({ name: "ml-kit" })` 로 스킬을 불러오는지 확인합니다.
 
 ### 2) 런타임 산출물 원장 계층 구조 (`<데이터파일명>_ml_data/`)
 학습 엔진 실행 시 입력 데이터셋 파일과 동일한 디렉토리에 `<파일명>_ml_data/` 폴더가 자동 생성되며 모든 산출물이 원자적으로 격리 관리됩니다:
@@ -217,7 +231,7 @@ python ml_train.py \
 학습 단계에서 패키징된 아티팩트를 로드하여, 단일 레코드 인라인 추론(Zero-File) 또는 배치 파일 대량 예측을 0.1초 만에 수행합니다.
 
 ### 0) 단독 배포 (Standalone Deployment)
-`ml_predict.py`는 다른 ml_kit 파일을 import하지 않습니다. 예측 PC에는 아래 2가지만 복사하면 됩니다:
+`ml_predict.py`는 다른 ml-kit 파일을 import하지 않습니다. 예측 PC에는 아래 2가지만 복사하면 됩니다:
 ```text
 배포폴더/
 ├── ml_predict.py
@@ -670,7 +684,7 @@ OpenCode, Glimmer-30B, CI 파이프라인 등 무인 서브프로세스 환경�
 ## 12. 실무 트러블슈팅 및 FAQ (Engineering FAQ)
 
 ### Q1. 한국어 Windows Excel에서 CSV를 열었을 때 한글이 깨집니다.
-- **해결 완료**: Windows 환경의 Excel은 UTF-8이 아닌 ANSI(CP949)를 기본 표준으로 인식합니다. `ml_kit`의 모든 모듈(`ml_train.py`, `ml_predict.py`)은 CSV 출력 시 **`CP949`를 기본값으로 적용**하며, 규격 외 특수문자가 감지될 경우 자동으로 `utf-8-sig`로 변환하여 저장하므로 더블클릭 시 100% 한글이 정상 출력됩니다.
+- **해결 완료**: Windows 환경의 Excel은 UTF-8이 아닌 ANSI(CP949)를 기본 표준으로 인식합니다. `ml-kit`의 모든 모듈(`ml_train.py`, `ml_predict.py`)은 CSV 출력 시 **`CP949`를 기본값으로 적용**하며, 규격 외 특수문자가 감지될 경우 자동으로 `utf-8-sig`로 변환하여 저장하므로 더블클릭 시 100% 한글이 정상 출력됩니다.
 
 ### Q2. 엑셀 파일 상단에 제목과 결재란, 단위 행이 섞여 있어 데이터 로드가 깨집니다.
 - **해결 완료**: `--header-row`, `--unit-row`, `--data-row` 파라미터를 활용하십시오. 상단 빈 행은 내장 스니퍼가 자동 건너뛰며, 단위 행(`--unit-row`)을 지정하면 `반응온도(°C)`와 같이 컬럼명에 안전 결합됩니다.

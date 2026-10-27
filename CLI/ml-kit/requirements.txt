@@ -1,4 +1,4 @@
-# ml_kit runtime dependencies (no network access needed at runtime)
+# ml-kit runtime dependencies (no network access needed at runtime)
 # Standard environment pins: ../../constraints.txt (pip install -r requirements.txt -c ../../constraints.txt)
 # Install the SAME versions on the training PC and the serving PC (joblib models are version-sensitive).
 numpy>=1.26

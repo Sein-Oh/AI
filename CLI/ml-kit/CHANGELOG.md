@@ -1,4 +1,4 @@
-# CHANGELOG – ml_kit
+# CHANGELOG – ml-kit
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
@@ -6,7 +6,7 @@
 
 ### 구조
 - `ml_common.py`를 `ml_predict.py`에 병합 (PART C: 공통 런타임). `.py` 파일 3개 구성.
-- `ml_predict.py`는 다른 ml_kit 파일 없이 단독 실행됩니다. **배포 = `ml_predict.py` + `vX\` 폴더 복사.**
+- `ml_predict.py`는 다른 ml-kit 파일 없이 단독 실행됩니다. **배포 = `ml_predict.py` + `vX\` 폴더 복사.**
   `ml_train.py`, `ml_report.py`는 `ml_predict.py`에서 공통 기능을 import합니다.
 
 ### 기능
@@ -27,6 +27,10 @@
 ### 호환
 - 회귀의 기존 키(`mean_val_r2`, `delta_r2`, `val_r2` 등)와 CLI 인자는 그대로 유지.
 - `task` 키가 없는 1.x 모델/원장은 회귀로 처리.
+
+### 스킬
+- OpenCode Agent Skills 형식 적용: 스킬 이름 `ml-kit`, 폴더 이름도 `CLI/ml-kit/`로 변경 (OpenCode는 폴더명 = 스킬명 필수).
+  frontmatter는 `name`, `description`, `license`, `compatibility`, `metadata`만 사용. 설치 방법은 README "OpenCode 스킬 설치".
 
 ### 문서
 - 이전 이력 문서(ROADMAP 등)를 정리하고 이 CHANGELOG로 일원화. `requirements-dev.txt`, `install_offline.bat` 삭제.
