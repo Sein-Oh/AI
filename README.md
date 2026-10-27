@@ -33,7 +33,7 @@ AI_WORK/
         ├── WORK_PLAN.md       # 오류 수정/최적화/고도화 작업계획 + 진행 현황
         ├── TEST_CHECKLIST.md  # Windows 실기 테스트 체크리스트
         ├── *.py               # 도구 진입점(excel_*, word_*, ppt_*, outlook_*, ...) + 공통 모듈(_*.py)
-        ├── tools/             # merge_code.py(반출용 merged_code.md 생성/분리), run_win_tests.py(실기 테스트 러너)
+        ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
         └── tests/             # 가짜 COM 기반 오프라인 테스트
 ```
 

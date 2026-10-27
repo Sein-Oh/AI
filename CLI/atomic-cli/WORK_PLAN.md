@@ -58,7 +58,7 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
      - HWP 레코드 파서, EML 디코딩, search 쿼리 파서
    - 가짜 COM 객체(FakeRange / FakeWorkbook)로 `execute()`의 분기를 검증합니다.
    - Windows 실기 검증용 스모크 스크립트 `smoke_windows.ps1`: 모듈마다 대표 명령 1~2개를 실행하고 JSON 파싱 결과를 확인합니다.
-4. **반출 자동화**: 저장소의 `.py`에서 `merged_code.md`를 생성하는 스크립트(`tools/merge_code.py`)를 둡니다. 이후 수정은 항상 `.py` 기준으로 합니다.
+4. ~~반출 자동화 (`tools/merge_code.py`)~~: 사용자 결정으로 삭제했습니다. 반입은 개별 파일로 합니다.
 
 ---
 
@@ -297,12 +297,12 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
   1. ruff와 compileall을 통과해야 합니다.
   2. 오프라인 단위 테스트(순수 로직과 가짜 COM 객체)를 통과해야 합니다.
   3. Windows 실기 스모크 스크립트를 사용자가 실행하고 결과 JSON을 공유합니다.
-- **반출**: 수정할 때마다 `tools/merge_code.py`로 `merged_code.md`를 다시 만들어 사내 환경에 반입할 수 있게 합니다.
+- **반입**: 개별 파일로 합니다. merged_code.md와 merge 도구는 사용하지 않습니다.
 
 ## 8. 확정 사항 (2026-10-27 사용자 회신)
 
 1. **범위**: merged_code.md에 없는 파일(`atomic_agent*.py`, `ml_*.py`, `excel_style.py`)은 작업 대상에서 제외합니다. README 재작성(Phase 4) 때 해당 절도 정리합니다.
-2. **작업 방식**: 저장소에 개별 `.py`로 복원해 작업합니다. 반출용 `merged_code.md`는 `python tools/merge_code.py merge`로 다시 생성합니다. 반입할 때는 `split`을 씁니다.
+2. **작업 방식**: 저장소의 개별 `.py`로 작업하고, 반입도 개별 파일로 합니다. (merged_code.md와 merge 도구는 삭제)
 3. **대상 환경**: pywin32 312, pywin32-ctypes 0.2.3, Office 16.0 (Word/Excel/PowerPoint/Outlook, 2016/2019/2021/365 계열)
    - `SaveAs2`, `WordOpenXML`, `ExportAsFixedFormat`, `DispatchEx`를 모두 쓸 수 있습니다.
    - pywin32 312에서 Enum 콜백이 False를 반환하면 예외가 날 수 있으므로, 콜백은 항상 True를 반환하도록 바꿨습니다.
@@ -314,7 +314,7 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
 
 | 단계 | 상태 | 비고 |
 |---|---|---|
-| Phase 0 | 완료 | `.py` 복원, `tools/merge_code.py`, `pyproject.toml`(ruff, pytest), `tests/`(가짜 COM 기반 30개) |
+| Phase 0 | 완료 | `.py` 복원, `pyproject.toml`(ruff, pytest), `tests/`(가짜 COM 기반 29개). merge 도구는 이후 삭제 |
 | Phase 1 | 완료 (Windows 실기 검증 대기) | 아래 표 참고 |
 | Phase 2 | 일부 선반영 | `word_write` matrix, `word_export` fixed_err_msg, `excel_edit`의 한 행 범위 처리, 창 탐색 콜백, 응답 예약 키 보호 |
 
