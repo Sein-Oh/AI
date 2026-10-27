@@ -41,6 +41,8 @@ def test_multiclass_train_contract(multiclass):
     assert len(lb["targets"]["품질등급"]["leaderboard"]) == 5
     assert champ["confusion_matrix"]["labels"] == ["A등급", "B등급", "C등급"]
     assert set(champ["per_class"]) == {"A등급", "B등급", "C등급"}
+    oof_head = (work / "proc_ml_data" / "v1" / "oof_품질등급.csv").read_text(encoding="utf-8-sig").splitlines()[0]
+    assert oof_head == "data_row,actual,predicted,proba_A등급,proba_B등급,proba_C등급"
 
 
 def test_multiclass_predict_inline_probabilities(multiclass):
@@ -108,11 +110,13 @@ def test_history_mixed_tasks_compare_within_task(multiclass):
     assert set(hist["best_by_task"]) == {"classification", "regression"}
 
 
-def test_report_rejects_classification(multiclass):
+def test_report_supports_classification(multiclass):
+    """Classification versions get the integrated report (2.2.0); -d/-t compatibility still works."""
     pytest.importorskip("docx")
+    pytest.importorskip("matplotlib")
     work, _, _ = multiclass
-    payload = run_fail("ml_report.py", "-d", str(work / "proc_ml_data"), "-t", "품질등급")
-    assert "분류" in payload["message"]
+    payload = run_tool("ml_report.py", "-d", str(work / "proc_ml_data"), "-t", "품질등급", "-v", "v1")
+    assert payload["task"] == "classification" and payload["targets"] == ["품질등급"]
 
 
 def test_pre_2_0_model_metadata_is_regression(tmp_path):
@@ -128,3 +132,15 @@ def test_pre_2_0_model_metadata_is_regression(tmp_path):
     payload = run_tool("ml_predict.py", "-m", str(tmp_path / "old_ml_data" / "v1"),
                        "-i", "반응온도=240,소비전력=65,압축압력=3,촉매비율=0.8,수분함량=20")
     assert payload["predictions_summary"]["생산효율(%)"]["task"] == "regression"
+
+
+def test_delta_compares_same_targets_only(tmp_path):
+    """A different target in the same ledger must not be used as the comparison baseline."""
+    data = make_class_sample(str(tmp_path / "dt.csv"))
+    run_tool("ml_train.py", "-f", data, "-x", FEATS, "-y", "불량여부", "--task", "classification")
+    second = run_tool("ml_train.py", "-f", data, "-x", FEATS, "-y", "품질등급", "--task", "classification")
+    assert second["delta_score"] == "base" and second["is_best"] is True
+    third = run_tool("ml_train.py", "-f", data, "-x", FEATS, "-y", "품질등급", "--task", "classification", "--seed", "7")
+    assert isinstance(third["delta_score"], float)
+    hist = run_tool("ml_train.py", "-f", data, "--history")
+    assert hist["best_version"] in ("v2", "v3")  # never v1 (other target)

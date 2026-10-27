@@ -1,7 +1,7 @@
 # ml-kit 2.1: 경량 AI 에이전트를 위한 자율 회귀·분류 머신러닝 툴킷 (Autonomous Regression / Classification ML Toolkit)
 
 > **26B~30B 경량화 LLM(Glimmer-30B, OpenCode 등)에 최적화된 1-Turn 완결형 머신러닝 학습, 추론 및 기술 감사 엔진**  
-> 복잡한 다단계 판단이나 인간의 개입 없이, 단 1회의 선언적 CLI 명령으로 데이터 자동 정제, 방탄 파생변수 생성, 5대 회귀/분류 모델 경쟁 학습, 단일 진실 공급원(SSOT) 원장 누적, 초고속 서빙 추론, 그리고 공식 엔지니어링 Word(.docx) 감사 보고서 생성을 100% 자율 완결합니다.
+> 복잡한 다단계 판단이나 인간의 개입 없이, 단 1회의 선언적 CLI 명령으로 데이터 자동 정제, 방탄 파생변수 생성, 5대 회귀/분류 모델 경쟁 학습, 단일 진실 공급원(SSOT) 원장 누적, 초고속 서빙 추론, 그리고 Word(.docx) ML 결과 보고서 생성을 100% 자율 완결합니다.
 
 ---
 
@@ -38,7 +38,8 @@ ml-kit/
 ├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
 ├── requirements.txt        # 런타임 의존성
-├── tools/run_win_tests.py  # Windows 실기 테스트 (실제 Excel/Word, 파일 잠금, cmd/PowerShell, 배포 폴더). 결과 report_*.txt
+├── tools/run_win_tests.py  # Windows 실기 테스트 (실제 Excel/Word, 파일 잠금, cmd/PowerShell, 배포 폴더)
+│                           #   결과: 테스트 폴더 report_*.txt(요약) + tools/test_logs/testlog_<라벨>_<시각>.txt(AI 판독용 상세 로그)
 │
 ├── [1단계: 학습 엔진]
 │   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀/분류 경쟁, 리더보드, SSOT 패키징
@@ -47,8 +48,8 @@ ml-kit/
 │   └── ml_predict.py       # 단독 배포 가능. 파생 수식 재현, 외삽/저확신 경고, 회귀·분류 자동 분기
 │                           # PART C: 데이터 로딩, 수치 변환, 수식 엔진, JSON 규약, Windows 파일 처리 (train/report가 import)
 │
-└── [3단계: 기술 감사 보고서 생성기]
-    └── ml_report.py        # python-docx 기반 슬롯 필링 아키텍처 공식 Word (.docx) 감사 보고서 생성기
+└── [3단계: ML 결과 보고서]
+    └── ml_report.py        # 버전 폴더 1개 -> Word 문서 1개 (회귀·분류, 차트 포함, 소견 자동 작성)
 ```
 
 ### 1-B) OpenCode 스킬 설치
@@ -72,7 +73,7 @@ OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이
 <데이터파일명>_ml_data/
 ├── history.jsonl              # [SSOT 스트리밍] 회차별 실험 메타데이터 누적 원장 (JSON Lines)
 ├── history.json               # [SSOT 표준배열] 가독성 및 LLM 일괄 조회를 위한 동기화 원장 (JSON Array)
-├── report_<타겟>.docx          # [공식 기술 보고서] Style B 모던 클린 슬레이트 Word 감사 보고서 (기본 저장 위치)
+├── ML결과보고서_<데이터>_vX.docx # [ML 결과 보고서] ml_report.py 기본 저장 위치
 ├── .train.lock                # [동시 실행 잠금] 학습 중에만 OS 잠금 (비정상 종료 시 자동 해제)
 ├── .tmp_vX/                   # [임시 트랜잭션] 원자적 스테이징 폴더 (작업 성공 시 vX로 치환, 실패 시 자동 GC)
 └── vX/                        # [버전 체크포인트 디렉토리] (v1, v2, v3, ...)
@@ -80,6 +81,7 @@ OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이
     ├── model_<타겟>.json       # 타겟별 추론 메타데이터 (feature_schema, 지표, 외삽 경계, 예측 범위, 판정 기준, 파생 수식)
     ├── leaderboard.json       # 5대 알고리즘 교차검증 대조표 (튜닝된 params 포함)
     ├── correlation.csv        # 전체 상관행렬 (원장에는 피처 30개 이하로 축약 저장)
+    ├── oof_<타겟>.csv          # 챔피언의 교차검증 예측값 (실측·예측·잔차 또는 클래스별 확률, 보고서 그림 원본, 2.2.0)
     ├── next_features_*.txt    # next_commands용 피처 목록 (피처 15개 초과 시)
     └── model_dataset.csv      # 학습 당시 헤더 정제, 결측치 대치, 파생변수가 완료된 스냅샷 (CP949/UTF-8 호환)
 ```
@@ -107,7 +109,7 @@ flowchart TD
     D --> D2["배치 파일 대량 추론 (--file)"]
     D --> D3["외삽(Extrapolation) 위험 실시간 진단"]
     
-    C1 --> E["ml_report.py (기술 감사 보고서 생성기)"]
+    C1 --> E["ml_report.py (ML 결과 보고서)"]
     C2 --> E
     E --> E1["90% 결정적 기술 테이블 렌더링"]
     E --> E2["10% LLM 기술 소견 슬롯 채우기 (5대 슬롯)"]
@@ -157,7 +159,7 @@ flowchart TD
 - **라벨 정규화**: `1`, `1.0`, `"1"`은 같은 클래스 `"1"`로, 공백·`-`·`N/A`는 결측으로 처리하며 결측 라벨 행은 학습에서 제외
 - **불균형 대응**: 최소 클래스 비율이 20% 미만이면 `class_weight='balanced'` 자동 적용 (`[WARN]` 출력, 처방에 기록)
 - **검증**: 클래스 2개 미만, 샘플 1개짜리 클래스, 클래스 50개 초과는 `STOP_RETRY`. fold 수는 최소 클래스 샘플 수에 맞춰 자동 축소
-- **이력 비교**: `delta_score`, `is_best`는 같은 task의 이전 기록끼리만 비교 (같은 원장에 회귀/분류 기록 공존 가능)
+- **이력 비교**: `delta_score`, `is_best`는 같은 task + 같은 타겟 조합의 이전 기록끼리만 비교 (같은 원장에 다른 타겟·회귀/분류 기록 공존 가능)
 - **보고서**: 분류 Word 보고서는 다음 버전 예정. 현재 `ml_report.py`는 분류 기록에 대해 `STOP_RETRY`로 안내
 
 ```bash
@@ -190,7 +192,7 @@ python ml_train.py -f "공정.xlsx" -x "반응온도,촉매비율,수분함량" 
 - **`--description` (`--desc`)**:
   - 데이터셋의 비즈니스 도메인 및 모델링 궁극적 목적을 기술 (예: `"화학공정 복합 반응기 실시간 생산효율 예측 및 운전조건 최적화"`).
   - **버전 간 자동 상속 (Inheritance)**: `v1` 생성 시 한 번만 지정해 두면, 이후 `v2`, `v3` 학습 시 `--description`을 생략하더라도 직전 버전의 설명이 `history.json`과 메타데이터에 100% 자동 계승 및 영구 고정됩니다. (물론 새로운 목적이 생기면 명시적으로 덮어쓸 수도 있습니다.)
-  - 추론 요약 JSON, 터미널 원장 요약표, 공식 Word 감사 보고서의 최상단 규격 테이블에 일관되게 박제되어 LLM이 컨텍스트를 즉시 인지합니다.
+  - 추론 요약 JSON, 터미널 원장 요약표, Word ML 결과 보고서 표지에 일관되게 박제되어 LLM이 컨텍스트를 즉시 인지합니다.
 - **`--tag`**:
   - 해당 회차만의 고유한 엔지니어링 가설 및 파라미터 변경 사항을 기록 (예: `"베이스라인"`, `"파생변수2종_추가"`, `"상관계수0.9이상_피처제거"`).
   - 매 회차마다 독립적으로 기록되며 상속되지 않습니다.
@@ -324,82 +326,52 @@ python ml_predict.py \
 
 ---
 
-## 6. 기술 감사 보고서 생성기 (`ml_report.py`) 상세 가이드
+## 6. ML 결과 보고서 (`ml_report.py`) 상세 가이드
 
-> **현재 회귀 모델만 지원합니다.** 분류 기록을 지정하면 `STOP_RETRY`로 안내합니다 (분류 보고서는 다음 버전).
+선택한 버전 폴더의 **모든 타겟을 Word 문서 1개**에 담습니다 (회귀·분류 모두, 2.2.0). python-docx와 matplotlib만 사용하며 Office 프로그램이 없어도 생성됩니다.
 
-`python-docx` 라이브러리를 활용하여, MS Office COM 없이 순수 파이썬 환경에서 현장 엔지니어 및 기술자를 위한 **공식 엔지니어링 기술 감사 Word (.docx) 보고서**를 0.5초 만에 생성합니다.
+### 1) 사용법
 
-### 1) 디자인 표준: [Style B] 모던 클린 슬레이트 (Modern Clean Slate)
-인위적인 장식과 눈의 피로를 유발하는 원색을 전면 걷어내고, 글로벌 테크 기업 및 산업 ISO 표준 문서 규격을 준수합니다:
-- **컬러 체계**: 다크 슬레이트 타이틀(`#1E293B`), 슬레이트 헤딩(`#334155`), 소프트 쿨그레이 헤더 배경(`#F1F5F9`).
-- **테이블 서식**: 얼룩무늬(지브라 패턴)를 완전 배제한 순수 흰색 데이터 셀, 얇은 0.5pt 슬레이트 실선 그리드(`#CBD5E1`).
-- **소견 및 콜아웃 블록**: 연한 뉴트럴 배경(`#F8FAFC`)에 **좌측 2.0pt 슬레이트 바(`#64748B`)** 1줄만 배치한 절제된 인용구 스타일.
-- **피어슨 상관관계 표**: 무지개색 히트맵 대신, 다중공선성 주의 구간(|r| >= 0.85)만 미세 음영(`#E2E8F0`) 및 볼드 텍스트로 절제되게 표시.
+| 옵션 | 설명 |
+|---|---|
+| `--model`, `-m` | 버전 폴더 (학습 결과의 `version_dir`). **권장** |
+| `--data-dir`, `-d` (`--history`, `-H`) | 데이터 폴더. `-v`가 없으면 가장 최근 학습과 같은 task·타겟 조합 중 최고 점수 버전 |
+| `--version`, `-v` | `-d`와 함께 쓸 버전 (`v2` 또는 `2`) |
+| `--target`, `-t` | 문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 `all` = 전체) |
+| `--slots` | 소견 덮어쓰기 JSON (파일 또는 문자열) |
+| `--out`, `-o` | 저장 경로 (생략 시 데이터 폴더의 `ML결과보고서_<데이터>_<버전>.docx`) |
 
-### 2) 슬롯 필링 아키텍처 (Slot-Filling Architecture)
-LLM의 추론 성능 편차에 따라 보고서의 레이아웃이나 수치 정확도가 왜곡되는 현상을 방지하기 위해 **도구(90%)와 LLM(10%)의 역할을 엄격히 분리**하였습니다:
-- **도구 (`ml_report.py`)**: 5대 모델 벤치마크, 순열 중요도 순위, 외삽 한계선([Min, Max]), 계보 대조표, 상관 행렬 등 모든 정량적 수치와 표를 코드로 100% 무결 렌더링.
-- **LLM**: 5대 기술 소견 슬롯(`{{SLOT_...}}`)에만 정량적 해석 소견 작성 (생략 시 도구 내장 규칙 기반 소견으로 100% 자동 채움 완결).
-
-#### 5대 LLM 기술 소견 슬롯 명세
-| 슬롯 키 | 섹션 | 엔지니어링 진단 목적 |
-|---|:---:|---|
-| `slot1_residual` | SECTION 1 | 챔피언 알고리즘 선정 당위성, 잔차 왜도(Skewness) 정규분포 적합성, 오차 SLA 판정 |
-| `slot2_feature` | SECTION 2 | 핵심 주도 인자(Dominant Feature) 파악, 1% 미만 노이즈 피처 프루닝 권고 |
-| `slot3_lineage` | SECTION 3 | 베이스라인부터 현재 체크포인트까지의 결정계수 개선폭($\Delta R^2$) 원인 분석 |
-| `slot4_correlation` | SECTION 4 | 독립변수 간 다중공선성(\|r\| >= 0.85) 위험 진단 및 회귀 가중치 안정성 검토 |
-| `slot5_serving` | SECTION 5 | 결측치 실시간 대치 전략, 외삽(Extrapolation) 발생 시 재학습 트리거 기준 수립 |
-
-### 3) 5대 엔지니어링 섹션 구성
-1. **SECTION 1. 최종 챔피언 모델 기술 사양 및 예측 오차 정밀 감사**:
-   - 5대 회귀 모델 K-Fold 벤치마크 대조표, 통계적 오차율(MAE/RMSE vs Std), 잔차 왜도(Residual Skewness) 감사표, 오차 거동 소견
-2. **SECTION 2. 핵심 피처 민감도 및 기여도 감사**:
-   - 순열 중요도(Permutation Importance) 정량 분석표, 피처별 동적 범위 및 외삽 한계선(Extrapolation Boundaries) 표
-3. **SECTION 3. 버전별 엔지니어링 계보 및 사양 진화 감사**:
-   - v1~vN 회차별 성능 추이 종합 대조표, 버전 간 피처 엔지니어링 Diff 내역(파생변수 수식, 추가/삭제 피처)
-4. **SECTION 4. 변수 간 상관관계 행렬 및 다중공선성 진단**:
-   - 2차원 피어슨 상관계수 클린 그리드 표 (|r| >= 0.85 임계치 초과 여부 정밀 감사)
-5. **SECTION 5. 프로덕션 서빙 사양 및 런타임 제약조건**:
-   - 모델 가중치(.joblib), 메타데이터(.json), 파이프라인 규격 명세표, 단일/배치 추론 CLI 호출 명령어 가이드
-
-### 4) 파일 잠금 방어 로직 (File Lock Guard)
-사용자가 MS Word로 이전 보고서(`report_생산효율(%).docx`)를 열어두고 검토 중인 상태에서 도구를 재실행하더라도, OS의 쓰기 잠금(`Permission denied: [Errno 13]`)으로 중단되지 않고 타임스탬프가 부착된 새 파일(`report_생산효율(%)_YYYYMMDD_HHMMSS.docx`)로 안전 분기 저장됩니다.
-
-### 5) CLI 명령어 인자 레퍼런스
-| 옵션 | 축약 | 필수 | 설명 |
-|---|:---:|:---:|---|
-| `--history` / `--data-dir` | `-H` / `-d` | **필수** | 학습 산출물 루트 디렉토리 또는 `history.json(l)` 파일 경로 |
-| `--target` | `-t` | 선택 | 타겟 변수명 (생략 시 버전 내 전체 타겟 일괄 생성, `all` 또는 콤마 분리 다중 지정 가능) |
-| `--out` | `-o` | 선택 | Word (.docx) 파일 저장 경로 (생략 시 `report_<target>.docx` 자동 생성) |
-| `--slots` | - | 선택 | LLM이 작성한 5대 슬롯 JSON 파일 경로 또는 인라인 JSON 문자열 |
-| `--version` | `-v` | 선택 | 감사 대상 버전 수동 지정 (예: `v2` 지정 시 과거 체크포인트 기준 감사 보고서 생성) |
-
-### 6) 실행 예시
-
-#### [예시 A] 특정 체크포인트(v5) 기준 공식 기술 감사 보고서 생성
-```bash
-python ml_report.py \
-  --history "sample_v2_ml_data/history.json" \
-  --version "v5"
+```bat
+python ml_report.py -m sample_ml_data\v3
+python ml_report.py -d sample_ml_data --slots slots.json
 ```
+2.2.0 이전에 학습한 버전(`oof_<타겟>.csv` 없음)은 다시 학습해야 보고서를 만들 수 있습니다 (`STOP_RETRY`로 안내).
 
-#### [예시 B] 과거 다중 타겟(4종) 버전 일괄 보고서 동시 생성
-```bash
-# v2 체크포인트에 포함된 4대 타겟 전체에 대한 개별 Word 보고서 4종을 1초 만에 일괄 생성
-python ml_report.py \
-  --history "sample_v2_ml_data/history.json" \
-  --version "v2"
-```
+### 2) 문서 구성
 
-#### [예시 C] LLM 외부 슬롯 주입 모드 실행
-```bash
-python ml_report.py \
-  --history "sample_v2_ml_data/history.json" \
-  --target "생산효율(%)" \
-  --slots "custom_slots.json" \
-  --out "final_audit_report.docx"
+| 구분 | 내용 | 그림·표 |
+|---|---|---|
+| 표지·목차 | 제목, 목적(`--desc`), 데이터·타겟, 종합 판정, 문서 정보 | 문서 정보 표 |
+| 1. 요약 | 핵심 수치 카드, 타겟별 판정, 요약 소견(권고 포함) | 타겟별 요약 표 |
+| 2. 데이터 | 불러온/사용한 행, 결측 대치, 파생변수, 피처 유형·학습 범위 | 피처 구성 표, 타겟 분포 |
+| 3. 분석 방법 | 전처리, 후보 모델, 검증, 선정 기준, 누수 방지 | 방법 표 |
+| 4. 타겟별 결과 | 모델 비교, 성능 검증, 피처 영향 | 회귀: 실측 대비 예측, 잔차 진단 / 분류: 혼동행렬, 클래스별 지표, ROC·판정 기준별 F1(이진) |
+| 5. 버전 이력 | 점수 추이, 버전별 피처 변경, 더 좋은 버전이 있으면 안내 | 추이 그래프, 이력 표 |
+| 6. 운영 가이드 | 예측 명령, 경고 해석, 재학습 기준 | 표 |
+| 부록 | 상관관계 히트맵(중요도 상위 15개), 산출물 목록, 실행 환경 | — |
+
+**판정**: 점수(회귀 R², 분류 Macro-F1) 0.90 이상 적합, 0.70 이상 조건부, 그 미만 부적합. 적합이라도 학습-검증 간극이 0.15를 넘으면 조건부. 종합 판정은 가장 낮은 타겟 기준입니다.
+
+**디자인**: A4 세로, 맑은 고딕, 슬레이트 회색 + 남색 강조 1색(흑백 인쇄 가능), 고정 너비 표, 표·그림 번호, 머리글(문서명·데이터·버전), 바닥글(쪽 번호). 같은 이름 파일이 Word에 열려 있으면 시각을 붙인 새 파일로 저장합니다.
+
+### 3) 소견 (`--slots`)
+모든 문장은 수치로부터 자동 작성되며, 원하는 항목만 바꿀 수 있습니다.
+```json
+{"summary": "...", "data": "...", "performance": "...", "features": "...", "lineage": "...",
+ "correlation": "...", "operation": "...",
+ "targets": {"생산효율(%)": {"performance": "...", "features": "..."}}}
 ```
+`performance`/`features`는 타겟별 값이 없으면 문서 수준 값을 모든 타겟에 씁니다. 2.1 이전 이름(`slot1_residual`, `slot2_feature`, `slot3_lineage`, `slot4_correlation`, `slot5_serving`)도 받습니다.
 
 ---
 
@@ -602,32 +574,25 @@ python ml_report.py \
 }
 ```
 
-### 3) 기술 감사 보고서 생성기 (`ml_report.py`) 반환 규격
+### 3) ML 결과 보고서 (`ml_report.py`) 반환 규격
 ```json
 {
   "status": "ok",
-  "target": "생산효율(%)",
-  "best_version": "v5",
-  "report_file": "C:\\path\\sample_v2_ml_data\\report_생산효율(%).docx",
-  "metrics": {
-    "val_r2": 0.9645,
-    "train_r2": 1.0,
-    "overfit_gap": 0.0355,
-    "mae": 9.0042,
-    "rmse": 12.7714,
-    "residual_skew": 1.4090,
-    "champion_model": "ExtraTrees"
-  },
-  "slots_filled": {
-    "slot1_residual": "선정 모델(ExtraTrees)은 Val R²=0.9645의 설명력을 보이나...",
-    "slot2_feature": "순열 중요도 분석 결과 피처 '소비전력(kW)'이...",
-    "slot3_lineage": "초기 베이스라인(v1)부터 최종 체크포인트(v5)까지...",
-    "slot4_correlation": "독립변수와 타겟 간 상관계수를 검토한 결과...",
-    "slot5_serving": "배포 모델 서빙 시 입력 피처의 결측치는 내장 Imputer가..."
-  },
-  "agent_directive": "VERIFIED: Engineering Word report for target '생산효율(%)' generated successfully at 'report_생산효율(%).docx' (python-docx Standalone). Val R2=0.9645."
+  "report_file": "C:\\path\\sample_ml_data\\ML결과보고서_sample_v3.docx",
+  "best_version": "v3",
+  "version": "v3",
+  "task": "regression",
+  "targets": ["생산효율(%)", "인장강도(MPa)"],
+  "overall_verdict": "적합",
+  "verdicts": {"생산효율(%)": "적합", "인장강도(MPa)": "적합"},
+  "figure_count": 11,
+  "table_count": 11,
+  "slots_used": [],
+  "preview": "[보고서 완료] v3 / 타겟 2개 / 종합 판정 적합 / 저장: ML결과보고서_sample_v3.docx",
+  "agent_directive": "VERIFIED: ML result report for v3 (2 target(s)) saved to 'ML결과보고서_sample_v3.docx'. Overall verdict=적합. Next step: report the file path to the user."
 }
 ```
+`best_version`은 문서에 사용한 버전입니다 (`version`과 같음). 2.1 이전의 타겟별 키(`target`, `metrics`, `slots_filled`, `reports`, `target_count`)는 문서가 하나로 합쳐지면서 2.2.0에서 없어졌습니다.
 
 ---
 
@@ -663,8 +628,8 @@ flowchart TD
 - `history.json`의 `description`(정성 규칙)과 `vX/model_<타겟>.json`의 `feature_stats`(정량 경계치 `[min, max]`)를 결합하여, LLM이 시뮬레이션 시험 레코드를 생성합니다.
 - `ml_predict.py --input "..."`를 호출하여 예측값을 도출하고, `drift_warning` 발생 여부를 통해 도메인 적합성을 스스로 검증(Self-Correction)합니다.
 
-### 5) 5턴: 공식 기술 감사 Word 보고서 발간
-- 목표 성능(Val $R^2 \ge 0.90$)에 도달하거나 최적 체크포인트가 확정되면 `ml_report.py`를 실행하여 최종 납품용 Word 기술 감사 보고서를 자동 발행합니다.
+### 5) 5턴: ML 결과 보고서 발간
+- 모든 타겟이 목표 성능(0.90)에 도달하면 `next_commands[0]`에 보고서 명령(`ml_report.py -m <version_dir>`)이 들어갑니다. 실행하면 그 버전의 Word 보고서가 만들어집니다.
 
 ---
 
@@ -676,7 +641,7 @@ flowchart TD
 ```yaml
 ---
 name: autonomous-regression-ml
-description: 26B-30B 경량 LLM에 최적화된 1-Turn 완결형 회귀 머신러닝 학습, 추론 및 Word 기술 감사 보고서 자동 생성 스킬. 복잡한 의사결정 루프 없이 데이터 정제, 5대 회귀 경쟁, 원자적 패키징, 초고속 서빙 추론, ISO 스타일 Word 보고서 작성을 100% 무인 완결함.
+description: 26B-30B 경량 LLM에 최적화된 1-Turn 완결형 회귀 머신러닝 학습, 추론 및 Word ML 결과 보고서 자동 생성 스킬. 복잡한 의사결정 루프 없이 데이터 정제, 5대 회귀 경쟁, 원자적 패키징, 초고속 서빙 추론, ISO 스타일 Word 보고서 작성을 100% 무인 완결함.
 tools:
   - run_command
   - read_file
@@ -688,12 +653,12 @@ tools:
 - **슬래시 커맨드**:
   - `/ml-train`: 모델 학습 및 버전업 실행
   - `/ml-predict`: 단일 레코드 또는 배치 파일 추론 실행
-  - `/ml-report`: 특정 버전 또는 최신 챔피언 기준 공식 Word 감사 보고서 발간
+  - `/ml-report`: 버전 폴더 기준 ML 결과 보고서(Word) 발간
 - **자연어 유입 패턴**:
   - "이 데이터셋으로 [타겟] 예측 모델 만들어줘"
   - "파생변수 추가해서 모델 성능 올려봐"
   - "새로운 공정 조건에 대한 예측값 계산해줘"
-  - "엔지니어링 감사 보고서 워드로 뽑아줘"
+  - "ML 결과 보고서 워드로 뽑아줘"
 
 ### 3) 에이전트 필수 준수 가드레일 (Agent Guardrails)
 1. **Zero-Retry 원칙**:
@@ -727,11 +692,11 @@ OpenCode, Glimmer-30B, CI 파이프라인 등 무인 서브프로세스 환경�
 - **해결 완료**: `--header-row`, `--unit-row`, `--data-row` 파라미터를 활용하십시오. 상단 빈 행은 내장 스니퍼가 자동 건너뛰며, 단위 행(`--unit-row`)을 지정하면 `반응온도(°C)`와 같이 컬럼명에 안전 결합됩니다.
 
 ### Q3. Word 보고서 파일이 열려 있는 상태에서 `ml_report.py`를 다시 실행하면 에러가 납니다.
-- **해결 완료**: Windows 운영체제의 파일 잠금(`PermissionError: [Errno 13]`)을 감지하여, 기존 파일이 잠겨있을 경우 타임스탬프가 추가된 새 파일(`report_<타겟>_YYYYMMDD_HHMMSS.docx`)로 자동 분기 저장되므로 작업이 절대 중단되지 않습니다.
+- **해결 완료**: Windows 운영체제의 파일 잠금(`PermissionError: [Errno 13]`)을 감지하여, 기존 파일이 잠겨있을 경우 타임스탬프가 추가된 새 파일(`ML결과보고서_<데이터>_<버전>_YYYYMMDD_HHMMSS.docx`)로 자동 분기 저장되므로 작업이 절대 중단되지 않습니다.
 
 ### Q4. 다중 타겟으로 학습된 결과는 어떻게 추론하고 보고서를 만드나요?
 - **추론**: `python ml_predict.py --model sample_ml_data/v2 --file new.xlsx`를 실행하면 폴더 내 모든 타겟 모델을 스캔하여 각 타겟의 예측값을 한 번에 생성합니다.
-- **보고서**: `python ml_report.py --history sample_ml_data/history.json --version v2`를 실행하면 해당 버전에 포함된 다중 타겟 전체에 대한 Word 보고서를 1초 만에 일괄 동시 생성합니다.
+- **보고서**: `python ml_report.py -m sample_ml_data/v2`를 실행하면 해당 버전의 모든 타겟을 담은 Word 문서 1개를 만듭니다.
 
 ### Q5. 단위 표기에 슬래시(`/`)가 들어간 타겟명(예: `유입유속(m/s)`)은 파일 저장이 안전한가요?
 - **해결 완료**: Windows 파일 시스템의 예약 특수문자(`\ / : * ? " < > |`)는 저장 시 안전한 언더스코어(`_`)로 치환(`model_유입유속_m_s_.joblib`, `report_유입유속_m_s_.docx`)되며, 메타데이터와 보고서 본문, CLI 인자에는 원본 표기(`m/s`)가 100% 보존됩니다.

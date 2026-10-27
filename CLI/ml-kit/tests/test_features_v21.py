@@ -200,3 +200,19 @@ def test_xlsx_layout_multi_target_and_excel_dates(tmp_path):
     assert set(pred["targets_predicted"]) == {"생산효율(%)", "인장강도(MPa)"}
     df = pd.read_excel(out)
     assert {"pred_생산효율(%)", "pred_lo_생산효율(%)", "pred_hi_인장강도(MPa)"} <= set(df.columns)
+
+
+def test_multi_target_pruning_keeps_features_needed_by_any_target(tmp_path):
+    """next_commands must not drop a feature that is weak for one target but important for another."""
+    rng = np.random.default_rng(1)
+    n = 160
+    df = pd.DataFrame({"a": rng.normal(size=n), "b": rng.normal(size=n), "noise": rng.normal(size=n)})
+    df["ya"] = 3 * df["a"] + rng.normal(0, 0.3, n)   # only a matters
+    df["yb"] = 3 * df["b"] + rng.normal(0, 2.5, n)   # only b matters, weaker target
+    p = tmp_path / "mt.csv"
+    df.to_csv(p, index=False)
+    payload = run_tool("ml_train.py", "-f", str(p), "-x", "a,b,noise", "-y", "ya,yb")
+    prune = [c for c in payload["next_commands"] if "저기여피처_제외" in c["command"]]
+    for c in prune:
+        x_arg = c["command"].split(" -x ")[1].split('"')[1]
+        assert "a" in x_arg.split(",") and "b" in x_arg.split(","), c["command"]

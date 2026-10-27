@@ -40,7 +40,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 
 ## [1.0.0] - 2026-10-27
 
-첫 배포. 기존 atomic_cli(마이크로 CLI 34개)를 진입점 6개로 다시 설계했습니다. 이전 버전과의 CLI 호환은 없습니다.
+첫 배포. 기존 마이크로 CLI 34개를 진입점 6개로 다시 설계했습니다. 이전 버전과의 CLI 호환은 없습니다.
 
 ### 구조
 - 진입점 6개: `excel.py`, `word.py`, `ppt.py`, `outlook.py`, `reader.py`, `office.py`. 공통 모듈 2개: `_runtime.py`(응답 계약, 경로, 입출력), `_office.py`(COM 세션, 스냅샷, 색/테마).

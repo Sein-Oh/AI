@@ -470,6 +470,7 @@ def train_and_benchmark_models(
     Prediction interval: 5%/95% quantiles of the champion's OOF residuals (90% level).
     """
     valid_mask = y_series.notna().values
+    row_ids = np.flatnonzero(valid_mask)  # position in the loaded data (reported as 1-based data_row)
     X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(float).values
 
@@ -571,7 +572,13 @@ def train_and_benchmark_models(
         "leaderboard": leaderboard
     }
 
-    return target_benchmark_res, final_pipeline, champion_summary
+    oof_df = pd.DataFrame({
+        "data_row": row_ids + 1,
+        "actual": y,
+        "predicted": np.round(model_oof_map[champion_name], 6),
+        "residual": np.round(residuals, 6),
+    })
+    return target_benchmark_res, final_pipeline, champion_summary, oof_df
 
 
 # ==============================================================================
@@ -678,6 +685,7 @@ def train_and_benchmark_classifiers(
     OOF probabilities to maximize the positive-class F1.
     """
     valid_mask = y_series.notna().values
+    row_ids = np.flatnonzero(valid_mask)  # position in the loaded data (reported as 1-based data_row)
     X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(str).values
 
@@ -824,7 +832,10 @@ def train_and_benchmark_classifiers(
         "champion": champion_summary,
         "leaderboard": leaderboard
     }
-    return target_benchmark_res, final_pipeline, champion_summary
+    oof_df = pd.DataFrame({"data_row": row_ids + 1, "actual": y, "predicted": champion_oof})
+    for i_c, c in enumerate(classes):
+        oof_df[f"proba_{c}"] = np.round(model_proba_map[champion_name][:, i_c], 6)
+    return target_benchmark_res, final_pipeline, champion_summary, oof_df
 
 
 # ==============================================================================
@@ -1075,13 +1086,12 @@ def build_next_commands(
     base_features = [f for f in feature_names if f not in created_features]
     cmds: List[Dict[str, Any]] = []
 
-    if mean_score >= 0.90:
-        if task == TASK_REGRESSION:
-            cmds.append({
-                "purpose": "Word 감사 보고서 생성",
-                "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -d {_q(data_root)}",
-                "needs_input": False,
-            })
+    if mean_score >= 0.90:  # caller passes the weakest target's score
+        cmds.append({
+            "purpose": "ML 결과 보고서(Word) 생성",
+            "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -m {_q(final_dir)}",
+            "needs_input": False,
+        })
         cmds.append({
             "purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
             "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
@@ -1118,6 +1128,11 @@ def build_next_commands(
 # ==============================================================================
 # 8. Main Execution Controller
 # ==============================================================================
+
+def _same_experiment(record: Dict[str, Any], task: str, targets: List[str]) -> bool:
+    """Ledger records are comparable (delta_score, is_best) only for the same task and target set."""
+    return record.get("task", TASK_REGRESSION) == task and sorted(record.get("targets", [])) == sorted(targets)
+
 
 def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     """Orchestrates 1-Turn declarative regression / classification pipeline."""
@@ -1228,7 +1243,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
             extra = {"positive_class": positive_class} if task == TASK_CLASSIFICATION else {}
-            t_bench, champion_pipe, champion_info = benchmark_fn(
+            t_bench, champion_pipe, champion_info, oof_df = benchmark_fn(
                 X=X_all,
                 y_series=df_clean[target_name],
                 target_name=target_name,
@@ -1242,7 +1257,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             target_benchmarks[target_name] = t_bench
             target_champions[target_name] = {
                 "pipeline": champion_pipe,
-                "info": champion_info
+                "info": champion_info,
+                "oof": oof_df
             }
             all_champion_scores.append(champion_info["val_score"])
 
@@ -1276,7 +1292,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         if not project_desc and history_records:
             project_desc = history_records[-1].get("description", "")
 
-        same_task = [h for h in history_records if h.get("task", TASK_REGRESSION) == task]
+        # Scores are comparable only for the same task AND the same target set
+        same_task = [h for h in history_records if _same_experiment(h, task, target_names)]
 
         def _rec_score(h: Dict[str, Any]) -> Optional[float]:
             v = h.get("mean_val_score", h.get("mean_val_r2", h.get("val_r2")))
@@ -1287,18 +1304,25 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         delta_score: Any = round(mean_val_score - last_score, 4) if last_score is not None else "base"
         is_best = mean_val_score > max(prev_scores, default=-999.0)
 
-        # Generate Actionable Recommendations for 26B-30B LLM
-        primary_target = target_names[0]
+        # Generate Actionable Recommendations for 26B-30B LLM.
+        # The goal is judged on the WEAKEST target (same rule as the report verdict), not on the mean.
+        min_score = min(all_champion_scores)
+        primary_target = min(target_names, key=lambda t: target_champions[t]["info"]["val_score"])
         prim_champ = target_champions[primary_target]["info"]
         top_feats = prim_champ.get("top_features", [])
-        weak_feats = prim_champ.get("weak_features", [])
+        # A feature is only "weak" if it is weak for EVERY target (multi-target runs share one feature list)
+        weak_sets = [set(target_champions[t]["info"].get("weak_features", [])) for t in target_names]
+        weak_feats = [f for f in prim_champ.get("weak_features", []) if all(f in ws for ws in weak_sets)]
+        below = [t for t in target_names if target_champions[t]["info"]["val_score"] < 0.90]
 
         recommendations = []
-        if mean_val_score >= 0.90:
-            recommendations.append(f"사전 목표 성능({metric_label} >= 0.90)을 달성하여 배포 승인 준비가 완료되었습니다.")
-        elif task == TASK_CLASSIFICATION:
+        if min_score >= 0.90:
+            recommendations.append(f"모든 타겟이 목표 성능({metric_label} >= 0.90)을 달성했습니다. 예측 배포와 보고서 작성이 가능합니다.")
+        else:
+            if len(target_names) > 1:
+                recommendations.append(f"목표({metric_label} >= 0.90) 미달 타겟: {below}. 아래 권고는 가장 낮은 '{primary_target}' 기준입니다.")
             weak_classes = [c for c, m in prim_champ.get("per_class", {}).items() if m["recall"] < 0.70]
-            if weak_classes:
+            if task == TASK_CLASSIFICATION and weak_classes:
                 recommendations.append(
                     f"재현율(Recall)이 0.70 미만인 클래스 {weak_classes[:3]}의 구분력이 부족합니다. "
                     f"해당 클래스를 가르는 피처를 추가하거나 --eval로 비율/차이 파생변수를 만드십시오."
@@ -1306,10 +1330,6 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             elif len(top_feats) >= 2:
                 f1, f2 = top_feats[0]["feature"], top_feats[1]["feature"]
                 recommendations.append(f"주요 기여 피처 '{f1}'와(과) '{f2}'의 교차 상호작용('{f1} * {f2}') 생성을 권장합니다.")
-        elif len(top_feats) >= 2:
-            f1 = top_feats[0]["feature"]
-            f2 = top_feats[1]["feature"]
-            recommendations.append(f"주요 기여 피처 '{f1}'와(과) '{f2}'의 교차 상호작용('{f1} * {f2}') 또는 다항식 생성을 권장합니다.")
         if task == TASK_CLASSIFICATION and prim_champ.get("class_weight"):
             recommendations.append("클래스 불균형으로 class_weight='balanced'가 적용되었습니다. 소수 클래스 데이터 추가 수집을 권장합니다.")
         if weak_feats:
@@ -1364,6 +1384,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             # Save Model Joblib with safe filename
             joblib_path = os.path.join(staging_dir, f"model_{safe_target}.joblib")
             joblib.dump(pipe, joblib_path, compress=3)
+
+            # Out-of-fold predictions of the champion (report: actual vs predicted, residuals, ROC)
+            champ_data["oof"].to_csv(os.path.join(staging_dir, f"oof_{safe_target}.csv"), index=False, encoding="utf-8-sig")
 
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
@@ -1435,6 +1458,22 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         missing_imputed = int(X_all.isna().sum().sum())
         prescription = recommendations[0] if recommendations else "모델 경쟁 학습 및 평가 완료"
 
+        owner = input_column_owner(feature_schema)
+        feature_missing: Dict[str, int] = {}
+        for col, n_miss in X_all.isna().sum().items():
+            raw_col = owner.get(col, col)
+            feature_missing[raw_col] = max(feature_missing.get(raw_col, 0), int(n_miss))
+        data_profile = {
+            "source_file": os.path.basename(raw_file),
+            "rows_loaded": int(len(df_raw)),
+            "columns_loaded": int(df_raw.shape[1]),
+            "rows_used": {t: int(target_benchmarks[t]["sample_count"]) for t in target_names},
+            "target_missing_rows": {t: int(df_clean[t].isna().sum()) for t in target_names},
+            "feature_missing": feature_missing,
+            "missing_imputed_cells": missing_imputed,
+            "layout": {"header_row": args.header_row, "unit_row": args.unit_row, "data_row": args.data_row},
+        }
+
         history_record = {
             "version": current_version,
             "timestamp": datetime.now().isoformat(),
@@ -1447,6 +1486,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "missing_imputed": missing_imputed
             },
             "file": os.path.basename(raw_file),
+            "data_profile": data_profile,
             "targets": target_names,
             "target_summaries": target_summaries,
             "features_used": feature_names,
@@ -1468,8 +1508,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         next_commands = build_next_commands(
             args=args, raw_file=raw_file, task=task, positive_class=positive_class,
             feature_names=feature_names, created_features=created_features, applied_evals=applied_evals,
-            target_names=target_names, champion=prim_champ, schema=feature_schema,
-            mean_score=mean_val_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
+            target_names=target_names, champion={**prim_champ, "weak_features": weak_feats}, schema=feature_schema,
+            mean_score=min_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
         )
         history_record["next_commands"] = next_commands
         append_history_ledger(ledger_path, history_record)
@@ -1507,6 +1547,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "targets": target_names,
             **score_keys,
             "is_best": is_best,
+            "goal_met": bool(min_score >= 0.90),
             "recommendations": recommendations,
             "next_commands": next_commands,
             "feature_types": history_record["feature_types"],
@@ -1584,15 +1625,19 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
 
     out.write("=" * 125 + "\n\n")
 
-    # Scores are only comparable within the same task
+    # best_version: best record of the latest experiment (same task AND same targets as the latest run)
+    latest = rows[-1]
+    same = [x for x in rows if x["task"] == latest["task"] and sorted(x["targets"]) == sorted(latest["targets"])
+            and isinstance(x["mean_val_score"], (int, float))]
+    best = max(same, key=lambda x: x["mean_val_score"]) if same else None
+
+    # best_by_task: best record per task (across all target sets)
     best_by_task: Dict[str, Dict[str, Any]] = {}
     for x in rows:
         if isinstance(x["mean_val_score"], (int, float)):
             cur = best_by_task.get(x["task"])
             if cur is None or x["mean_val_score"] > cur["mean_val_score"]:
                 best_by_task[x["task"]] = {"version": x["version"], "mean_val_score": x["mean_val_score"]}
-    latest_task = rows[-1]["task"]
-    best = best_by_task.get(latest_task)
     return {
         "status": "ok",
         "data_root": data_root,
