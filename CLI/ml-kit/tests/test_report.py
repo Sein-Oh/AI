@@ -1,0 +1,98 @@
+# -*- coding: utf-8 -*-
+"""ML 결과 보고서 (ml_report.py): structure, numbers and protocol checks on generated .docx files."""
+import json
+import os
+import sys
+
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from make_sample import make_sample, make_class_sample  # noqa: E402
+from test_cli_smoke import run_tool, run_fail  # noqa: E402
+
+docx = pytest.importorskip("docx")
+pytest.importorskip("matplotlib")
+
+SECTIONS = ["1. 요약", "2. 데이터", "3. 분석 방법", "4. 타겟별 결과", "5. 버전 이력", "6. 운영 가이드",
+            "부록 A. 상관관계", "부록 B. 산출물 및 실행 환경"]
+
+
+def _headings(path):
+    d = docx.Document(path)
+    return d, [p.text for p in d.paragraphs if p.style.name.startswith("Heading")]
+
+
+def _all_text(d):
+    parts = [p.text for p in d.paragraphs]
+    for t in d.tables:
+        for row in t.rows:
+            parts.extend(c.text for c in row.cells)
+    return "\n".join(parts)
+
+
+@pytest.fixture(scope="module")
+def regression_report(tmp_path_factory):
+    work = tmp_path_factory.mktemp("rep_reg")
+    data = make_sample(str(work / "proc.csv"))
+    feats = "반응온도,소비전력,압축압력,촉매비율,수분함량"
+    run_tool("ml_train.py", "-f", data, "-x", feats, "-y", "생산효율", "--desc", "효율 예측", "--tag", "base")
+    tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,촉매비율,수분함량", "-y", "생산효율", "--tag", "pruned")
+    slots = work / "slots.json"
+    slots.write_text(json.dumps({"summary": "슬롯으로 작성한 요약 문장",
+                                 "targets": {"생산효율(%)": {"features": "슬롯 피처 소견"}}}, ensure_ascii=False),
+                     encoding="utf-8")
+    out = work / "report.docx"
+    payload = run_tool("ml_report.py", "-m", tr["version_dir"], "--slots", str(slots), "-o", str(out))
+    return work, tr, payload, out
+
+
+def test_regression_report_structure(regression_report):
+    _, tr, payload, out = regression_report
+    assert out.is_file() and payload["report_file"] == str(out)
+    d, heads = _headings(str(out))
+    for sec in SECTIONS:
+        assert sec in heads, sec
+    assert "4.1. 생산효율(%)" in heads
+    assert len(d.inline_shapes) == payload["figure_count"] >= 6
+    assert payload["table_count"] >= 8 and payload["verdicts"]["생산효율(%)"] in ("적합", "조건부", "부적합")
+
+
+def test_regression_report_numbers_and_slots(regression_report):
+    work, tr, payload, out = regression_report
+    d = docx.Document(str(out))
+    text = _all_text(d)
+    lb = json.loads(open(os.path.join(tr["version_dir"], "leaderboard.json"), encoding="utf-8").read())
+    champ = lb["targets"]["생산효율(%)"]["champion"]
+    assert f"{champ['val_r2']:.4f}" in text and f"{champ['mae']:.4f}" in text
+    assert "슬롯으로 작성한 요약 문장" in text and "슬롯 피처 소견" in text
+    assert set(payload["slots_used"]) == {"summary", "targets.생산효율(%).features"}
+    assert "v1" in text and "v2" in text  # version history table
+
+
+@pytest.fixture(scope="module")
+def binary_report(tmp_path_factory):
+    work = tmp_path_factory.mktemp("rep_cls")
+    data = make_class_sample(str(work / "q.csv"), n=200, imbalanced=True)
+    tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,촉매비율,수분함량", "-y", "품질등급",
+                  "--task", "classification", "--positive-class", "불량")
+    payload = run_tool("ml_report.py", "-m", tr["version_dir"])
+    return tr, payload
+
+
+def test_classification_report(binary_report):
+    tr, payload = binary_report
+    assert payload["task"] == "classification"
+    assert os.path.dirname(payload["report_file"]) == os.path.dirname(tr["version_dir"])  # default: data folder
+    d, heads = _headings(payload["report_file"])
+    text = _all_text(d)
+    assert "혼동행렬" in text and "판정 기준" in text and "불량" in text
+    assert len(d.inline_shapes) == payload["figure_count"] >= 7  # incl. confusion, per-class, ROC/threshold
+
+
+def test_report_rejects_non_version_folder(regression_report, tmp_path):
+    work, _, _, _ = regression_report
+    payload = run_fail("ml_report.py", "-m", str(work))
+    assert payload["agent_directive"].startswith("STOP_RETRY") and "leaderboard.json" in payload["message"]
+    missing = run_fail("ml_report.py", "-m", str(tmp_path / "nope"))
+    assert "버전 폴더" in missing["message"]

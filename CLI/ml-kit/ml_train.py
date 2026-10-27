@@ -1281,18 +1281,22 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         delta_score: Any = round(mean_val_score - last_score, 4) if last_score is not None else "base"
         is_best = mean_val_score > max(prev_scores, default=-999.0)
 
-        # Generate Actionable Recommendations for 26B-30B LLM
-        primary_target = target_names[0]
+        # Generate Actionable Recommendations for 26B-30B LLM (driven by the weakest target)
+        min_score = min(all_champion_scores)
+        primary_target = min(target_names, key=lambda t: target_champions[t]["info"]["val_score"])
         prim_champ = target_champions[primary_target]["info"]
         top_feats = prim_champ.get("top_features", [])
         weak_feats = prim_champ.get("weak_features", [])
+        below = [t for t in target_names if target_champions[t]["info"]["val_score"] < 0.90]
 
         recommendations = []
-        if mean_val_score >= 0.90:
-            recommendations.append(f"사전 목표 성능({metric_label} >= 0.90)을 달성하여 배포 승인 준비가 완료되었습니다.")
-        elif task == TASK_CLASSIFICATION:
+        if min_score >= 0.90:
+            recommendations.append(f"모든 타겟이 목표 성능({metric_label} >= 0.90)을 달성했습니다. 예측 배포와 보고서 작성이 가능합니다.")
+        else:
+            if len(target_names) > 1:
+                recommendations.append(f"목표({metric_label} >= 0.90) 미달 타겟: {below}. 아래 권고는 가장 낮은 '{primary_target}' 기준입니다.")
             weak_classes = [c for c, m in prim_champ.get("per_class", {}).items() if m["recall"] < 0.70]
-            if weak_classes:
+            if task == TASK_CLASSIFICATION and weak_classes:
                 recommendations.append(
                     f"재현율(Recall)이 0.70 미만인 클래스 {weak_classes[:3]}의 구분력이 부족합니다. "
                     f"해당 클래스를 가르는 피처를 추가하거나 --eval로 비율/차이 파생변수를 만드십시오."
@@ -1300,10 +1304,6 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             elif len(top_feats) >= 2:
                 f1, f2 = top_feats[0]["feature"], top_feats[1]["feature"]
                 recommendations.append(f"주요 기여 피처 '{f1}'와(과) '{f2}'의 교차 상호작용('{f1} * {f2}') 생성을 권장합니다.")
-        elif len(top_feats) >= 2:
-            f1 = top_feats[0]["feature"]
-            f2 = top_feats[1]["feature"]
-            recommendations.append(f"주요 기여 피처 '{f1}'와(과) '{f2}'의 교차 상호작용('{f1} * {f2}') 또는 다항식 생성을 권장합니다.")
         if task == TASK_CLASSIFICATION and prim_champ.get("class_weight"):
             recommendations.append("클래스 불균형으로 class_weight='balanced'가 적용되었습니다. 소수 클래스 데이터 추가 수집을 권장합니다.")
         if weak_feats:
@@ -1428,7 +1428,6 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         duration_sec = round(time.time() - start_time, 2)
         # Missing feature cells (incl. unparseable strings) that SimpleImputer(median) fills
         missing_imputed = int(X_all.isna().sum().sum())
-        prescription = recommendations[0] if recommendations else "모델 경쟁 학습 및 평가 완료"
 
         owner = input_column_owner(feature_schema)
         feature_missing: Dict[str, int] = {}
@@ -1442,6 +1441,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "rows_used": {t: int(target_benchmarks[t]["sample_count"]) for t in target_names},
             "target_missing_rows": {t: int(df_clean[t].isna().sum()) for t in target_names},
             "feature_missing": feature_missing,
+            "missing_imputed_cells": missing_imputed,
             "layout": {"header_row": args.header_row, "unit_row": args.unit_row, "data_row": args.data_row},
         }
 
@@ -1451,12 +1451,6 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "tag": getattr(args, "tag", None) or "",
             "description": project_desc,
             "duration_sec": duration_sec,
-            "data_hygiene": {
-                "total_rows": len(df_clean),
-                "total_features": len(feature_names),
-                "missing_imputed": missing_imputed
-            },
-            "file": os.path.basename(raw_file),
             "data_profile": data_profile,
             "targets": target_names,
             "target_summaries": target_summaries,
@@ -1464,7 +1458,6 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "derived_evals": applied_evals,
             **score_keys,
             "is_best": is_best,
-            "prescription": prescription,
             "recommendations": recommendations,
             "targets_benchmark": target_benchmarks,
             "feature_types": {
@@ -1480,7 +1473,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             args=args, raw_file=raw_file, task=task, positive_class=positive_class,
             feature_names=feature_names, created_features=created_features, applied_evals=applied_evals,
             target_names=target_names, champion=prim_champ, schema=feature_schema,
-            mean_score=mean_val_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
+            mean_score=min_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
         )
         history_record["next_commands"] = next_commands
         append_history_ledger(ledger_path, history_record)
