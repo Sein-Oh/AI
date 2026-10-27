@@ -19,3 +19,6 @@ report_*.docx
 Thumbs.db
 .vscode/
 .idea/
+
+# Offline wheel bundles (prepared per environment, not versioned)
+wheels/

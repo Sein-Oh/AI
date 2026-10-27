@@ -34,8 +34,13 @@
 ### 1) 코드베이스 디렉토리 구조
 ```text
 ml_kit/
-├── README.md               # [본 문서] 툴킷 종합 안내서, 완전 CLI 레퍼런스 및 LLM 스킬 명세서
-├── ml_train_spec.md        # 스마트 회귀 엔진 공식 아키텍처 명세서
+├── README.md               # [본 문서] 툴킷 종합 안내서, 완전 CLI 레퍼런스
+├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
+├── requirements.txt        # 런타임 의존성 (폐쇄망 wheel 반입 기준)
+├── install_offline.bat     # 폐쇄망 오프라인 설치 (wheels/ 폴더 사용)
+│
+├── [공통 모듈]
+│   └── ml_common.py        # 데이터 로딩, 수치 변환, AST 수식 엔진, JSON 규약, Windows 파일 처리 (학습/추론 공용)
 │
 ├── [1단계: 학습 엔진]
 │   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀 경쟁, 리더보드, SSOT 패키징
@@ -114,6 +119,8 @@ flowchart TD
 - **안전 내장 수학 함수**: `log(x)`, `log1p(x)`, `exp(x)`, `sqrt(x)`, `abs(x)`
 - **동적 연쇄 정의 지원**: 세미콜론(`;`)으로 구분하여 앞서 정의한 파생변수를 즉시 다음 수식의 인자로 참조 가능:
   `--eval "온도압력비 = 반응온도 / (압축압력 + 1e-6); 로그비 = log1p(온도압력비)"`
+- **컬럼명 표기**: 전체 이름(`반응온도(°C)`) 또는 단위를 뺀 이름(`반응온도`) 모두 허용합니다. 단위를 뺀 이름이 하나의 컬럼에만 해당할 때 자동 매칭되며, 원장/메타데이터에는 항상 전체 이름으로 저장되어 추론 시 그대로 재현됩니다.
+- **타겟 누수 차단**: 수식에 타겟(-y) 컬럼이 포함되면 `[DATA LEAKAGE DETECTED]` 오류로 즉시 중단합니다.
 
 ### 3) 비표준 복합 헤더 자동 감지 (Auto-Header Sniffing)
 현업 엑셀 데이터의 상단 빈 행(None), 보고서 타이틀, 결재란을 지능적으로 건너뜁니다:
@@ -141,8 +148,8 @@ flowchart TD
 | 옵션 | 축약 | 필수 | 설명 |
 |---|:---:|:---:|---|
 | `--file` | `-f` | **필수** | 입력 데이터 파일 경로 (`.xlsx`, `.csv`) |
-| `--features` | `-x` | **필수** | 독립변수 목록 (쉼표 구분 문자열 또는 파일 경로: `.txt`, `.json`, `.csv`) |
-| `--targets` | `-y` | **필수** | 종속변수 목록 (쉼표 구분 문자열 또는 파일 경로: `.txt`, `.json`, `.csv`) |
+| `--features` | `-x` | **필수** | 독립변수 목록 (쉼표 구분 문자열 또는 파일 경로: `.txt`, `.json`, `.csv`). 단위 생략 이름 허용 |
+| `--targets` | `-y` | **필수** | 종속변수 목록 (쉼표 구분 문자열 또는 파일 경로: `.txt`, `.json`, `.csv`). 단위 생략 이름 허용 |
 | `--description` | `--desc` | 선택 | **데이터셋 및 도메인 모델링 목적 설명** (인라인 문자열 또는 파일 경로 `.txt`, `.md`. SSOT 영구 고정 및 차기 버전 자동 상속) |
 | `--tag` | - | 선택 | 이번 실험 회차의 세부 엔지니어링 메모 태그 (예: `결측치대치_실험`, `파생변수2종_추가`) |
 | `--eval` | - | 선택 | 방탄 AST 파생변수 생성 수식 (세미콜론 구분) |
@@ -153,7 +160,7 @@ flowchart TD
 | `--version` | `-v` | 선택 | 버전 폴더 수동 지정 (미지정 시 `v1`, `v2`, ... 자동 채번) |
 | `--encoding` | - | 선택 | 산출물 CSV 저장 인코딩 (기본값: Windows Excel 호환 `cp949`) |
 | `--seed` | - | 선택 | 교차검증 난수 시드 (기본값: 42) |
-| `--history` | - | 선택 | 누적 실험 원장 요약 테이블 터미널 출력 모드 |
+| `--history` | - | 선택 | 누적 실험 원장 조회 (요약 표는 stderr, 버전별 요약 JSON은 stdout) |
 
 ### 7) 실행 예시
 
@@ -206,7 +213,7 @@ python ml_train.py \
 | `--meta` | - | 선택 | 개별 `.joblib` 지정 시 메타데이터 경로 (생략 시 동일 폴더 자동 탐색) |
 | `--targets` | `-y` | 선택 | 추론할 특정 타겟 목록 (폴더 모드에서 생략 시 폴더 내 전체 타겟 자동 추론) |
 | `--file` | `-f` | 선택* | 배치 추론 대상 데이터 파일 경로 (`.xlsx`, `.csv`) |
-| `--input` | `-i` | 선택* | 단일 즉시 추론용 인라인 문자열 (JSON 형식 또는 `k1=v1,k2=v2` 키-값 쌍) |
+| `--input` | `-i` | 선택* | 단일 즉시 추론용 입력 (`k1=v1,k2=v2` 키-값 쌍, JSON 문자열, 또는 `.json` 파일 경로). Windows 셸에서는 따옴표 이스케이프가 필요 없는 키-값 쌍 또는 `.json` 파일을 권장. 단위 생략 키 허용 |
 | `--out` | `-o` | 선택 | 예측 결과 CSV 저장 경로 (생략 시 `원본_pred_타임스탬프.csv` 자동 생성) |
 | `--header-row` | - | 선택 | 컬럼명 헤더 행 번호 (배치 파일 추론 시) |
 | `--unit-row` | - | 선택 | 단위 행 번호 (배치 파일 추론 시) |
@@ -421,6 +428,7 @@ python ml_report.py \
 ```
 
 #### [에러 발생 시 반환 JSON]
+모든 도구 공통. `error_type`은 `input`(인자/데이터 문제, `STOP_RETRY:`), `internal`(내부 오류, `ERROR:`), `interrupted`(Ctrl+C, exit 130) 중 하나이며, 컬럼명 오타 시 message에 `[추천]` 후보가 포함됩니다.
 ```json
 {
   "status": "error",
@@ -435,16 +443,25 @@ python ml_report.py \
 ```json
 {
   "status": "ok",
+  "source": "Inline Input (1 record(s))",
+  "total_rows": 1,
+  "targets_predicted": ["생산효율(%)"],
+  "output_file": null,
   "predictions_summary": {
     "생산효율(%)": {
       "model": "ExtraTrees",
-      "predictions": [58.5032],
-      "description": "화학공정 복합 반응기 실시간 생산효율 예측 및 운전조건 최적화"
+      "description": "화학공정 복합 반응기 실시간 생산효율 예측 및 운전조건 최적화",
+      "features_used": ["반응온도(°C)", "소비전력(kW)"],
+      "mean_pred": 58.5032, "min_pred": 58.5032, "max_pred": 58.5032,
+      "predictions": [58.5032]
     }
   },
-  "agent_directive": "VERIFIED: Inline prediction completed."
+  "drift_warning": false,
+  "extrapolation_warnings": [],
+  "agent_directive": "VERIFIED: Prediction completed for 1 target(s). Inline predictions returned. Next step: report inference results to user."
 }
 ```
+입력 키를 단위 없이(`반응온도=240`) 주면 학습 컬럼명으로 자동 매칭되고 `column_aliases`에 매칭 내역이 포함됩니다.
 
 #### [배치 파일 대량 추론 성공 (`--file`)]
 ```json
@@ -455,13 +472,14 @@ python ml_report.py \
   "predictions_summary": {
     "생산효율(%)": {
       "model": "ExtraTrees",
-      "mean": 57.82,
-      "min": 35.10,
-      "max": 89.45
+      "mean_pred": 57.82,
+      "min_pred": 35.10,
+      "max_pred": 89.45
     }
   },
+  "drift_warning": false,
   "extrapolation_warnings": [],
-  "agent_directive": "VERIFIED: Batch prediction completed and saved to 'new_batch_pred_20261027_011000.csv'."
+  "agent_directive": "VERIFIED: Prediction completed for 1 target(s). Output saved to new_batch_pred_20261027_011000.csv. Next step: report inference results to user."
 }
 ```
 
@@ -472,10 +490,10 @@ python ml_report.py \
   "status": "ok",
   "drift_warning": true,
   "extrapolation_warnings": [
-    "Feature '반응온도(°C)': 3 observations outside training bounds [min=200.0, max=280.0]"
+    "피처 '반응온도(°C)' 상한 초과 외삽(Extrapolation) 감지: 학습 최대=280.00, 입력 최대=320.00 (범위 대비 +50.0% 초과 이탈, 범위 밖 3건)"
   ],
   "predictions_summary": { ... },
-  "agent_directive": "VERIFIED: Prediction completed with extrapolation warning. Review domain bounds."
+  "agent_directive": "VERIFIED: Prediction completed for 1 target(s) with extrapolation warning (inputs outside training range; predictions may be unreliable). ..."
 }
 ```
 
@@ -537,7 +555,7 @@ flowchart TD
 - `delta_r2`와 `is_best` 플래그를 확인하여 성능 개선 여부를 판단합니다.
 
 ### 4) 4턴: 도메인 기반 합성 시험 데이터 생성 및 가설 검증
-- `history.json`의 `description`(정성 규칙)과 `feature_stats`(정량 경계치 `[min, max]`)를 결합하여, LLM이 시뮬레이션 시험 레코드를 생성합니다.
+- `history.json`의 `description`(정성 규칙)과 `vX/model_<타겟>.json`의 `feature_stats`(정량 경계치 `[min, max]`)를 결합하여, LLM이 시뮬레이션 시험 레코드를 생성합니다.
 - `ml_predict.py --input "..."`를 호출하여 예측값을 도출하고, `drift_warning` 발생 여부를 통해 도메인 적합성을 스스로 검증(Self-Correction)합니다.
 
 ### 5) 5턴: 공식 기술 감사 Word 보고서 발간
@@ -620,4 +638,4 @@ OpenCode, Glimmer-30B, CI 파이프라인 등 무인 서브프로세스 환경�
 - **해결 완료 (자동 상속 메커니즘)**: 최초 `v1` 생성 시 `--description` (또는 `--desc`)으로 프로젝트 목적을 한 번만 지정해 두면, 이후 `v2`, `v3` 학습 시 해당 인자를 생략하더라도 `history.json`의 직전 차수 레코드로부터 자동으로 상속되어 영구 보존됩니다. 따라서 LLM은 매 턴마다 긴 설명을 재입력할 필요 없이 토큰을 절약하며 도메인 일관성을 유지할 수 있습니다. 변경이 필요한 경우에만 새 설명을 넘겨주면 덮어씁니다.
 
 ### Q8. LLM이 도메인 지식(description)을 보고 합성 시험 데이터를 만들 때 유효성을 어떻게 보장하나요?
-- **해결 완료 (정성 규칙 + 정량 경계선 결합)**: LLM은 `description`에 기재된 시험 조건과 물리적 인과관계를 따르는 동시에, `history.json`의 `feature_stats` 및 `extrapolation_boundaries`에 기록된 `[min, max]` 범위를 기준으로 합성 데이터를 생성합니다. 만약 생성한 데이터가 관측 범위를 벗어나면 `ml_predict.py`가 실시간으로 `drift_warning: true` 및 `[WARN] Extrapolation detected`를 반환하므로, LLM이 즉시 인지하고 유효 범위 내로 자가 보정(Self-Correction)할 수 있습니다.
+- **해결 완료 (정성 규칙 + 정량 경계선 결합)**: LLM은 `description`에 기재된 시험 조건과 물리적 인과관계를 따르는 동시에, `vX/model_<타겟>.json`의 `feature_stats`에 기록된 `[min, max]` 범위를 기준으로 합성 데이터를 생성합니다. 만약 생성한 데이터가 관측 범위를 벗어나면 `ml_predict.py`가 실시간으로 `drift_warning: true` 및 `[WARN] Extrapolation detected`를 반환하므로, LLM이 즉시 인지하고 유효 범위 내로 자가 보정(Self-Correction)할 수 있습니다.

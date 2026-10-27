@@ -1,25 +1,28 @@
 # CLAUDE.md – 이 저장소를 수정하는 AI 에이전트용 규칙
 
 ## 저장소 성격
-- `ml_kit/*.py` 는 **다른 LLM 에이전트(26B~30B 경량 모델)가 CLI로 호출하는 도구**입니다.
-- 따라서 사람이 아닌 에이전트가 소비자입니다. 출력 형식의 작은 변화도 하위 에이전트를 깨뜨릴 수 있습니다.
+- `CLI/<tool>/` 의 스크립트는 **Windows 11 폐쇄망에서 26B~30B 경량 LLM 에이전트가 스킬로 호출하는 CLI 도구**입니다.
+- 소비자는 사람이 아닌 경량 LLM입니다. 출력 형식의 작은 변화도 에이전트를 깨뜨립니다.
+- 설계 원칙: **LLM 개입 최소화** – 판단은 도구가 하고, LLM은 명령 1회 실행 + JSON 1줄 해석만 한다.
 
-## 반드시 지킬 ACI 계약
-1. **stdout은 정확히 1줄 JSON** (`status`, `message`/`agent_directive` 등). 진행 로그·경고는 전부 stderr.
-2. 성공 시 exit code 0, 실패 시 1 + `{"status": "error", ...}`.
-3. 이모지/원문자 금지, 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`만 사용 (CP949 콘솔 호환).
-4. 기존 CLI 인자 이름·축약형은 삭제/의미 변경 금지. 바꿔야 하면 deprecated alias를 남깁니다.
-5. 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/model_<target>.joblib|json` 등)과
-   `history.jsonl` 스키마는 하위 호환 유지 (필드 추가는 OK, 삭제·이름변경은 NO).
-6. 각 스크립트는 단독 실행 가능해야 합니다 (`python ml_kit/ml_train.py ...`). 공통 모듈을 도입할 경우
-   `ml_kit/` 내부에 두고 스크립트 위치 기준 import가 되도록 합니다.
+## 반드시 지킬 ACI 계약 (상세: CLI/README.md)
+1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr.
+2. exit 0 = ok, 1 = error, 2 = 인자 오류, 130 = 중단. 에러 시 `agent_directive`는 `STOP_RETRY:` 또는 `ERROR:`.
+   - ml_kit: 모든 진입점은 `ml_common.run_cli()` + `JsonArgumentParser` 사용.
+3. 이모지/원문자 금지. 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`.
+4. 기존 CLI 인자·JSON 키는 삭제/의미 변경 금지 (추가는 OK). 바꿔야 하면 alias 유지.
+5. 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/model_<target>.joblib|json`)과 원장 스키마는 하위 호환.
+6. 학습과 추론이 같아야 하는 로직(데이터 로딩, 수치 변환, `--eval` 수식)은 `ml_common.py` 한 곳에만 둔다.
+
+## 폐쇄망 / Windows 제약
+- 런타임 네트워크 접근 금지. 새 의존성은 win_amd64 wheel이 있는 순수 pip 패키지만, `requirements.txt`에 추가.
+- 파일 저장은 잠금(Excel/Word) 대비 `save_with_lock_fallback`, 폴더 조작은 `retry_fs`/`remove_tree` 사용.
+- 텍스트 입력 파일은 `read_text_file`(UTF-8/BOM/UTF-16/CP949 자동)로 읽는다.
+- Python 3.9 문법 호환 유지 (폐쇄망 PC의 Python 버전이 낮을 수 있음).
 
 ## 작업 절차
-1. 변경 전 `python -m pytest -q tests` 로 기준선 확인.
-2. 리팩터링(동작 불변)과 기능/동작 변경은 **별도 커밋/PR**.
-3. 동작이 바뀌면 `tests/`에 회귀 테스트 추가, `ml_kit/README.md`와 `docs/CHANGELOG.md` 갱신.
-4. 처리한 항목은 `docs/ROADMAP.md`에서 체크.
-
-## 환경
-- Python 3.10+, `pip install -r requirements.txt`
-- pandas 3.x 는 현재 미지원 (ROADMAP P0 참고).
+1. 변경 전 `python -m pytest -q`로 기준선 확인.
+2. 리팩터링(동작 불변)과 기능 변경은 별도 커밋/PR.
+3. 버그 수정에는 회귀 테스트 추가. 동작이 바뀌면 `SKILL.md`, `README.md`, `CHANGELOG.md` 갱신.
+4. 처리한 항목은 `ROADMAP.md`에서 체크.
+5. `SKILL.md`는 경량 LLM 컨텍스트에 들어가므로 짧게 유지 (상세는 README.md).

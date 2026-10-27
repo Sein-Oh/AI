@@ -11,38 +11,44 @@ Designed for lightweight 26B-30B LLM agents with 1-turn declarative execution.
 import sys
 import os
 
-# Ensure UTF-8 clean terminal output on Windows
-try:
-    if sys.stdout.encoding.lower() != "utf-8":
-        sys.stdout.reconfigure(encoding="utf-8")
-    if sys.stderr.encoding.lower() != "utf-8":
-        sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ml_common import (  # noqa: E402
+    setup_console, emit_json_response, dumps_json, run_cli, JsonArgumentParser,
+    InputError, sanitize_filename, normalize_version, warn_long_path,
+    read_text_file, load_json_file, resolve_column_names, coerce_numeric,
+    load_data_file as _load_table, apply_eval_expressions,
+    retry_fs, remove_tree, atomic_write_text, write_csv_excel_compatible,
+)
+
+setup_console()
 
 import re
-import ast
 import json
 import time
-import shutil
 import argparse
+import warnings
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import joblib
 
+import sklearn
 from sklearn.model_selection import KFold
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error, root_mean_squared_error
 from sklearn.inspection import permutation_importance
+from sklearn.exceptions import ConvergenceWarning
 
 # 5 Core Regression Algorithms
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor, ExtraTreesRegressor
 from sklearn.linear_model import Ridge, ElasticNet
+
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 
 # ==============================================================================
@@ -71,138 +77,21 @@ def log_progress(percent: int, message: str) -> None:
     sys.stderr.flush()
 
 
-def emit_json_response(payload: Dict[str, Any]) -> None:
-    """Prints standard 1-line JSON response to stdout for LLM consumption."""
-    sys.stdout.reconfigure(encoding="utf-8")
-    print(json.dumps(payload, ensure_ascii=False))
-
-
-def sanitize_filename(name: str) -> str:
-    r"""
-    Replaces characters forbidden in Windows filenames (\ / : * ? " < > |).
-    Guarantees targets like '유속(m/s)' or '비용(원/kg)' save safely on Windows filesystem.
-    """
-    return re.sub(r'[\\/*?:"<>|]', "_", str(name))
-
-
 # ==============================================================================
 # 2. Bulletproof AST Formula Sandbox & Feature Engineering (--eval)
 # ==============================================================================
 
-_ALLOWED_AST_NODES = (
-    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name,
-    ast.Load, ast.Call, ast.Add, ast.Sub, ast.Mult, ast.Div,
-    ast.FloorDiv, ast.Mod, ast.Pow, ast.USub, ast.UAdd
-)
-
-def _validate_eval_ast(formula_ast: ast.AST, allowed_identifiers: set) -> None:
-    """Ensures AST contains only safe arithmetic nodes and declared identifiers."""
-    for node in ast.walk(formula_ast):
-        if not isinstance(node, _ALLOWED_AST_NODES):
-            raise ValueError(f"보안 위반: 허용되지 않은 문법 노드 감지: {type(node).__name__}")
-        if isinstance(node, ast.Name) and node.id not in allowed_identifiers:
-            raise ValueError(f"보안 위반: 알 수 없거나 허용되지 않은 식별자 '{node.id}'")
-
-
 def run_safe_eval(df: pd.DataFrame, eval_str: str, target_cols: List[str]) -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
-    Safely evaluates derived feature formulas:
-    - Replaces column names with internal tokens (_col_0, _col_1) to prevent
-      name collisions with Pandas methods (mean, sum, count, std, etc.).
-    - Strictly blocks any reference to target variables (Y) to prevent data leakage.
-    - Guards against division by zero (adds 1e-9) and clips extreme values.
+    Safely evaluates semicolon-separated derived feature formulas (--eval).
+    Column names may be written in full ('반응온도(°C)') or without the unit suffix
+    ('반응온도') when unique. Stored expressions always use full column names so that
+    ml_predict.py replays them exactly. Target references are blocked (leakage guard).
     """
     if not eval_str or not eval_str.strip():
         return df, [], []
-
-    df = df.copy()
-    applied_exprs = []
-    created_features = []
-
-    # Safe mathematical namespace
-    safe_math = {
-        "log": lambda x: np.log(np.clip(np.abs(x), 1e-9, None)),
-        "log1p": lambda x: np.log1p(np.clip(np.abs(x), 0, None)),
-        "log10": lambda x: np.log10(np.clip(np.abs(x), 1e-9, None)),
-        "sqrt": lambda x: np.sqrt(np.clip(np.abs(x), 0, None)),
-        "exp": lambda x: np.exp(np.clip(x, -50, 50)),
-        "abs": np.abs,
-        "sin": np.sin,
-        "cos": np.cos,
-        "tan": np.tan,
-        "square": np.square,
-        "clip": lambda x, a_min, a_max: np.clip(x, a_min, a_max),
-        "pi": np.pi,
-        "e": np.e,
-        "radians": np.radians,
-        "degrees": np.degrees,
-    }
-
     expressions = [e.strip() for e in eval_str.split(";") if e.strip()]
-    for expr in expressions:
-        if "=" not in expr:
-            raise ValueError(f"수식 형식 오류: '=' 기호가 누락되었습니다: '{expr}'")
-
-        new_col, formula = expr.split("=", 1)
-        new_col = new_col.strip()
-        formula = formula.strip()
-
-        if not new_col:
-            raise ValueError(f"생성할 파생변수명이 지정되지 않았습니다: '{expr}'")
-
-        # Target Leakage Guard: Check if targets appear in formula
-        for tgt in target_cols:
-            pattern = rf"(?<![가-힣a-zA-Z0-9_]){re.escape(tgt)}(?![가-힣a-zA-Z0-9_])"
-            if re.search(pattern, formula):
-                raise ValueError(
-                    f"[DATA LEAKAGE DETECTED] 파생변수 '{new_col}' 수식에 타겟 변수 '{tgt}'이(가) 포함되어 있습니다. "
-                    f"타겟 변수는 독립변수 및 파생변수 생성에 절대 투입될 수 없습니다."
-                )
-
-        # Token replacement to avoid pandas attribute collision (sort columns by length desc)
-        token_to_col = {}
-        col_to_token = {}
-        eval_env = dict(safe_math)
-
-        # Numeric and available columns
-        existing_cols = sorted(df.columns, key=len, reverse=True)
-        transformed_formula = formula
-
-        for idx, col_name in enumerate(existing_cols):
-            token = f"__COL_TOKEN_{idx}__"
-            pattern = rf"(?<![가-힣a-zA-Z0-9_]){re.escape(col_name)}(?![가-힣a-zA-Z0-9_])"
-            if re.search(pattern, transformed_formula):
-                transformed_formula = re.sub(pattern, token, transformed_formula)
-                token_to_col[token] = col_name
-                col_to_token[col_name] = token
-                # Bind series to environment
-                eval_env[token] = pd.to_numeric(df[col_name], errors="coerce").astype(float)
-
-        # Parse & Validate AST
-        try:
-            tree = ast.parse(transformed_formula, mode="eval")
-        except Exception as e:
-            raise ValueError(f"--eval 수식 문법 오류 ('{expr}'): {e}")
-
-        allowed_ids = set(eval_env.keys())
-        _validate_eval_ast(tree, allowed_ids)
-
-        # Execute safe eval
-        try:
-            res_val = eval(transformed_formula, {"__builtins__": {}}, eval_env)
-            if isinstance(res_val, (pd.Series, np.ndarray, int, float)):
-                ser = pd.Series(res_val, index=df.index, dtype=float)
-                # Replace inf with nan for subsequent imputation
-                ser = ser.replace([np.inf, -np.inf], np.nan)
-                df[new_col] = ser
-                applied_exprs.append(f"{new_col} = {formula}")
-                created_features.append(new_col)
-            else:
-                raise ValueError(f"수식 결과가 숫자형 배열이 아닙니다.")
-        except Exception as ex:
-            raise ValueError(f"--eval 파생 수식 연산 실패 ('{expr}'): {ex}")
-
-    return df, applied_exprs, created_features
+    return apply_eval_expressions(df, expressions, target_cols=target_cols, strict=True)
 
 
 # ==============================================================================
@@ -228,38 +117,22 @@ def parse_feature_or_target_list(input_arg: str, param_name: str = "features") -
         items: List[str] = []
 
         if ext == ".json":
-            try:
-                with open(stripped, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        items = [str(x).strip() for x in data if str(x).strip()]
-                    elif isinstance(data, dict):
-                        cand = (
-                            data.get(param_name)
-                            or data.get("features")
-                            or data.get("targets")
-                            or data.get("columns")
-                            or list(data.values())[0]
-                        )
-                        if isinstance(cand, list):
-                            items = [str(x).strip() for x in cand if str(x).strip()]
-            except Exception as e:
-                raise ValueError(f"피처/타겟 JSON 파일 파싱 실패 ({stripped}): {e}")
+            data = load_json_file(stripped)
+            if isinstance(data, list):
+                items = [str(x).strip() for x in data if str(x).strip()]
+            elif isinstance(data, dict) and data:
+                cand = (
+                    data.get(param_name)
+                    or data.get("features")
+                    or data.get("targets")
+                    or data.get("columns")
+                    or list(data.values())[0]
+                )
+                if isinstance(cand, list):
+                    items = [str(x).strip() for x in cand if str(x).strip()]
         else:
-            # .txt, .csv, generic text files
-            encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr"]
-            lines = None
-            for enc in encodings:
-                try:
-                    with open(stripped, "r", encoding=enc) as f:
-                        lines = f.readlines()
-                    break
-                except Exception:
-                    continue
-            if lines is None:
-                raise ValueError(f"피처/타겟 텍스트 파일 인코딩 인식 실패 ({stripped})")
-
-            for line in lines:
+            # .txt, .csv, generic text files (UTF-8/UTF-16/CP949 written by Notepad, PowerShell, Excel)
+            for line in read_text_file(stripped).splitlines():
                 line_str = line.strip()
                 if not line_str or line_str.startswith("#"):
                     continue
@@ -270,7 +143,7 @@ def parse_feature_or_target_list(input_arg: str, param_name: str = "features") -
                         items.append(p)
 
         if not items:
-            raise ValueError(f"지정하신 파일 '{stripped}'에서 유효한 컬럼명을 추출할 수 없습니다.")
+            raise InputError(f"지정하신 파일 '{stripped}'에서 유효한 컬럼명을 추출할 수 없습니다.")
         return items
 
     # 2. In-line Comma-separated string mode
@@ -284,102 +157,11 @@ def load_data_file(
     data_row: Optional[int] = None
 ) -> Tuple[pd.DataFrame, str]:
     """
-    Loads tabular data from CSV (multi-encoding) or Excel (.xlsx).
-    Handles non-standard header, unit, and data row specifications.
-    Includes Auto-Header Sniffing: skips blank top rows automatically if header_row is not explicit.
+    Loads tabular data from CSV (multi-encoding) or Excel (.xlsx) via the shared loader
+    (identical parsing in ml_predict.py). Returns (dataframe, file_name).
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"입력 데이터 파일을 찾을 수 없습니다: {file_path}")
-
-    ext = os.path.splitext(file_path)[1].lower()
-    file_name = os.path.basename(file_path)
-
-    if ext in [".xlsx", ".xls"]:
-        df_raw = pd.read_excel(file_path, header=None)
-    elif ext == ".csv":
-        encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr", "latin1"]
-        df_raw = None
-        last_err = None
-        for enc in encodings:
-            try:
-                df_raw = pd.read_csv(file_path, header=None, encoding=enc, sep=None, engine="python")
-                break
-            except Exception as e:
-                last_err = e
-                continue
-        if df_raw is None:
-            raise ValueError(f"CSV 파일 로드 실패 (지원되는 인코딩 모두 시도 완료): {last_err}")
-    else:
-        raise ValueError(f"지원하지 않는 데이터 포맷입니다 ({ext}). .xlsx 또는 .csv 파일을 지정하십시오.")
-
-    total_rows = len(df_raw)
-    if total_rows == 0:
-        raise ValueError("입력 데이터 파일이 비어 있습니다.")
-
-    # Auto-Header Sniffing: If header_row is not specified or 1, skip leading empty rows
-    if header_row is not None and header_row > 1:
-        header_idx = header_row - 1
-    else:
-        # Sniff first non-empty row containing at least 2 valid string/non-null cells
-        header_idx = 0
-        for r_i in range(min(15, total_rows)):
-            row_items = df_raw.iloc[r_i].dropna().tolist()
-            if len(row_items) >= 2 and any(isinstance(v, str) and str(v).strip() for v in row_items):
-                header_idx = r_i
-                break
-
-    if header_idx >= total_rows:
-        raise ValueError(f"유효한 헤더 행을 찾을 수 없습니다 (전체 행 수: {total_rows}).")
-
-    # Extract headers
-    raw_headers = df_raw.iloc[header_idx].values
-    headers = [str(c).strip() if pd.notna(c) and str(c).strip() else f"col_{i}" for i, c in enumerate(raw_headers)]
-
-    # Handle unit row if provided
-    if unit_row is not None and 1 <= unit_row <= total_rows:
-        unit_idx = unit_row - 1
-        units = df_raw.iloc[unit_idx].values
-        combined_headers = []
-        for h, u in zip(headers, units):
-            u_str = str(u).strip() if pd.notna(u) else ""
-            if u_str and u_str not in ["-", "None", "nan"]:
-                combined_headers.append(f"{h}({u_str})")
-            else:
-                combined_headers.append(h)
-        headers = combined_headers
-
-    # De-duplicate headers (handles accidental duplicate column names in source files)
-    seen_headers: Dict[str, int] = {}
-    unique_headers: List[str] = []
-    for h in headers:
-        if h in seen_headers:
-            seen_headers[h] += 1
-            unique_headers.append(f"{h}_{seen_headers[h]}")
-        else:
-            seen_headers[h] = 0
-            unique_headers.append(h)
-    headers = unique_headers
-
-    # Determine data start row
-    if data_row is not None:
-        start_idx = max(0, data_row - 1)
-    else:
-        last_meta_idx = header_idx
-        if unit_row is not None and 1 <= unit_row <= total_rows:
-            last_meta_idx = max(header_idx, unit_row - 1)
-        start_idx = last_meta_idx + 1
-
-    if start_idx >= total_rows:
-        raise ValueError(f"데이터 시작 행 ({start_idx + 1}) 이후에 유효한 데이터 행이 없습니다.")
-
-    df_data = df_raw.iloc[start_idx:].copy()
-    df_data.columns = headers
-    df_data = df_data.reset_index(drop=True)
-
-    # Clean rows/cols that are entirely NaN
-    df_data = df_data.dropna(how="all", axis=0).dropna(how="all", axis=1)
-
-    return df_data, file_name
+    df_data = _load_table(file_path, header_row=header_row, unit_row=unit_row, data_row=data_row)
+    return df_data, os.path.basename(file_path)
 
 
 # ==============================================================================
@@ -391,34 +173,26 @@ def validate_and_sanitize_data(
     feature_names: List[str],
     target_names: List[str],
     dtypes_arg: Optional[str] = None
-) -> Tuple[pd.DataFrame, List[str], List[str]]:
+) -> Tuple[pd.DataFrame, List[str], List[str], Dict[str, str]]:
     """
     Validates explicit feature (X) and target (Y) columns.
-    Raises clear, fail-fast guidance with available columns list if spelling fails.
-    Cleans string commas, parses types, and isolates targets.
+    - Exact names first, then unique unit-less aliases ('생산효율' -> '생산효율(%)').
+    - Fail-fast with suggestions and the available columns list if spelling fails.
+    - Converts every X/Y column to float regardless of pandas version (object / str dtype),
+      stripping thousands separators and placeholder strings ('-', 'N/A', '미측정', ...).
+    Returns (df_clean, features, targets, aliases_applied).
     """
-    all_available = list(df.columns)
+    all_available = [str(c) for c in df.columns]
 
-    # 1. Check feature names
-    missing_features = [f for f in feature_names if f not in all_available]
-    if missing_features:
-        raise ValueError(
-            f"지정하신 피처 컬럼 '{', '.join(missing_features)}'을(를) 데이터셋에서 찾을 수 없습니다.\n"
-            f"[사용 가능한 컬럼 목록]: {all_available}"
-        )
+    feature_names, feat_alias = resolve_column_names(feature_names, all_available, "피처(-x)")
+    target_names, tgt_alias = resolve_column_names(target_names, all_available, "타겟(-y)")
+    feature_names = list(dict.fromkeys(feature_names))
+    target_names = list(dict.fromkeys(target_names))
 
-    # 2. Check target names
-    missing_targets = [t for t in target_names if t not in all_available]
-    if missing_targets:
-        raise ValueError(
-            f"지정하신 타겟 컬럼 '{', '.join(missing_targets)}'을(를) 데이터셋에서 찾을 수 없습니다.\n"
-            f"[사용 가능한 컬럼 목록]: {all_available}"
-        )
-
-    # 3. Data Leakage Check: Targets in Features
-    overlap = set(feature_names).intersection(set(target_names))
+    # Data Leakage Check: Targets in Features
+    overlap = [t for t in target_names if t in set(feature_names)]
     if overlap:
-        raise ValueError(
+        raise InputError(
             f"[DATA LEAKAGE DETECTED] 타겟 변수 '{', '.join(overlap)}'이(가) 피처(-x) 목록에 포함되어 있습니다. "
             f"종속변수는 독립변수로 사용될 수 없습니다."
         )
@@ -435,9 +209,9 @@ def validate_and_sanitize_data(
                 if c_name in df_clean.columns:
                     try:
                         if c_type in ["float", "float64"]:
-                            df_clean[c_name] = pd.to_numeric(df_clean[c_name], errors="coerce").astype(float)
+                            df_clean[c_name] = coerce_numeric(df_clean[c_name]).astype(float)
                         elif c_type in ["int", "int64"]:
-                            df_clean[c_name] = pd.to_numeric(df_clean[c_name], errors="coerce").fillna(0).astype(int)
+                            df_clean[c_name] = coerce_numeric(df_clean[c_name]).fillna(0).astype(int)
                         elif c_type in ["str", "object"]:
                             df_clean[c_name] = df_clean[c_name].astype(str)
                         elif c_type in ["datetime", "date"]:
@@ -445,20 +219,22 @@ def validate_and_sanitize_data(
                     except Exception as e:
                         sys.stderr.write(f"[WARN] 타입 변환 실패 ({c_name} -> {c_type}): {e}\n")
 
-    # Sanitize numerical columns (thousands separator comma, string cleanup)
+    # Sanitize numerical columns (works for pandas 2 'object' and pandas 3 'str' dtypes)
     for col in feature_names + target_names:
-        if col in df_clean.columns:
-            # Replace placeholder string NaNs
-            df_clean[col] = df_clean[col].replace(["-", "N/A", "null", "미측정", "None", ""], np.nan)
-            # Remove comma if string
-            if df_clean[col].dtype == object:
-                try:
-                    cleaned_s = df_clean[col].astype(str).str.replace(",", "", regex=False).str.strip()
-                    df_clean[col] = pd.to_numeric(cleaned_s, errors="coerce")
-                except Exception:
-                    pass
+        if pd.api.types.is_datetime64_any_dtype(df_clean[col]):
+            raise InputError(
+                f"컬럼 '{col}'은(는) 날짜/시간 타입이라 회귀 피처로 직접 사용할 수 없습니다. "
+                f"-x 목록에서 제외하거나 --eval로 수치 파생변수를 만드십시오."
+            )
+        df_clean[col] = coerce_numeric(df_clean[col])
 
-    return df_clean, feature_names, target_names
+    all_nan = [c for c in feature_names + target_names if df_clean[c].notna().sum() == 0]
+    if all_nan:
+        raise InputError(
+            f"컬럼 {all_nan}에 숫자로 변환 가능한 값이 하나도 없습니다. 헤더/데이터 시작 행(--header-row, --data-row)을 확인하십시오."
+        )
+
+    return df_clean, feature_names, target_names, {**feat_alias, **tgt_alias}
 
 
 # ==============================================================================
@@ -502,11 +278,7 @@ def train_and_benchmark_models(
     y = y_series.loc[valid_mask].values
 
     if len(y) < 10:
-        raise ValueError(f"타겟 '{target_name}'의 유효 학습 샘플 수가 너무 적습니다 ({len(y)}개). 최소 10개 이상 필요합니다.")
-
-    # Convert warning suppression for sklearn input
-    import warnings
-    warnings.filterwarnings("ignore", category=UserWarning)
+        raise InputError(f"타겟 '{target_name}'의 유효 학습 샘플 수가 너무 적습니다 ({len(y)}개). 최소 10개 이상 필요합니다.")
 
     models = get_regression_models(seed=seed)
     model_count = len(models)
@@ -654,10 +426,9 @@ class TransactionGuard:
 
         # 2. Determine Version
         if self.target_version:
-            v_name = self.target_version.lower()
-            if not v_name.startswith("v"):
-                v_name = f"v{v_name}"
-            self.version_str = v_name
+            self.version_str = normalize_version(self.target_version)
+            if not re.match(r"^v[0-9A-Za-z_.-]+$", self.version_str):
+                raise InputError(f"버전명은 영문/숫자만 사용할 수 있습니다 (예: v3): '{self.target_version}'")
         else:
             # Auto-infer next version
             existing_versions = []
@@ -675,8 +446,7 @@ class TransactionGuard:
         self.final_dir = os.path.join(self.data_root, self.version_str)
 
         # Clean any preexisting tmp folder
-        if os.path.exists(self.tmp_dir):
-            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        remove_tree(self.tmp_dir)
         os.makedirs(self.tmp_dir, exist_ok=True)
 
         return self.version_str
@@ -689,7 +459,7 @@ class TransactionGuard:
                 # Clean temp folders
                 if item.startswith(".tmp_"):
                     try:
-                        shutil.rmtree(p, ignore_errors=True)
+                        remove_tree(p)
                         sys.stderr.write(f"[INFO] 고아 임시 폴더 자동 청소: {item}\n")
                     except Exception:
                         pass
@@ -699,17 +469,17 @@ class TransactionGuard:
                     ds_p = os.path.join(p, "model_dataset.csv")
                     if not (os.path.exists(lead_p) and os.path.exists(ds_p)):
                         try:
-                            shutil.rmtree(p, ignore_errors=True)
+                            remove_tree(p)
                             sys.stderr.write(f"[INFO] 불완전/손상된 버전 폴더 자동 청소: {item}\n")
                         except Exception:
                             pass
 
     def commit(self) -> str:
-        """Atomically renames .tmp_vX to vX."""
+        """Atomically renames .tmp_vX to vX (retries transient Windows locks from antivirus/Explorer)."""
         if os.path.exists(self.final_dir):
-            # If target version already exists (e.g. manual override), backup/replace safely
-            shutil.rmtree(self.final_dir, ignore_errors=True)
-        os.rename(self.tmp_dir, self.final_dir)
+            # Target version already exists (manual --version override): replace it
+            remove_tree(self.final_dir)
+        retry_fs(lambda: os.rename(self.tmp_dir, self.final_dir))
         self.is_committed = True
         return self.final_dir
 
@@ -717,7 +487,7 @@ class TransactionGuard:
         """Removes staging directory on failure."""
         if not self.is_committed and self.tmp_dir and os.path.exists(self.tmp_dir):
             try:
-                shutil.rmtree(self.tmp_dir, ignore_errors=True)
+                remove_tree(self.tmp_dir)
                 sys.stderr.write(f"[WARN] 비정상 중단: 임시 스테이징 폴더 롤백 완료 ({self.tmp_dir})\n")
             except Exception:
                 pass
@@ -736,14 +506,16 @@ def append_history_ledger(ledger_path: str, record: Dict[str, Any]) -> None:
     os.makedirs(data_root, exist_ok=True)
 
     # 1. Append to history.jsonl (streaming ledger)
-    with open(ledger_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with open(ledger_path, "a", encoding="utf-8", newline="\n") as f:
+        f.write(dumps_json(record) + "\n")
 
-    # 2. Synchronize history.json (standard formatted JSON array)
+    # 2. Synchronize history.json (standard formatted JSON array), written atomically
     json_path = os.path.join(data_root, "history.json")
     all_records = load_history_ledger(ledger_path)
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(all_records, f, ensure_ascii=False, indent=2)
+    try:
+        atomic_write_text(json_path, dumps_json(all_records, indent=2))
+    except OSError as e:
+        sys.stderr.write(f"[WARN] history.json 동기화 실패 (history.jsonl은 정상 기록됨): {e}\n")
 
 
 def load_history_ledger(ledger_path: str) -> List[Dict[str, Any]]:
@@ -758,7 +530,7 @@ def load_history_ledger(ledger_path: str) -> List[Dict[str, Any]]:
                 try:
                     records.append(json.loads(line))
                 except Exception:
-                    pass
+                    sys.stderr.write("[WARN] history.jsonl 손상 라인 1건을 건너뜀\n")
     return records
 
 
@@ -772,6 +544,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     raw_file = os.path.abspath(args.file)
     if not os.path.exists(raw_file):
         raise FileNotFoundError(f"입력 파일이 존재하지 않습니다: {raw_file}")
+    warn_long_path(raw_file)
 
     file_dir = os.path.dirname(raw_file)
     file_stem = os.path.splitext(os.path.basename(raw_file))[0]
@@ -796,13 +569,13 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         target_names = parse_feature_or_target_list(args.targets, param_name="targets")
 
         if not feature_names:
-            raise ValueError("학습에 투입할 독립변수 목록(-x, --features)이 지정되지 않았거나 파일이 비어 있습니다.")
+            raise InputError("학습에 투입할 독립변수 목록(-x, --features)이 지정되지 않았거나 파일이 비어 있습니다.")
         if not target_names:
-            raise ValueError("예측할 종속변수 목록(-y, --targets)이 지정되지 않았거나 파일이 비어 있습니다.")
+            raise InputError("예측할 종속변수 목록(-y, --targets)이 지정되지 않았거나 파일이 비어 있습니다.")
 
         # Fail-Fast Validation & Type Sanitization
         log_progress(10, "컬럼 유효성 검증 및 타입 정제 중...")
-        df_clean, feature_names, target_names = validate_and_sanitize_data(
+        df_clean, feature_names, target_names, column_aliases = validate_and_sanitize_data(
             df=df_raw,
             feature_names=feature_names,
             target_names=target_names,
@@ -876,18 +649,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         history_records = load_history_ledger(ledger_path)
 
         # Resolve project description: explicit arg takes precedence, otherwise inherit from previous version
-        project_desc = getattr(args, "description", None) or ""
+        project_desc = (getattr(args, "description", None) or "").strip()
         if project_desc and os.path.isfile(project_desc):
-            try:
-                for enc in ["utf-8", "cp949", "utf-8-sig"]:
-                    try:
-                        with open(project_desc, "r", encoding=enc) as df_f:
-                            project_desc = df_f.read().strip()
-                        break
-                    except (UnicodeDecodeError, Exception):
-                        continue
-            except Exception:
-                pass
+            project_desc = read_text_file(project_desc).strip()
 
         if not project_desc and history_records:
             project_desc = history_records[-1].get("description", "")
@@ -939,7 +703,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "targets": target_benchmarks
         }
         with open(os.path.join(staging_dir, "leaderboard.json"), "w", encoding="utf-8") as f:
-            json.dump(leaderboard_data, f, ensure_ascii=False, indent=2)
+            f.write(dumps_json(leaderboard_data, indent=2))
 
         # 2. Target Models and Metadata
         for target_name, champ_data in target_champions.items():
@@ -979,34 +743,25 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 "feature_count": len(feature_names),
                 "feature_stats": feat_stats,
                 "derived_evals": applied_evals,
-                "target_summary": target_summaries.get(target_name, {})
+                "target_summary": target_summaries.get(target_name, {}),
+                "sklearn_version": sklearn.__version__,
+                "python_version": sys.version.split()[0]
             }
             with open(os.path.join(staging_dir, f"model_{safe_target}.json"), "w", encoding="utf-8") as f:
-                json.dump(meta_json, f, ensure_ascii=False, indent=2)
+                f.write(dumps_json(meta_json, indent=2))
 
         # 3. Clean Dataset Snapshot (model_dataset.csv)
         dataset_snapshot_cols = [c for c in feature_names + target_names if c in df_clean.columns]
         snapshot_df = df_clean[dataset_snapshot_cols]
         snapshot_path = os.path.join(staging_dir, "model_dataset.csv")
 
-        # Windows 한국어 Excel 및 기본 뷰어 호환 인코딩 처리
-        target_encoding = getattr(args, "encoding", None)
-        if not target_encoding:
-            # 기본값: 한국어 Windows Excel 더블클릭 시 깨지지 않는 cp949 우선 적용
-            try:
-                snapshot_df.to_csv(snapshot_path, index=False, encoding="cp949")
-            except (UnicodeEncodeError, LookupError):
-                # CP949 표현 불가 유니코드 포함 시 utf-8-sig로 안전 폴백
-                snapshot_df.to_csv(snapshot_path, index=False, encoding="utf-8-sig")
-        else:
-            try:
-                snapshot_df.to_csv(snapshot_path, index=False, encoding=target_encoding)
-            except Exception:
-                snapshot_df.to_csv(snapshot_path, index=False, encoding="utf-8-sig")
+        # Windows 한국어 Excel 호환: cp949 기본, 표현 불가 문자 포함 시 utf-8-sig 자동 폴백
+        write_csv_excel_compatible(snapshot_df, snapshot_path, encoding=getattr(args, "encoding", None))
 
         # 4. Append Record to history.jsonl (SSOT)
         duration_sec = round(time.time() - start_time, 2)
-        missing_imputed = int(df_raw[feature_names + target_names].isna().sum().sum()) if all(c in df_raw.columns for c in feature_names + target_names) else int(df_clean[feature_names].isna().sum().sum())
+        # Missing feature cells (incl. unparseable strings) that SimpleImputer(median) fills
+        missing_imputed = int(df_clean[feature_names].isna().sum().sum())
         prescription = recommendations[0] if recommendations else "모델 경쟁 학습 및 평가 완료"
 
         history_record = {
@@ -1053,7 +808,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             f"Mean Val R2={mean_val_r2:.4f}. Next step: proceed to inference or next iteration."
         )
 
-        return {
+        result = {
             "status": "ok",
             "version": current_version,
             "tag": getattr(args, "tag", None) or "",
@@ -1069,61 +824,91 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "preview": preview,
             "agent_directive": agent_directive
         }
+        if column_aliases:
+            result["column_aliases"] = column_aliases
+        return result
 
-    except Exception as e:
+    except BaseException:
+        # Includes KeyboardInterrupt (Ctrl+C) so the staging folder never leaks
         guard.rollback()
-        raise e
+        raise
 
 
 # ==============================================================================
 # 9. CLI Interface & History Mode
 # ==============================================================================
 
-def print_history_summary(data_root: str) -> None:
-    """Prints a neat terminal summary table of all experiments from history.jsonl."""
+def print_history_summary(data_root: str) -> Dict[str, Any]:
+    """
+    Prints a human-readable summary table of all experiments to stderr and returns
+    a compact JSON summary (stdout stays a single JSON line for the agent).
+    """
     ledger_path = os.path.join(data_root, "history.jsonl")
     records = load_history_ledger(ledger_path)
     if not records:
-        emit_json_response({"status": "no_history", "message": f"실험 원장이 존재하지 않습니다: {ledger_path}"})
-        return
+        return {
+            "status": "no_history",
+            "message": f"실험 원장이 존재하지 않습니다: {ledger_path}",
+            "agent_directive": "VERIFIED: No experiments yet. Next step: run baseline training (v1).",
+        }
 
-    proj_desc = records[-1].get("description", "") if records else ""
+    proj_desc = records[-1].get("description", "")
+    out = sys.stderr
 
-    print("\n" + "=" * 125)
-    print(f" [ML EXPERIMENT HISTORY LEDGER] Root: {data_root}")
+    out.write("\n" + "=" * 125 + "\n")
+    out.write(f" [ML EXPERIMENT HISTORY LEDGER] Root: {data_root}\n")
     if proj_desc:
-        print(f" [PROJECT DESCRIPTION] {proj_desc}")
-    print("=" * 125)
-    print(f"{'Version':<8} | {'Tag / Memo':<16} | {'Mean R2':<9} | {'Delta R2':<10} | {'Time':<7} | {'Targets':<22} | {'Status'}")
-    print(f"{'-'*8}-+-{'-'*16}-+-{'-'*9}-+-{'-'*10}-+-{'-'*7}-+-{'-'*22}-+-{'-'*15}")
+        out.write(f" [PROJECT DESCRIPTION] {proj_desc}\n")
+    out.write("=" * 125 + "\n")
+    out.write(f"{'Version':<8} | {'Tag / Memo':<16} | {'Mean R2':<9} | {'Delta R2':<10} | {'Time':<7} | {'Targets':<22} | {'Status'}\n")
+    out.write(f"{'-'*8}-+-{'-'*16}-+-{'-'*9}-+-{'-'*10}-+-{'-'*7}-+-{'-'*22}-+-{'-'*15}\n")
 
+    rows = []
     for r in records:
         ver = r.get("version", "-")
         tag = r.get("tag") or "-"
-        if len(tag) > 15:
-            tag = tag[:13] + ".."
-        mean_r2 = r.get("mean_val_r2", 0.0)
+        mean_r2 = r.get("mean_val_r2")
         delta = r.get("delta_r2", "base")
+        rows.append({
+            "version": ver, "tag": tag, "mean_val_r2": mean_r2, "delta_r2": delta,
+            "is_best": bool(r.get("is_best")), "targets": r.get("targets", []),
+        })
+
+        tag_s = tag if len(tag) <= 15 else tag[:13] + ".."
+        r2_s = f"{mean_r2:<9.4f}" if isinstance(mean_r2, (int, float)) else f"{'-':<9}"
         delta_str = f"{delta:+.4f}" if isinstance(delta, (int, float)) else str(delta)
         dur = f"{r.get('duration_sec', 0.0):.1f}s" if "duration_sec" in r else "-"
         targets_str = ", ".join(r.get("targets", []))
         if len(targets_str) > 20:
             targets_str = targets_str[:18] + ".."
         status = "[BEST 챔피언]" if r.get("is_best") else "[수렴]"
+        out.write(f" {ver:<7} | {tag_s:<16} | {r2_s} | {delta_str:<10} | {dur:<7} | {targets_str:<22} | {status}\n")
 
-        print(f" {ver:<7} | {tag:<16} | {mean_r2:<9.4f} | {delta_str:<10} | {dur:<7} | {targets_str:<22} | {status}")
+    out.write("=" * 125 + "\n\n")
 
-    print("=" * 125 + "\n")
+    scored = [x for x in rows if isinstance(x["mean_val_r2"], (int, float))]
+    best = max(scored, key=lambda x: x["mean_val_r2"]) if scored else None
+    return {
+        "status": "ok",
+        "data_root": data_root,
+        "description": proj_desc,
+        "record_count": len(rows),
+        "best_version": best["version"] if best else None,
+        "best_mean_val_r2": best["mean_val_r2"] if best else None,
+        "latest_version": rows[-1]["version"],
+        "records": rows,
+        "agent_directive": "VERIFIED: History summary returned. Do not re-read history.json for the same information.",
+    }
 
 
 def main():
-    parser = argparse.ArgumentParser(
+    parser = JsonArgumentParser(
         description="Autonomous Regression ML Engine with 5-Model Competitive Benchmark & Version Lineage"
     )
     parser.add_argument("--file", "-f", help="입력 데이터 파일 경로 (.xlsx, .csv)")
     parser.add_argument("--features", "-x", help="독립변수(피처) 목록 (쉼표 구분 문자열 또는 파일 경로: .txt, .json, .csv)")
     parser.add_argument("--targets", "-y", help="종속변수(타겟) 목록 (쉼표 구분 문자열 또는 파일 경로: .txt, .json, .csv)")
-    parser.add_argument("--eval", help="방탄 AST 파생변수 생성 수식 (세미콜론 구분)")
+    parser.add_argument("--eval", help="방탄 AST 파생변수 생성 수식 (세미콜론 구분). 컬럼명은 전체 이름 또는 단위를 뺀 고유 이름")
     parser.add_argument("--tag", help="해당 회차 실험 의도 및 변경 사항 메모 태그 (예: '베이스라인_학습', '파생변수2종_추가')")
     parser.add_argument(
         "--description", "--desc", dest="description",
@@ -1136,40 +921,23 @@ def main():
     parser.add_argument("--encoding", help="model_dataset.csv 저장 인코딩 (기본값: Windows Excel 최적화 cp949, 특수문자 발생 시 utf-8-sig 자동 폴백)")
     parser.add_argument("--version", "-v", help="버전 수동 지정 (미지정 시 자동 계산 v1, v2...)")
     parser.add_argument("--seed", type=int, default=42, help="재현용 난수 시드 (기본값: 42)")
-    parser.add_argument("--history", action="store_true", help="누적 실험 이력 테이블 출력 모드")
+    parser.add_argument("--history", action="store_true", help="누적 실험 이력 조회 모드 (표는 stderr, 요약 JSON은 stdout)")
 
     args = parser.parse_args()
 
-    # History summary mode
     if args.history:
         if not args.file:
-            emit_json_response({"status": "error", "message": "--history 조회 시 --file 인자가 필요합니다."})
-            sys.exit(1)
+            parser.error("--history 조회 시 --file 인자가 필요합니다.")
         raw_file = os.path.abspath(args.file)
-        file_dir = os.path.dirname(raw_file)
         file_stem = os.path.splitext(os.path.basename(raw_file))[0]
-        data_root = os.path.join(file_dir, f"{file_stem}_ml_data")
-        print_history_summary(data_root)
+        data_root = os.path.join(os.path.dirname(raw_file), f"{file_stem}_ml_data")
+        run_cli(lambda: print_history_summary(data_root))
         return
 
     if not args.file or not args.targets or not args.features:
-        emit_json_response({
-            "status": "error",
-            "message": "--file, --features(-x), --targets(-y)는 모델 학습에 필수적인 인자입니다."
-        })
-        sys.exit(1)
+        parser.error("--file, --features(-x), --targets(-y)는 모델 학습에 필수적인 인자입니다.")
 
-    try:
-        result = execute_ml_train(args)
-        emit_json_response(result)
-    except Exception as e:
-        sys.stderr.write(f"\n[ERROR] {str(e)}\n")
-        emit_json_response({
-            "status": "error",
-            "message": str(e),
-            "agent_directive": f"ERROR: Execution failed ({e}). Check column names or formula syntax."
-        })
-        sys.exit(1)
+    run_cli(lambda: execute_ml_train(args), hint="Check column names or formula syntax.")
 
 
 if __name__ == "__main__":

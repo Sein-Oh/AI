@@ -11,221 +11,61 @@ Designed for lightweight 26B-30B LLM agents with 1-turn declarative execution.
 import sys
 import os
 
-# Ensure UTF-8 clean terminal output on Windows
-try:
-    if sys.stdout.encoding.lower() != "utf-8":
-        sys.stdout.reconfigure(encoding="utf-8")
-    if sys.stderr.encoding.lower() != "utf-8":
-        sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ml_common import (  # noqa: E402
+    setup_console, run_cli, JsonArgumentParser, InputError,
+    load_json_file, load_data_file, coerce_numeric, apply_eval_expressions,
+    build_alias_map, strip_unit, suggest_columns, warn_long_path,
+    save_with_lock_fallback, write_csv_excel_compatible,
+)
+
+setup_console()
 
 import re
-import ast
 import glob
 import json
 import argparse
+import warnings
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 import pandas as pd
 import joblib
 
-import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ==============================================================================
-# 1. Output & Console Formatting (Clean Terminal Principle - No Emojis)
+# 1. Derived Feature Replay (shared AST sandbox, identical to training)
 # ==============================================================================
-
-def emit_json_response(payload: Dict[str, Any]) -> None:
-    """Prints standard 1-line JSON response to stdout for LLM consumption."""
-    sys.stdout.reconfigure(encoding="utf-8")
-    print(json.dumps(payload, ensure_ascii=False))
-
-
-def sanitize_filename(name: str) -> str:
-    r"""Replaces characters forbidden in Windows filenames (\ / : * ? " < > |)."""
-    return re.sub(r'[\\/*?:"<>|]', "_", str(name))
-
-
-# ==============================================================================
-# 2. Bulletproof AST Formula Sandbox for Inference
-# ==============================================================================
-
-_ALLOWED_AST_NODES = (
-    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name,
-    ast.Load, ast.Call, ast.Add, ast.Sub, ast.Mult, ast.Div,
-    ast.FloorDiv, ast.Mod, ast.Pow, ast.USub, ast.UAdd
-)
-
-def _validate_eval_ast(formula_ast: ast.AST, allowed_identifiers: set) -> None:
-    for node in ast.walk(formula_ast):
-        if not isinstance(node, _ALLOWED_AST_NODES):
-            raise ValueError(f"보안 위반: 허용되지 않은 문법 노드 감지: {type(node).__name__}")
-        if isinstance(node, ast.Name) and node.id not in allowed_identifiers:
-            raise ValueError(f"보안 위반: 알 수 없거나 허용되지 않은 식별자 '{node.id}'")
-
 
 def apply_inference_evals(df: pd.DataFrame, eval_expressions: List[str]) -> pd.DataFrame:
     """Applies derived feature formulas recorded in model metadata prior to inference."""
-    if not eval_expressions:
-        return df
+    df_out, _, _ = apply_eval_expressions(df, eval_expressions, strict=False)
+    return df_out
 
-    df = df.copy()
-    safe_math = {
-        "log": lambda x: np.log(np.clip(np.abs(x), 1e-9, None)),
-        "log1p": lambda x: np.log1p(np.clip(np.abs(x), 0, None)),
-        "log10": lambda x: np.log10(np.clip(np.abs(x), 1e-9, None)),
-        "sqrt": lambda x: np.sqrt(np.clip(np.abs(x), 0, None)),
-        "exp": lambda x: np.exp(np.clip(x, -50, 50)),
-        "abs": np.abs,
-        "sin": np.sin,
-        "cos": np.cos,
-        "tan": np.tan,
-        "square": np.square,
-        "clip": lambda x, a_min, a_max: np.clip(x, a_min, a_max),
-        "pi": np.pi,
-        "e": np.e,
-        "radians": np.radians,
-        "degrees": np.degrees,
-    }
 
-    for expr in eval_expressions:
-        if "=" not in expr:
+def align_input_columns(df: pd.DataFrame, required: List[str], derived: List[str]) -> Dict[str, str]:
+    """
+    Renames input columns written without unit suffix to the trained full name
+    ('반응온도' -> '반응온도(°C)'), in place. Only unique, unambiguous matches are applied.
+    """
+    applied: Dict[str, str] = {}
+    present = set(str(c) for c in df.columns)
+    input_alias = build_alias_map([str(c) for c in df.columns])
+    for feat in required:
+        if feat in present or feat in derived:
             continue
-        new_col, formula = expr.split("=", 1)
-        new_col = new_col.strip()
-        formula = formula.strip()
-
-        token_to_col = {}
-        eval_env = dict(safe_math)
-        existing_cols = sorted(df.columns, key=len, reverse=True)
-        transformed_formula = formula
-
-        for idx, col_name in enumerate(existing_cols):
-            token = f"__COL_TOKEN_{idx}__"
-            pattern = rf"(?<![가-힣a-zA-Z0-9_]){re.escape(col_name)}(?![가-힣a-zA-Z0-9_])"
-            if re.search(pattern, transformed_formula):
-                transformed_formula = re.sub(pattern, token, transformed_formula)
-                token_to_col[token] = col_name
-                eval_env[token] = pd.to_numeric(df[col_name], errors="coerce").astype(float)
-
-        try:
-            tree = ast.parse(transformed_formula, mode="eval")
-            _validate_eval_ast(tree, set(eval_env.keys()))
-            res_val = eval(transformed_formula, {"__builtins__": {}}, eval_env)
-            if isinstance(res_val, (pd.Series, np.ndarray, int, float)):
-                ser = pd.Series(res_val, index=df.index, dtype=float)
-                ser = ser.replace([np.inf, -np.inf], np.nan)
-                df[new_col] = ser
-        except Exception as ex:
-            sys.stderr.write(f"[WARN] 파생변수 연산 생략/실패 ('{expr}'): {ex}\n")
-
-    return df
-
-
-# ==============================================================================
-# 3. Data Loader & Non-standard Layout Parser
-# ==============================================================================
-
-def load_data_file(
-    file_path: str,
-    header_row: Optional[int] = None,
-    unit_row: Optional[int] = None,
-    data_row: Optional[int] = None
-) -> pd.DataFrame:
-    """
-    Loads inference data from CSV or Excel (.xlsx).
-    Includes Auto-Header Sniffing: skips blank top rows automatically if header_row is not explicit.
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"추론 대상 데이터 파일을 찾을 수 없습니다: {file_path}")
-
-    ext = os.path.splitext(file_path)[1].lower()
-
-    if ext in [".xlsx", ".xls"]:
-        df_raw = pd.read_excel(file_path, header=None)
-    elif ext == ".csv":
-        encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr", "latin1"]
-        df_raw = None
-        last_err = None
-        for enc in encodings:
-            try:
-                df_raw = pd.read_csv(file_path, header=None, encoding=enc, sep=None, engine="python")
-                break
-            except Exception as e:
-                last_err = e
-                continue
-        if df_raw is None:
-            raise ValueError(f"CSV 파일 로드 실패 (지원되는 인코딩 모두 시도 완료): {last_err}")
-    else:
-        raise ValueError(f"지원하지 않는 데이터 포맷입니다 ({ext}). .xlsx 또는 .csv 파일을 지정하십시오.")
-
-    total_rows = len(df_raw)
-    if total_rows == 0:
-        raise ValueError("추론 데이터 파일이 비어 있습니다.")
-
-    # Auto-Header Sniffing: If header_row is not specified or 1, skip leading empty rows
-    if header_row is not None and header_row > 1:
-        header_idx = header_row - 1
-    else:
-        header_idx = 0
-        for r_i in range(min(15, total_rows)):
-            row_items = df_raw.iloc[r_i].dropna().tolist()
-            if len(row_items) >= 2 and any(isinstance(v, str) and str(v).strip() for v in row_items):
-                header_idx = r_i
-                break
-
-    if header_idx >= total_rows:
-        raise ValueError(f"유효한 헤더 행을 찾을 수 없습니다 (전체 행 수: {total_rows}).")
-
-    raw_headers = df_raw.iloc[header_idx].values
-    headers = [str(c).strip() if pd.notna(c) and str(c).strip() else f"col_{i}" for i, c in enumerate(raw_headers)]
-
-    if unit_row is not None and 1 <= unit_row <= total_rows:
-        unit_idx = unit_row - 1
-        units = df_raw.iloc[unit_idx].values
-        combined_headers = []
-        for h, u in zip(headers, units):
-            u_str = str(u).strip() if pd.notna(u) else ""
-            if u_str and u_str not in ["-", "None", "nan"]:
-                combined_headers.append(f"{h}({u_str})")
-            else:
-                combined_headers.append(h)
-        headers = combined_headers
-
-    # De-duplicate headers
-    seen_headers: Dict[str, int] = {}
-    unique_headers: List[str] = []
-    for h in headers:
-        if h in seen_headers:
-            seen_headers[h] += 1
-            unique_headers.append(f"{h}_{seen_headers[h]}")
-        else:
-            seen_headers[h] = 0
-            unique_headers.append(h)
-    headers = unique_headers
-
-    if data_row is not None:
-        start_idx = max(0, data_row - 1)
-    else:
-        last_meta_idx = header_idx
-        if unit_row is not None and 1 <= unit_row <= total_rows:
-            last_meta_idx = max(header_idx, unit_row - 1)
-        start_idx = last_meta_idx + 1
-
-    if start_idx >= total_rows:
-        raise ValueError(f"데이터 시작 행 ({start_idx + 1}) 이후에 유효한 데이터 행이 없습니다.")
-
-    df_data = df_raw.iloc[start_idx:].copy()
-    df_data.columns = headers
-    df_data = df_data.reset_index(drop=True)
-    df_data = df_data.dropna(how="all", axis=0).dropna(how="all", axis=1)
-
-    return df_data
+        key = re.sub(r"\s+", "", strip_unit(feat)).lower()
+        src = input_alias.get(key)
+        if src is not None and src not in required and strip_unit(src) == src.strip():
+            df.rename(columns={src: feat}, inplace=True)
+            present.discard(src)
+            present.add(feat)
+            applied[src] = feat
+            sys.stderr.write(f"[INFO] 입력 컬럼명 자동 매칭: '{src}' -> '{feat}'\n")
+    return applied
 
 
 # ==============================================================================
@@ -272,8 +112,10 @@ def resolve_target_models(
                     sys.stderr.write(f"[WARN] 메타데이터 로드 실패 ({m_path}): {e}\n")
 
             display_target = meta_dict.get("target", target_name)
-            if filter_targets and display_target not in filter_targets and target_name not in filter_targets:
-                continue
+            if filter_targets:
+                wanted = set(filter_targets) | {strip_unit(t) for t in filter_targets}
+                if not ({display_target, target_name, strip_unit(display_target)} & wanted):
+                    continue
 
             model_items.append({
                 "target": display_target,
@@ -287,7 +129,7 @@ def resolve_target_models(
         # Specific File Mode
         j_path = abs_path
         if not j_path.endswith(".joblib"):
-            raise ValueError(f"모델 파일은 '.joblib' 확장자여야 합니다: {j_path}")
+            raise InputError(f"모델 파일은 '.joblib' 확장자여야 합니다: {j_path}")
 
         fname = os.path.basename(j_path)
         match = re.match(r"^model_(.+)\.joblib$", fname)
@@ -313,21 +155,35 @@ def resolve_target_models(
                 sys.stderr.write(f"[WARN] 메타데이터 로드 실패 ({m_path}): {e}\n")
 
         model_items.append({
-            "target": target_name,
+            "target": meta_dict.get("target", target_name),
             "joblib_path": j_path,
             "meta_path": m_path,
             "meta": meta_dict
         })
 
     if not model_items:
-        raise ValueError(f"조건에 일치하는 대상 모델을 찾을 수 없습니다 (filter={filter_targets})")
+        raise InputError(f"조건에 일치하는 대상 모델을 찾을 수 없습니다 (filter={filter_targets})")
 
-    # Load Pipelines
+    # Load Pipelines (warn on scikit-learn version mismatch between training and serving PCs)
+    try:
+        import sklearn
+        sk_now = sklearn.__version__
+    except Exception:
+        sk_now = None
     for item in model_items:
+        sk_train = item["meta"].get("sklearn_version")
+        if sk_train and sk_now and sk_train != sk_now:
+            sys.stderr.write(
+                f"[WARN] scikit-learn 버전 불일치: 학습={sk_train}, 현재={sk_now}. "
+                f"폐쇄망 PC 간 동일 버전 wheel 설치를 권장합니다.\n"
+            )
         try:
             item["pipeline"] = joblib.load(item["joblib_path"])
         except Exception as e:
-            raise ValueError(f"Joblib 모델 로드 실패 ({item['joblib_path']}): {e}")
+            raise InputError(
+                f"Joblib 모델 로드 실패 ({item['joblib_path']}): {e}. "
+                f"학습 PC와 scikit-learn 버전(학습={sk_train or '미기록'}, 현재={sk_now})이 다르면 동일 버전으로 맞추십시오."
+            )
 
     return model_items
 
@@ -337,17 +193,30 @@ def resolve_target_models(
 # ==============================================================================
 
 def parse_inline_input(input_str: str) -> pd.DataFrame:
-    """Parses inline JSON string or key=val pairs into a single-row DataFrame."""
+    """
+    Parses inline input into a DataFrame:
+    - path to a .json file (recommended on Windows: no shell quote escaping)
+    - JSON object/array string
+    - 'k1=v1,k2=v2' pairs
+    """
     clean_str = input_str.strip()
+    if clean_str.lower().endswith(".json") and os.path.isfile(clean_str):
+        obj = load_json_file(clean_str)
+        if isinstance(obj, dict):
+            return pd.DataFrame([obj])
+        if isinstance(obj, list) and obj:
+            return pd.DataFrame(obj)
+        raise InputError(f"입력 JSON 파일은 객체 또는 객체 배열이어야 합니다: {clean_str}")
     if clean_str.startswith("{") or clean_str.startswith("["):
         try:
             obj = json.loads(clean_str)
-            if isinstance(obj, dict):
-                return pd.DataFrame([obj])
-            elif isinstance(obj, list):
-                return pd.DataFrame(obj)
         except Exception as e:
-            raise ValueError(f"인라인 JSON 파싱 실패: {e}")
+            raise InputError(f"인라인 JSON 파싱 실패: {e}. Windows에서는 'k1=v1,k2=v2' 형식이나 .json 파일 경로를 권장합니다.")
+        if isinstance(obj, dict):
+            return pd.DataFrame([obj])
+        if isinstance(obj, list) and obj:
+            return pd.DataFrame(obj)
+        raise InputError("인라인 JSON은 객체 또는 객체 배열이어야 합니다.")
 
     # key=val, key2=val2 format
     row_dict = {}
@@ -363,7 +232,7 @@ def parse_inline_input(input_str: str) -> pd.DataFrame:
                 pass
             row_dict[k] = v
     if not row_dict:
-        raise ValueError(f"유효한 인라인 입력 형식이 아닙니다 (JSON 또는 'k1=v1,k2=v2'): '{input_str}'")
+        raise InputError(f"유효한 인라인 입력 형식이 아닙니다 (JSON 또는 'k1=v1,k2=v2'): '{input_str}'")
     return pd.DataFrame([row_dict])
 
 
@@ -392,11 +261,12 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         is_inline = False
         source_desc = os.path.basename(args.file)
     else:
-        raise ValueError("추론할 입력 데이터(--file 또는 --input)를 지정해야 합니다.")
+        raise InputError("추론할 입력 데이터(--file 또는 --input)를 지정해야 합니다.")
 
     df_result = df_input.copy()
     predictions_summary = {}
-    drift_warnings = []
+    drift_warnings: List[str] = []
+    column_aliases: Dict[str, str] = {}
 
     # 3. Perform Inference per Target
     for item in model_items:
@@ -407,46 +277,59 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         req_features = meta.get("features_required", [])
         derived_evals = meta.get("derived_evals", [])
         feature_stats = meta.get("feature_stats", {})
+        if not req_features:
+            raise InputError(
+                f"타겟 '{target_name}'의 메타데이터(model_*.json)에 features_required가 없습니다. "
+                f"모델과 같은 폴더의 .json 파일을 확인하거나 --meta로 지정하십시오."
+            )
+        derived_names = [e.split("=", 1)[0].strip() for e in derived_evals if "=" in e]
 
-        # Apply derived features if specified in metadata
+        # Accept unit-less input column names, then replay derived features
+        column_aliases.update(align_input_columns(df_input, req_features, derived_names))
         df_evaled = apply_inference_evals(df_input, derived_evals)
 
         # Check required features
         missing_feats = [f for f in req_features if f not in df_evaled.columns]
         if missing_feats:
-            available_cols = list(df_evaled.columns)
-            raise ValueError(
-                f"타겟 '{target_name}' 추론에 필요한 필수 피처 '{', '.join(missing_feats)}'이(가) 입력 데이터에 누락되었습니다.\n"
-                f"[입력 데이터 컬럼 목록]: {available_cols}"
+            available_cols = [str(c) for c in df_evaled.columns]
+            hints = [f"'{m}' -> [추천] {suggest_columns(m, available_cols)}" for m in missing_feats
+                     if suggest_columns(m, available_cols)]
+            raise InputError(
+                f"타겟 '{target_name}' 추론에 필요한 필수 피처 '{', '.join(missing_feats)}'이(가) 입력 데이터에 누락되었습니다. "
+                + (" / ".join(hints) + " " if hints else "")
+                + f"\n[입력 데이터 컬럼 목록]: {available_cols}"
             )
+
+        # Same numeric parsing as training (thousands separators, '-', 'N/A', pandas 2/3 dtypes)
+        X_frame = pd.DataFrame({f: coerce_numeric(df_evaled[f]) for f in req_features}, index=df_evaled.index)
 
         # Data Drift / Out-of-bounds Check (with quantitative severity ratio)
         if feature_stats:
             for fname in req_features:
-                if fname in df_evaled.columns and fname in feature_stats:
+                if fname in feature_stats:
                     f_min = feature_stats[fname].get("min")
                     f_max = feature_stats[fname].get("max")
                     if f_min is not None and f_max is not None:
-                        col_series = pd.to_numeric(df_evaled[fname], errors="coerce").dropna()
+                        col_series = X_frame[fname].dropna()
                         if not col_series.empty:
                             c_min = float(col_series.min())
                             c_max = float(col_series.max())
                             f_range = max(f_max - f_min, 1e-6)
+                            n_out = int(((col_series > f_max) | (col_series < f_min)).sum())
 
                             if c_max > f_max:
                                 over_pct = round(float((c_max - f_max) / f_range * 100), 1)
                                 drift_warnings.append(
-                                    f"피처 '{fname}' 상한 초과 외삽(Extrapolation) 감지: 학습 최대={f_max:.2f}, 입력 최대={c_max:.2f} (범위 대비 +{over_pct}% 초과 이탈)"
+                                    f"피처 '{fname}' 상한 초과 외삽(Extrapolation) 감지: 학습 최대={f_max:.2f}, 입력 최대={c_max:.2f} (범위 대비 +{over_pct}% 초과 이탈, 범위 밖 {n_out}건)"
                                 )
                             if c_min < f_min:
                                 under_pct = round(float((f_min - c_min) / f_range * 100), 1)
                                 drift_warnings.append(
-                                    f"피처 '{fname}' 하한 미달 외삽(Extrapolation) 감지: 학습 최소={f_min:.2f}, 입력 최소={c_min:.2f} (범위 대비 -{under_pct}% 미달 이탈)"
+                                    f"피처 '{fname}' 하한 미달 외삽(Extrapolation) 감지: 학습 최소={f_min:.2f}, 입력 최소={c_min:.2f} (범위 대비 -{under_pct}% 미달 이탈, 범위 밖 {n_out}건)"
                                 )
 
         # Execute Prediction
-        X_infer = df_evaled[req_features].values
-        preds = pipe.predict(X_infer)
+        preds = pipe.predict(X_frame.values)
 
         pred_col_name = f"pred_{target_name}"
         df_result[pred_col_name] = np.round(preds, 4)
@@ -476,47 +359,54 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         saved_file = os.path.join(file_dir, f"{file_stem}_pred_{ts}.csv")
 
     if saved_file:
+        warn_long_path(saved_file)
         os.makedirs(os.path.dirname(saved_file), exist_ok=True)
         ext = os.path.splitext(saved_file)[1].lower()
         if ext in [".xlsx", ".xls"]:
-            df_result.to_excel(saved_file, index=False)
+            if ext == ".xls":
+                saved_file = os.path.splitext(saved_file)[0] + ".xlsx"
+            saved_file = save_with_lock_fallback(
+                saved_file, lambda p: df_result.to_excel(p, index=False), what="결과 Excel 파일")
         else:
-            # CSV Output with Windows Excel CP949 compatibility
-            target_encoding = getattr(args, "encoding", None)
-            if not target_encoding:
-                try:
-                    df_result.to_csv(saved_file, index=False, encoding="cp949")
-                except (UnicodeEncodeError, LookupError):
-                    df_result.to_csv(saved_file, index=False, encoding="utf-8-sig")
-            else:
-                try:
-                    df_result.to_csv(saved_file, index=False, encoding=target_encoding)
-                except Exception:
-                    df_result.to_csv(saved_file, index=False, encoding="utf-8-sig")
+            # CSV Output with Windows Excel CP949 compatibility (utf-8-sig fallback)
+            saved_file = write_csv_excel_compatible(df_result, saved_file, encoding=getattr(args, "encoding", None))
 
     # 5. Build Response
+    drift_warnings = list(dict.fromkeys(drift_warnings))  # same feature is checked once per target
+    for w in drift_warnings:
+        sys.stderr.write(f"[WARN] Extrapolation detected: {w}\n")
+
     targets_brief = ", ".join([f"{t}({predictions_summary[t]['mean_pred']})" for t in predictions_summary])
     preview = (
         f"[추론 완료] 소스: {source_desc} | 타겟 평균 예측값: [{targets_brief}] | "
         f"{'저장: ' + os.path.basename(saved_file) if saved_file else '인라인 반환'}"
+        + (f" | 외삽 경고 {len(drift_warnings)}건" if drift_warnings else "")
     )
     agent_directive = (
-        f"VERIFIED: Prediction completed for {len(model_items)} target(s). "
-        f"{'Output saved to ' + os.path.basename(saved_file) if saved_file else 'Inline predictions returned'}. "
-        f"Next step: report inference results to user."
+        f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
+        + (" with extrapolation warning (inputs outside training range; predictions may be unreliable)" if drift_warnings else "")
+        + ". "
+        + (f"Output saved to {os.path.basename(saved_file)}. " if saved_file else "Inline predictions returned. ")
+        + "Next step: report inference results to user."
     )
 
-    return {
+    result = {
         "status": "ok",
         "source": source_desc,
         "sample_count": len(df_result),
+        "total_rows": len(df_result),
         "targets_predicted": list(predictions_summary.keys()),
         "output_file": saved_file,
         "predictions_summary": predictions_summary,
+        "drift_warning": bool(drift_warnings),
         "drift_warnings": drift_warnings,
+        "extrapolation_warnings": drift_warnings,
         "preview": preview,
         "agent_directive": agent_directive
     }
+    if column_aliases:
+        result["column_aliases"] = column_aliases
+    return result
 
 
 # ==============================================================================
@@ -524,7 +414,7 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
 # ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
+    parser = JsonArgumentParser(
         description="Zero-Office Ultra-Fast Standalone ML Inference Engine (Folder or Specific Files)"
     )
     parser.add_argument(
@@ -545,7 +435,7 @@ def main():
     )
     parser.add_argument(
         "--input", "-i",
-        help="단일/인라인 추론용 입력 데이터 (JSON 문자열 또는 'k1=v1,k2=v2' 형식)"
+        help="단일/인라인 추론용 입력 데이터 ('k1=v1,k2=v2' 형식, JSON 문자열, 또는 .json 파일 경로)"
     )
     parser.add_argument(
         "--out", "-o",
@@ -559,23 +449,9 @@ def main():
     args = parser.parse_args()
 
     if not args.file and not args.input:
-        emit_json_response({
-            "status": "error",
-            "message": "추론을 수행하려면 --file (배치 파일) 또는 --input (인라인 데이터) 중 하나를 지정해야 합니다."
-        })
-        sys.exit(1)
+        parser.error("추론을 수행하려면 --file (배치 파일) 또는 --input (인라인 데이터) 중 하나를 지정해야 합니다.")
 
-    try:
-        res = execute_predict(args)
-        emit_json_response(res)
-    except Exception as e:
-        sys.stderr.write(f"\n[ERROR] {str(e)}\n")
-        emit_json_response({
-            "status": "error",
-            "message": str(e),
-            "agent_directive": f"ERROR: Prediction execution failed ({e}). Check model path or feature names."
-        })
-        sys.exit(1)
+    run_cli(lambda: execute_predict(args), hint="Check model path or feature names.")
 
 
 if __name__ == "__main__":

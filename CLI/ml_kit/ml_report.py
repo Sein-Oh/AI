@@ -12,14 +12,14 @@ while LLM fills in 5 dedicated engineering insight slots (or falls back to built
 import sys
 import os
 
-# Ensure UTF-8 clean terminal output on Windows
-try:
-    if sys.stdout.encoding.lower() != "utf-8":
-        sys.stdout.reconfigure(encoding="utf-8")
-    if sys.stderr.encoding.lower() != "utf-8":
-        sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ml_common import (  # noqa: E402
+    setup_console, run_cli, JsonArgumentParser, InputError,
+    sanitize_filename, normalize_version, load_json_file, strip_unit,
+    save_with_lock_fallback, warn_long_path,
+)
+
+setup_console()
 
 import re
 import json
@@ -37,19 +37,26 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 
-# ==============================================================================
-# 1. Output & Console Formatting (Clean Terminal Principle - No Emojis)
-# ==============================================================================
+def _num(v: Any) -> Optional[float]:
+    """Returns a finite float or None (ledger values may be null/NaN for constant columns)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
 
-def emit_json_response(payload: Dict[str, Any]) -> None:
-    """Prints standard 1-line JSON response to stdout for LLM consumption."""
-    sys.stdout.reconfigure(encoding="utf-8")
-    print(json.dumps(payload, ensure_ascii=False))
 
-
-def sanitize_filename(name: str) -> str:
-    r"""Replaces characters forbidden in Windows filenames (\ / : * ? " < > |)."""
-    return re.sub(r'[\\/*?:"<>|]', "_", str(name))
+def find_high_correlations(corr_data: Dict[str, Dict[str, Any]], exclude: List[str], threshold: float = 0.85) -> List[Tuple[str, str, float]]:
+    """Feature pairs with |r| >= threshold (targets excluded), strongest first."""
+    cols = [c for c in corr_data.keys() if c not in exclude]
+    pairs = []
+    for i, a in enumerate(cols):
+        for b in cols[i + 1:]:
+            r = _num(corr_data.get(a, {}).get(b))
+            if r is not None and abs(r) >= threshold:
+                pairs.append((a, b, r))
+    pairs.sort(key=lambda t: abs(t[2]), reverse=True)
+    return pairs
 
 
 # ==============================================================================
@@ -252,7 +259,7 @@ def load_ml_history_data(data_path: str) -> Tuple[List[Dict[str, Any]], str]:
 
         if not records and os.path.exists(jsonl_path):
             try:
-                with open(json_path, "r", encoding="utf-8") as f:
+                with open(jsonl_path, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             records.append(json.loads(line))
@@ -260,7 +267,7 @@ def load_ml_history_data(data_path: str) -> Tuple[List[Dict[str, Any]], str]:
                 pass
 
     if not records:
-        raise ValueError(f"해당 경로에서 유효한 머신러닝 실험 원장(history.json / history.jsonl)을 찾을 수 없습니다: {abs_path}")
+        raise InputError(f"해당 경로에서 유효한 머신러닝 실험 원장(history.json / history.jsonl)을 찾을 수 없습니다: {abs_path}")
 
     return records, abs_dir
 
@@ -282,28 +289,36 @@ def generate_engineering_word_report(
     records, abs_dir = load_ml_history_data(data_dir)
     slots = slots or {}
 
-    # Filter records containing the target
-    target_records = []
-    for r in records:
-        if target_name in r.get("targets", []):
-            target_records.append(r)
+    # Filter records containing the target (unit-less alias accepted: '생산효율' -> '생산효율(%)')
+    all_targets = list(dict.fromkeys(t for r in records for t in r.get("targets", [])))
+    if target_name not in all_targets and strip_unit(target_name) == target_name.strip():
+        alias_hits = [t for t in all_targets if strip_unit(t) == strip_unit(target_name)]
+        if len(alias_hits) == 1:
+            sys.stderr.write(f"[INFO] 타겟명 자동 매칭: '{target_name}' -> '{alias_hits[0]}'\n")
+            target_name = alias_hits[0]
+    target_records = [r for r in records if target_name in r.get("targets", [])]
 
     if not target_records:
         available_targets = set()
         for r in records:
             available_targets.update(r.get("targets", []))
-        raise ValueError(
+        raise InputError(
             f"타겟 '{target_name}'에 대한 학습 기록을 찾을 수 없습니다.\n"
             f"[원장에 존재하는 타겟 목록]: {sorted(list(available_targets))}"
         )
 
     # Determine Best Record
     best_record = None
+    specified_version = normalize_version(specified_version)
     if specified_version:
-        for r in target_records:
-            if r.get("version") == specified_version:
-                best_record = r
-                break
+        # Last match wins: a re-trained version (--version vN override) appends a newer record
+        matches = [r for r in target_records if normalize_version(r.get("version")) == specified_version]
+        if not matches:
+            raise InputError(
+                f"버전 '{specified_version}'에 타겟 '{target_name}'의 학습 기록이 없습니다. "
+                f"[사용 가능한 버전]: {[r.get('version') for r in target_records]}"
+            )
+        best_record = matches[-1]
     if not best_record:
         # Pick the record where target champion has highest val_r2
         def get_target_r2(rec):
@@ -345,8 +360,9 @@ def generate_engineering_word_report(
 
     slot1_default = (
         f"챔피언 알고리즘({champ_model})의 5-Fold 교차검증 결과, {slot1_r2_text} "
-        f"학습-검증 간 오차 간극(Overfit Gap={overfit_gap:.4f})이 통제되었으며, "
-        f"잔차 왜도(Residual Skewness={residual_skew:.4f})가 정규분포 기준(-0.5 ~ +0.5) 내에 위치하여 특정 운전 구간에 대한 시스템적 예측 편향이 억제됨."
+        + (f"학습-검증 간 오차 간극(Overfit Gap={overfit_gap:.4f})이 통제되었으며, " if overfit_gap <= 0.10 else
+           f"학습-검증 간 오차 간극(Overfit Gap={overfit_gap:.4f})이 0.10을 초과하여 과적합 경향이 있으므로 피처 축소 또는 데이터 추가가 권장되며, ")
+        + f"잔차 왜도(Residual Skewness={residual_skew:.4f})가 정규분포 기준(-0.5 ~ +0.5) 내에 위치하여 특정 운전 구간에 대한 시스템적 예측 편향이 억제됨."
     )
     if abs(residual_skew) > 0.5:
         skew_intro = f"Val R²={val_r2:.4f}의 설명력을 보이나" if val_r2 >= 0.90 else f"Val R²={val_r2:.4f}를 기록하였으며"
@@ -364,17 +380,21 @@ def generate_engineering_word_report(
         + "기여도 1% 미만인 저영향 피처는 노이즈 유입 방지를 위해 차기 실험에서 프루닝(Pruning) 고려 가능."
     )
 
-    is_historical = (specified_version is not None and specified_version != target_records[-1].get("version"))
+    lb_maes = [_num(e.get("mae")) for e in leaderboard if _num(e.get("mae")) is not None]
+    mae_phrase = (f"5대 경쟁 모델 중 최저 MAE({mae:.4f})" if (not lb_maes or mae <= min(lb_maes))
+                  else f"5대 경쟁 모델 중 최고 검증 R²(MAE={mae:.4f})")
+
+    is_historical = (specified_version is not None and specified_version != normalize_version(target_records[-1].get("version")))
     if is_historical:
         slot3_default = (
             f"원장 내 전체 이력 중 사용자가 지정한 {best_ver} 체크포인트를 기준으로 기술 감사를 수행함. "
-            f"해당 회차에서 {champ_model} 파이프라인이 5대 경쟁 모델 중 최저 MAE({mae:.4f}) 및 검증 R²={val_r2:.4f}를 기록함."
+            f"해당 회차에서 {champ_model} 파이프라인이 {mae_phrase} 및 검증 R²={val_r2:.4f}를 기록함."
         )
     else:
         slot3_default = (
             f"초기 베이스라인(v1)부터 최종 체크포인트({best_ver})까지 총 {len(target_records)}회의 반복 엔지니어링을 수행함. "
             f"피처셋 선별 및 파생변수 수식을 통하여 모델 예측 정밀도가 단계적으로 수렴하였으며, "
-            f"최종 회차에서 {champ_model} 파이프라인이 5대 경쟁 모델 중 최저 MAE({mae:.4f})와 최고 일반화 성능을 입증함."
+            f"최종 회차에서 {champ_model} 파이프라인이 {mae_phrase}를 기록하여 챔피언으로 선정됨."
         )
 
     safe_target = sanitize_filename(target_name)
@@ -393,10 +413,20 @@ def generate_engineering_word_report(
                 except Exception:
                     continue
 
-    slot4_default = (
-        f"투입된 독립변수와 타겟 '{target_name}' 간의 2차원 피어슨 상관계수를 전수 검토한 결과, 다중공선성 임계치(|r| >= 0.85)를 초과하는 변수 간 과도한 선형 결합은 발견되지 않음. "
-        f"정규화 스케일러(StandardScaler) 및 파이프라인 정규화 기법을 통해 회귀 계수 왜곡 없이 안정적인 가중치를 산출함."
-    )
+    # Slot 4 must state what the matrix actually shows (not a fixed claim)
+    high_pairs = find_high_correlations(corr_data or {}, exclude=best_record.get("targets", [target_name]))
+    if high_pairs:
+        pair_txt = ", ".join(f"'{a}'-'{b}'(r={r:+.2f})" for a, b, r in high_pairs[:3])
+        slot4_default = (
+            f"투입된 독립변수 간 2차원 피어슨 상관계수를 전수 검토한 결과, 다중공선성 임계치(|r| >= 0.85)를 초과하는 "
+            f"변수 쌍 {len(high_pairs)}건이 확인됨: {pair_txt}. "
+            f"선형 모델(Ridge/ElasticNet) 계수 해석 시 주의가 필요하며, 차기 실험에서 쌍 중 기여도가 낮은 피처의 제외를 검토할 것을 권고함."
+        )
+    else:
+        slot4_default = (
+            f"투입된 독립변수 간 2차원 피어슨 상관계수를 전수 검토한 결과, 다중공선성 임계치(|r| >= 0.85)를 초과하는 변수 간 과도한 선형 결합은 발견되지 않음. "
+            f"정규화 스케일러(StandardScaler) 및 파이프라인 정규화 기법을 통해 회귀 계수 왜곡 없이 안정적인 가중치를 산출함."
+        )
 
     slot5_default = (
         f"배포 모델 서빙 시 입력 피처의 결측치는 내장 SimpleImputer(median)가 실시간 자동 대치함. "
@@ -717,9 +747,10 @@ def generate_engineering_word_report(
                 p.runs[0].font.size = Pt(8.0)
 
                 for c_i, col_name in enumerate(corr_cols):
-                    val_c = corr_data.get(row_name, {}).get(col_name, 0.0)
+                    val_c = _num(corr_data.get(row_name, {}).get(col_name))
                     cell_val = tbl_corr.cell(r_i + 1, c_i + 1)
-                    cell_val.text = f"{val_c:.2f}"
+                    cell_val.text = f"{val_c:.2f}" if val_c is not None else "-"
+                    val_c = val_c if val_c is not None else 0.0
                     set_cell_margins(cell_val, top=60, bottom=60, left=60, right=60)
 
                     p_v = cell_val.paragraphs[0]
@@ -781,14 +812,8 @@ def generate_engineering_word_report(
     out_abs = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_abs), exist_ok=True)
 
-    try:
-        doc.save(out_abs)
-    except PermissionError:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base, ext = os.path.splitext(out_abs)
-        out_abs = f"{base}_{ts}{ext}"
-        doc.save(out_abs)
-        sys.stderr.write(f"[WARN] 원본 파일이 다른 프로그램(Word 등)에서 열려 있어 새 파일명으로 저장되었습니다: {os.path.basename(out_abs)}\n")
+    warn_long_path(out_abs)
+    out_abs = save_with_lock_fallback(out_abs, doc.save, what="Word 보고서")
 
     return {
         "status": "ok",
@@ -822,8 +847,84 @@ def generate_engineering_word_report(
 # 5. CLI Entry Point
 # ==============================================================================
 
+def build_reports(args: argparse.Namespace) -> Dict[str, Any]:
+    # Parse slots if provided (file written by Notepad/PowerShell: UTF-8, UTF-8 BOM, UTF-16, CP949)
+    slot_dict: Dict[str, Any] = {}
+    if args.slots:
+        s_raw = args.slots.strip()
+        try:
+            if os.path.isfile(s_raw):
+                slot_dict = load_json_file(s_raw)
+            elif s_raw.startswith("{"):
+                slot_dict = json.loads(s_raw)
+            else:
+                raise InputError("--slots는 JSON 파일 경로 또는 '{'로 시작하는 JSON 문자열이어야 합니다.")
+            if not isinstance(slot_dict, dict):
+                raise InputError("슬롯 JSON은 객체({...})여야 합니다.")
+        except (InputError, ValueError) as e:
+            sys.stderr.write(f"[WARN] 슬롯 JSON 파싱 실패 ({e}) -> 내장 소견 사용\n")
+            slot_dict = {}
+
+    records, _abs_dir = load_ml_history_data(args.data_dir)
+    version = normalize_version(args.version)
+
+    def version_targets() -> List[str]:
+        if version:
+            v_recs = [r for r in records if normalize_version(r.get("version")) == version]
+            if not v_recs:
+                raise InputError(
+                    f"원장에 버전 '{version}'이(가) 없습니다. [사용 가능한 버전]: "
+                    f"{list(dict.fromkeys(r.get('version') for r in records))}"
+                )
+            return v_recs[-1].get("targets", [])
+        return records[-1].get("targets", [])
+
+    # Determine targets to generate
+    t_raw = (args.target or "").strip()
+    if not t_raw or t_raw.lower() == "all":
+        targets_to_generate = version_targets()
+    else:
+        targets_to_generate = [t.strip() for t in t_raw.split(",") if t.strip()]
+
+    if not targets_to_generate:
+        raise InputError("원장(history)에서 보고서를 생성할 타겟 변수명을 찾을 수 없습니다.")
+
+    results = []
+    for t_name in targets_to_generate:
+        # Custom out path applies only when a single report is generated
+        out_target_path = args.out if (len(targets_to_generate) == 1 and args.out) else None
+        results.append(generate_engineering_word_report(
+            target_name=t_name,
+            data_dir=args.data_dir,
+            out_path=out_target_path,
+            slots=slot_dict,
+            specified_version=version
+        ))
+
+    if len(results) == 1:
+        return results[0]
+    return {
+        "status": "ok",
+        "version": version or "best",
+        "target_count": len(results),
+        "reports": [
+            {
+                "target": r["target"],
+                "report_file": r["report_file"],
+                "val_r2": r["metrics"]["val_r2"],
+                "champion": r["metrics"]["champion_model"]
+            }
+            for r in results
+        ],
+        "agent_directive": (
+            f"VERIFIED: Batch generated {len(results)} engineering Word reports for version "
+            f"'{version or 'best'}' across targets: {', '.join(r['target'] for r in results)}."
+        )
+    }
+
+
 def main():
-    parser = argparse.ArgumentParser(
+    parser = JsonArgumentParser(
         description="Standalone Engineering Audit & Technical Verification Word Report Generator"
     )
     parser.add_argument(
@@ -832,7 +933,7 @@ def main():
     )
     parser.add_argument(
         "--target", "-t",
-        help="보고서를 생성할 대상 타겟 변수명 (생략 시 원장의 첫 번째 타겟 자동 선택)"
+        help="보고서를 생성할 대상 타겟 변수명 (생략 또는 'all' 시 해당 버전의 전체 타겟, 콤마로 다중 지정)"
     )
     parser.add_argument(
         "--out", "-o",
@@ -844,112 +945,11 @@ def main():
     )
     parser.add_argument(
         "--version", "-v",
-        help="보고서의 기준이 될 특정 최적 버전 지정 (생략 시 최고 Val R2 기록 버전 자동 선택)"
+        help="보고서의 기준이 될 특정 버전 지정 (예: v2 또는 2. 생략 시 최고 Val R2 기록 버전 자동 선택)"
     )
 
     args = parser.parse_args()
-
-    # Parse slots if provided
-    slot_dict = {}
-    if args.slots:
-        s_raw = args.slots.strip()
-        if os.path.isfile(s_raw):
-            try:
-                with open(s_raw, "r", encoding="utf-8") as f:
-                    slot_dict = json.load(f)
-            except Exception as e:
-                sys.stderr.write(f"[WARN] 슬롯 JSON 파일 파싱 실패 ({e}) -> 내장 소견 사용\n")
-        elif s_raw.startswith("{"):
-            try:
-                slot_dict = json.loads(s_raw)
-            except Exception as e:
-                sys.stderr.write(f"[WARN] 슬롯 JSON 문자열 파싱 실패 ({e}) -> 내장 소견 사용\n")
-
-    # Resolve records
-    try:
-        records, abs_dir = load_ml_history_data(args.data_dir)
-    except Exception as e:
-        emit_json_response({
-            "status": "error",
-            "message": str(e),
-            "agent_directive": f"ERROR: Cannot load history data ({e})."
-        })
-        sys.exit(1)
-
-    # Determine targets to generate
-    targets_to_generate: List[str] = []
-    if args.target:
-        t_raw = args.target.strip()
-        if t_raw.lower() == "all":
-            if args.version:
-                v_rec = next((r for r in records if r.get("version") == args.version), None)
-                if v_rec:
-                    targets_to_generate = v_rec.get("targets", [])
-            if not targets_to_generate:
-                targets_to_generate = records[-1].get("targets", [])
-        elif "," in t_raw:
-            targets_to_generate = [t.strip() for t in t_raw.split(",") if t.strip()]
-        else:
-            targets_to_generate = [t_raw]
-    else:
-        # If target not specified, look at the designated version (or last record)
-        if args.version:
-            v_rec = next((r for r in records if r.get("version") == args.version), None)
-            if v_rec:
-                targets_to_generate = v_rec.get("targets", [])
-        if not targets_to_generate:
-            targets_to_generate = records[-1].get("targets", [])
-
-    if not targets_to_generate:
-        emit_json_response({
-            "status": "error",
-            "message": "원장(history)에서 보고서를 생성할 타겟 변수명을 찾을 수 없습니다."
-        })
-        sys.exit(1)
-
-    # If single target and custom out path was given, use it directly
-    try:
-        results = []
-        for t_name in targets_to_generate:
-            out_target_path = args.out if (len(targets_to_generate) == 1 and args.out) else None
-            res = generate_engineering_word_report(
-                target_name=t_name,
-                data_dir=args.data_dir,
-                out_path=out_target_path,
-                slots=slot_dict,
-                specified_version=args.version
-            )
-            results.append(res)
-
-        if len(results) == 1:
-            emit_json_response(results[0])
-        else:
-            emit_json_response({
-                "status": "ok",
-                "version": args.version or "best",
-                "target_count": len(results),
-                "reports": [
-                    {
-                        "target": r["target"],
-                        "report_file": r["report_file"],
-                        "val_r2": r["metrics"]["val_r2"],
-                        "champion": r["metrics"]["champion_model"]
-                    }
-                    for r in results
-                ],
-                "agent_directive": (
-                    f"VERIFIED: Batch generated {len(results)} engineering Word reports for version "
-                    f"'{args.version or 'best'}' across targets: {', '.join(targets_to_generate)}."
-                )
-            })
-    except Exception as e:
-        sys.stderr.write(f"\n[ERROR] {str(e)}\n")
-        emit_json_response({
-            "status": "error",
-            "message": str(e),
-            "agent_directive": f"ERROR: Engineering report generation failed ({e}). Check data_dir or target name."
-        })
-        sys.exit(1)
+    run_cli(lambda: build_reports(args), hint="Check data_dir, target name or version.")
 
 
 if __name__ == "__main__":
