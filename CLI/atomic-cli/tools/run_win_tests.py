@@ -930,6 +930,480 @@ def test_H(ctx):
 
 
 # ---------------------------------------------------------------------------
+# I. 기능 확대 (모두 자동 판정: 결과를 COM/파일로 다시 읽어 확인)
+# ---------------------------------------------------------------------------
+XL_TYPES = {"column": 51, "pie": 5, "scatter": -4169, "scatter_lines": 75}
+
+
+def write_csv(path, rows):
+    import csv
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows(rows)
+    return path
+
+
+def make_png(path, w_px=600, h_px=300):
+    """가로세로 2:1 PNG (그림 비율 유지 확인용)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(w_px / 100, h_px / 100), dpi=100)
+    plt.plot([0, 1, 2, 3], [0, 1, 0, 1])
+    fig.savefig(path, dpi=100)
+    plt.close(fig)
+    return path
+
+
+def xl_sheet(name):
+    return com_retry(lambda: xl_wb("A.xlsx").Worksheets(name))
+
+
+def sheet_names():
+    return com_retry(lambda: [s.Name for s in xl_wb("A.xlsx").Worksheets])
+
+
+def chart_types(sheet):
+    def _do():
+        ws = xl_sheet(sheet)
+        return {ws.ChartObjects(i).Name: int(ws.ChartObjects(i).Chart.ChartType)
+                for i in range(1, ws.ChartObjects().Count + 1)}
+    return com_retry(_do)
+
+
+def ppt_last_slide():
+    prs = pp_prs("A.pptx")
+    return prs.Slides(prs.Slides.Count)
+
+
+def slide_title(slide):
+    for i in range(1, slide.Shapes.Count + 1):
+        sp = slide.Shapes(i)
+        if sp.Type == 14 and sp.HasTextFrame:
+            return sp.TextFrame.TextRange.Text
+    return ""
+
+
+def inside_slide(sp):
+    prs = pp_prs("A.pptx")
+    sw, sh = prs.PageSetup.SlideWidth, prs.PageSetup.SlideHeight
+    return sp.Left >= -0.5 and sp.Top >= -0.5 and sp.Left + sp.Width <= sw + 0.5 and sp.Top + sp.Height <= sh + 0.5
+
+
+def test_I(ctx):
+    csv_main = write_csv(ctx.path("i_data.csv"), [["품목", "수량", "금액"], ["사과", 3, 1500], ["배", 2, 4000]])
+    csv_more = write_csv(ctx.path("i_more.csv"), [["품목", "수량", "금액"], ["포도", 5, 120]])
+    png = make_png(ctx.path("i_img.png"))
+
+    def ok_(d):
+        return (d or {}).get("status") == "ok"
+
+    # --- 엑셀 쓰기/읽기 ------------------------------------------------------
+    def i1():
+        activate_xl("A.xlsx", "Sheet1")
+        d, c, r, e = run_cli("excel.py", "write", "--sheet", "I_DATA", "--range", "A1", "--file", csv_main)
+        d2, c2, r2, e2 = run_cli("excel.py", "write", "--sheet", "I_DATA", "--range", "A1", "--file", csv_more, "--append")
+        vals = com_retry(lambda: xl_sheet("I_DATA").Range("A1:C5").Value)
+        expected = (("품목", "수량", "금액"), ("사과", 3.0, 1500.0), ("배", 2.0, 4000.0), ("포도", 5.0, 120.0), (None, None, None))
+        record(ctx, "I1", "엑셀 CSV 쓰기 + --append(같은 머리글 생략), 숫자는 숫자로", ok_(d) and ok_(d2) and vals == expected,
+               f"A1:C5={vals}", d2, c2, r2, e2)
+
+    def i2():
+        d, c, r, e = run_cli("excel.py", "write", "--sheet", "I_DATA", "--range", "F1",
+                             "--values", '[["x","y"],[1,2],[2,4],[3,1],[4,3]]')
+        vals = com_retry(lambda: xl_sheet("I_DATA").Range("F1:G5").Value)
+        ok = ok_(d) and vals == (("x", "y"), (1.0, 2.0), (2.0, 4.0), (3.0, 1.0), (4.0, 3.0))
+        record(ctx, "I2", "엑셀 --values JSON 쓰기", ok, f"F1:G5={vals}", d, c, r, e)
+
+    def i3():
+        d, c, r, e = run_cli("excel.py", "read", "--sheet", "I_DATA", "--search", "포도")
+        text = json.dumps(d or {}, ensure_ascii=False)
+        d2, c2, r2, e2 = run_cli("excel.py", "read", "--sheet", "I_DATA", "--range", "A1:C4", "--save")
+        out = (d2 or {}).get("output_file", "")
+        first = ""
+        if out and os.path.exists(out):
+            with open(out, encoding="utf-8-sig") as f:
+                first = f.readline().strip()
+        active = com_retry(lambda: xl_wb("A.xlsx").ActiveSheet.Name)
+        ok = ok_(d) and (d or {}).get("total_matches", 0) >= 1 and "A4" in text and ok_(d2) and first == "품목,수량,금액"
+        record(ctx, "I3", "엑셀 --search 셀 주소 + --save CSV", ok,
+               f"일치={(d or {}).get('total_matches')}, CSV 첫 줄={first!r}, 읽은 뒤 활성 시트={active}", d2, c2, r2, e2)
+
+    def i4():
+        run_cli("excel.py", "write", "--sheet", "I_BIG", "--range", "A1:A300", "--formula", "=ROW()")
+        d, c, r, e = run_cli("excel.py", "read", "--sheet", "I_BIG", "--range", "A1:A300")
+        nc = (d or {}).get("next_commands") or []
+        rows = len((d or {}).get("values") or [])
+        ok = ok_(d) and d.get("truncated") is True and rows < 300 and nc and "A201" in nc[0].get("command", "")
+        record(ctx, "I4", "엑셀 300행 읽기 -> 잘림 + 이어 읽기 명령", ok,
+               f"표시 {rows}행, next={nc[0].get('command', '')[-60:] if nc else None}", d, c, r, e)
+
+    # --- 엑셀 차트 -------------------------------------------------------------
+    def i5():
+        d1 = run_cli("excel.py", "chart", "--sheet", "I_DATA", "--range", "A1:C3", "--type", "column", "--title", "I 막대")[0]
+        d2 = run_cli("excel.py", "chart", "--sheet", "I_DATA", "--range", "A1:B4", "--type", "pie", "--title", "I 원형")[0]
+        d3, c, r, e = run_cli("excel.py", "chart", "--sheet", "I_DATA", "--range", "F1:G5", "--type", "scatter", "--title", "I 분산")
+        types = chart_types("I_DATA")
+        want = {"I 막대": XL_TYPES["column"], "I 원형": XL_TYPES["pie"], "I 분산": XL_TYPES["scatter"]}
+        extra = ""
+        if "사인" in sheet_names():
+            sine = chart_types("사인")
+            if "사인 2주기" in sine:
+                types["사인 2주기"] = sine["사인 2주기"]
+                want["사인 2주기"] = XL_TYPES["scatter_lines"]
+        # 분산형은 첫 열이 x값이어야 함: 계열 1개 (x가 계열로 그려지면 2개)
+        series = {"I 분산": com_retry(lambda: int(xl_sheet("I_DATA").ChartObjects("I 분산").Chart.SeriesCollection().Count))}
+        if "사인 2주기" in want:
+            series["사인 2주기"] = com_retry(lambda: int(xl_sheet("사인").ChartObjects("사인 2주기").Chart.SeriesCollection().Count))
+        ok = all(ok_(x) for x in (d1, d2, d3)) and all(types.get(k) == v for k, v in want.items()) \
+            and all(n == 1 for n in series.values())
+        record(ctx, "I5", "차트 종류 (막대/원형/분산형, 분산형 선) + 분산형 x축", ok,
+               f"실제 ChartType={types}, 기대={want}{extra}, 분산형 계열 수={series} (기대 1)", d3, c, r, e)
+
+    def i6():
+        d, c, r, e = run_cli("excel.py", "chart", "--action", "list", "--sheet", "I_DATA")
+        listed = [x.get("name") for x in (d or {}).get("charts", [])]
+        dd, dc, dr, de = run_cli("excel.py", "chart", "--action", "delete", "--sheet", "I_DATA", "--name", "I 원형")
+        after = set(chart_types("I_DATA"))
+        bad, bc, br, be = run_cli("excel.py", "chart", "--action", "delete", "--sheet", "I_DATA", "--name", "없는차트")
+        after2 = set(chart_types("I_DATA"))
+        ok = ok_(d) and {"I 막대", "I 원형", "I 분산"} <= set(listed) and ok_(dd) and after == {"I 막대", "I 분산"} \
+            and (bad or {}).get("status") == "error" and after2 == after
+        record(ctx, "I6", "차트 목록 / 이름으로 삭제 / 없는 이름은 삭제 안 함", ok,
+               f"목록={listed}, 삭제 후={sorted(after)}, 없는이름 삭제={(bad or {}).get('status')} 후={sorted(after2)}",
+               bad, bc, br, be)
+
+    # --- 엑셀 서식/시트/범위 ---------------------------------------------------
+    def i7():
+        d1 = run_cli("excel.py", "style", "--sheet", "I_DATA", "--range", "C2:C4", "--highlight", ">=1000:pink")[0]
+        d2 = run_cli("excel.py", "style", "--sheet", "I_DATA", "--range", "C2:C4", "--number-format", "#,##0")[0]
+        rng = lambda: xl_sheet("I_DATA").Range("C2:C4")  # noqa: E731
+        fc = com_retry(lambda: int(rng().FormatConditions.Count))
+        nf = com_retry(lambda: str(xl_sheet("I_DATA").Range("C2").NumberFormat))
+        d3, c, r, e = run_cli("excel.py", "style", "--sheet", "I_DATA", "--range", "C2:C4", "--clear")
+        fc2 = com_retry(lambda: int(rng().FormatConditions.Count))
+        ok = ok_(d1) and ok_(d2) and ok_(d3) and fc >= 1 and nf == "#,##0" and fc2 == 0
+        record(ctx, "I7", "조건부 강조 / 숫자 서식 / 서식 지우기", ok,
+               f"조건부 서식 {fc}개 -> 지운 뒤 {fc2}개, 숫자 서식={nf!r}", d3, c, r, e)
+
+    def i8():
+        run_cli("excel.py", "sheet", "--action", "add", "--name", "I_TMP")
+        names0 = sheet_names()
+        d1 = run_cli("excel.py", "sheet", "--action", "rename", "--name", "I_TMP", "--new-name", "I_TMP2")[0]
+        d2 = run_cli("excel.py", "sheet", "--action", "copy", "--name", "I_TMP2", "--new-name", "I_TMP3")[0]
+        names1 = sheet_names()
+        d3 = run_cli("excel.py", "sheet", "--action", "delete", "--name", "I_TMP2")[0]
+        d4, c, r, e = run_cli("excel.py", "sheet", "--action", "delete", "--name", "I_TMP3")
+        names2 = sheet_names()
+        ok = all(ok_(x) for x in (d1, d2, d3, d4)) and "I_TMP2" in names1 and "I_TMP3" in names1 \
+            and "I_TMP" not in names1 and not {"I_TMP2", "I_TMP3"} & set(names2)
+        pos = names0.index("I_TMP") + 1 if "I_TMP" in names0 else None
+        record(ctx, "I8", "시트 이름변경 / 복사 / 삭제", ok,
+               f"추가된 시트 위치 {pos}/{len(names0)}번째, 복사 후 {names1}", d4, c, r, e)
+
+    def i9():
+        d1 = run_cli("excel.py", "range", "--action", "copy", "--sheet", "I_DATA", "--range", "A1:C3", "--dest", "A20")[0]
+        copied = com_retry(lambda: xl_sheet("I_DATA").Range("A20:C22").Value)
+        src = com_retry(lambda: xl_sheet("I_DATA").Range("A1:C3").Value)
+        d2 = run_cli("excel.py", "range", "--action", "hide", "--sheet", "I_DATA", "--range", "E1")[0]
+        hidden = com_retry(lambda: bool(xl_sheet("I_DATA").Columns(5).Hidden))
+        run_cli("excel.py", "range", "--action", "unhide", "--sheet", "I_DATA", "--range", "E1")
+        shown = not com_retry(lambda: bool(xl_sheet("I_DATA").Columns(5).Hidden))
+        d3 = run_cli("excel.py", "range", "--action", "freeze", "--sheet", "I_DATA", "--range", "A2")[0]
+        frozen = com_retry(lambda: (bool(xl_app().ActiveWindow.FreezePanes), int(xl_app().ActiveWindow.SplitRow)))
+        d4, c, r, e = run_cli("excel.py", "range", "--action", "unfreeze", "--sheet", "I_DATA")
+        unfrozen = not com_retry(lambda: bool(xl_app().ActiveWindow.FreezePanes))
+        ok = all(ok_(x) for x in (d1, d2, d3, d4)) and copied == src and hidden and shown and frozen == (True, 1) and unfrozen
+        record(ctx, "I9", "범위 복사 / 열 숨김·해제 / 틀 고정·해제", ok,
+               f"복사 일치={copied == src}, 숨김={hidden}, 해제={shown}, 고정(FreezePanes,SplitRow)={frozen}, 해제={unfrozen}",
+               d4, c, r, e)
+
+    # --- 워드 -------------------------------------------------------------------
+    def i10():
+        doc = wd_doc("A.docx")
+        com_retry(lambda: doc.Activate())
+        n0 = com_retry(lambda: doc.InlineShapes.Count)
+        d, c, r, e = run_cli("word.py", "write", "--image", png)
+        doc = wd_doc("A.docx")
+        n1 = com_retry(lambda: doc.InlineShapes.Count)
+        shp = com_retry(lambda: doc.InlineShapes(n1))
+        ratio = com_retry(lambda: shp.Width / shp.Height)
+        ok = ok_(d) and n1 == n0 + 1 and abs(ratio - 2.0) < 0.05
+        record(ctx, "I10", "워드 그림 넣기 (비율 유지)", ok, f"그림 {n0}->{n1}, 가로/세로={ratio:.3f} (기대 2.0)", d, c, r, e)
+
+    def i11():
+        doc = wd_doc("A.docx")
+        t0 = com_retry(lambda: doc.Tables.Count)
+        d, c, r, e = run_cli("word.py", "write", "--file", csv_main)
+        doc = wd_doc("A.docx")
+        t1 = com_retry(lambda: doc.Tables.Count)
+        shape = com_retry(lambda: (doc.Tables(t1).Rows.Count, doc.Tables(t1).Columns.Count)) if t1 else None
+        cell = com_retry(lambda: doc.Tables(t1).Cell(2, 1).Range.Text.rstrip("\r\x07")) if t1 else None
+        ok = ok_(d) and t1 == t0 + 1 and shape == (3, 3) and cell == "사과"
+        record(ctx, "I11", "워드 CSV -> 표", ok, f"표 {t0}->{t1}, 크기={shape}, (2,1)={cell!r}", d, c, r, e)
+
+    def i12():
+        d1 = run_cli("word.py", "write", "--text", "앞에 넣은 문장", "--anchor", "두 번째 문단", "--pos", "before")[0]
+        paras = com_retry(lambda: [p.Range.Text.strip() for p in wd_doc("A.docx").Paragraphs])
+        idx_new = next((i for i, p in enumerate(paras) if p == "앞에 넣은 문장"), -1)
+        idx_anchor = next((i for i, p in enumerate(paras) if p.startswith("두 번째 문단")), -1)
+        d2, c, r, e = run_cli("word.py", "write", "--text", "바꾼 문장", "--anchor", "앞에 넣은 문장", "--pos", "replace")
+        paras2 = com_retry(lambda: [p.Range.Text.strip() for p in wd_doc("A.docx").Paragraphs])
+        ok = ok_(d1) and ok_(d2) and idx_new >= 0 and idx_new == idx_anchor - 1 \
+            and "앞에 넣은 문장" not in paras2 and "바꾼 문장" in paras2
+        record(ctx, "I12", "워드 앵커 앞에 넣기 / 앵커 단락 바꾸기", ok,
+               f"새 단락 {idx_new}번, 앵커 {idx_anchor}번, 바꾼 뒤 '바꾼 문장' 있음={'바꾼 문장' in paras2}", d2, c, r, e)
+
+    def i13():
+        d1 = run_cli("word.py", "write", "--text", "소제목 테스트", "--heading", "2")[0]
+        level = com_retry(lambda: next((int(p.OutlineLevel) for p in wd_doc("A.docx").Paragraphs
+                                        if p.Range.Text.strip() == "소제목 테스트"), None))
+        d2 = run_cli("word.py", "write", "--page-break")[0]
+        has_break = "\x0c" in com_retry(lambda: wd_doc("A.docx").Content.Text)
+        d3, c, r, e = run_cli("word.py", "write", "--toc")
+        toc = com_retry(lambda: wd_doc("A.docx").TablesOfContents.Count)
+        ok = ok_(d1) and ok_(d2) and ok_(d3) and level == 2 and has_break and toc >= 1
+        record(ctx, "I13", "워드 제목 수준 / 쪽 나누기 / 목차", ok,
+               f"개요 수준={level}, 쪽 나누기={has_break}, 목차 {toc}개", d3, c, r, e)
+
+    def i14():
+        doc = wd_doc("A.docx")
+        com_retry(lambda: setattr(doc.Sections(1).Footers(1).Range, "Text", "바닥글 원본표시"))
+        run_cli("word.py", "write", "--text", "굵게바꿀말 사과 포도")
+        d1 = run_cli("word.py", "replace", "--find", "굵게바꿀말", "--replace", "굵은말", "--bold")[0]
+        d2 = run_cli("word.py", "replace", "--map", '{"사과 포도":"배 귤"}')[0]
+        d3, c, r, e = run_cli("word.py", "replace", "--find", "원본표시", "--replace", "변경됨")
+        doc = wd_doc("A.docx")
+        text = com_retry(lambda: doc.Content.Text)
+
+        def bold_of(word):
+            rng = doc.Content
+            f = rng.Find
+            f.ClearFormatting()
+            return bool(f.Execute(FindText=word, MatchCase=True)) and int(rng.Bold) == -1
+        bold = com_retry(lambda: bold_of("굵은말"))
+        footer = com_retry(lambda: doc.Sections(1).Footers(1).Range.Text.strip())
+        ok = ok_(d1) and ok_(d2) and ok_(d3) and "굵은말 배 귤" in text and bold and footer == "바닥글 변경됨"
+        record(ctx, "I14", "워드 치환 (굵게 / --map / 바닥글 안)", ok,
+               f"굵게={bold}, map 결과 있음={'굵은말 배 귤' in text}, 바닥글={footer!r}", d3, c, r, e)
+
+    # --- PPT ----------------------------------------------------------------
+    def i15():
+        n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        d, c, r, e = run_cli("ppt.py", "write", "--slide", "new", "--title", "그림 슬라이드", "--image", png)
+        s = com_retry(ppt_last_slide)
+        pics = com_retry(lambda: [s.Shapes(i) for i in range(1, s.Shapes.Count + 1) if s.Shapes(i).Type == 13])
+        info = com_retry(lambda: [(p.Width / p.Height, inside_slide(p)) for p in pics])
+        ok = ok_(d) and com_retry(lambda: pp_prs("A.pptx").Slides.Count) == n0 + 1 and len(info) == 1 \
+            and abs(info[0][0] - 2.0) < 0.05 and info[0][1]
+        record(ctx, "I15", "PPT 그림 슬라이드 (비율 유지, 슬라이드 안)", ok, f"그림(비율, 안쪽)={info}", d, c, r, e)
+
+    def i16():
+        d, c, r, e = run_cli("ppt.py", "write", "--slide", "new", "--title", "카드", "--cards", "속도:빠름|품질:높음|비용:낮음")
+        s = com_retry(ppt_last_slide)
+        cards = com_retry(lambda: [(s.Shapes(i).TextFrame.TextRange.Text.split("\r")[0], inside_slide(s.Shapes(i)))
+                                   for i in range(1, s.Shapes.Count + 1) if s.Shapes(i).Type == 1])
+        ok = ok_(d) and [x[0] for x in cards] == ["속도", "품질", "비용"] and all(x[1] for x in cards)
+        record(ctx, "I16", "PPT 카드 3개 (슬라이드 안)", ok, f"카드={cards}", d, c, r, e)
+
+    def i17():
+        md = ctx.path("i_slides.md")
+        with open(md, "w", encoding="utf-8") as f:
+            f.write("# 첫째 장\n\n- 가\n- 나\n\n# 둘째 장\n\n본문 문장\n")
+        n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        d, c, r, e = run_cli("ppt.py", "write", "--file", md)
+        prs = pp_prs("A.pptx")
+        n1 = com_retry(lambda: prs.Slides.Count)
+        titles = com_retry(lambda: [slide_title(prs.Slides(i)) for i in range(n0 + 1, n1 + 1)])
+        ok = ok_(d) and titles == ["첫째 장", "둘째 장"]
+        record(ctx, "I17", "PPT 마크다운 -> 제목마다 새 슬라이드", ok, f"새 슬라이드 제목={titles}", d, c, r, e)
+
+    def i18():
+        rows = [["품목", "값"]] + [[f"품목{i:02d}", i] for i in range(1, 31)]
+        long_csv = write_csv(ctx.path("i_long.csv"), rows)
+        n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        d, c, r, e = run_cli("ppt.py", "write", "--slide", "new", "--file", long_csv)
+        prs = pp_prs("A.pptx")
+        n1 = com_retry(lambda: prs.Slides.Count)
+
+        def tables():
+            out = []
+            for i in range(n0 + 1, n1 + 1):
+                s = prs.Slides(i)
+                for j in range(1, s.Shapes.Count + 1):
+                    sp = s.Shapes(j)
+                    if sp.HasTable:
+                        t = sp.Table
+                        out.append((t.Cell(1, 1).Shape.TextFrame.TextRange.Text, t.Rows.Count - 1, inside_slide(sp)))
+            return out
+        tbls = com_retry(tables)
+        ok = ok_(d) and len(tbls) >= 2 and all(t[0] == "품목" and t[2] for t in tbls) and sum(t[1] for t in tbls) == 30
+        record(ctx, "I18", "PPT 긴 CSV 표 -> 여러 슬라이드, 머리글 반복", ok,
+               f"(머리글, 데이터 행, 안쪽)={tbls}", d, c, r, e)
+
+    def i19():
+        prs = pp_prs("A.pptx")
+        n0 = com_retry(lambda: prs.Slides.Count)
+        t1 = com_retry(lambda: slide_title(prs.Slides(1)))
+        d1 = run_cli("ppt.py", "slide", "--action", "duplicate", "--slide", "1")[0]
+        n1 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        t2 = com_retry(lambda: slide_title(pp_prs("A.pptx").Slides(2)))
+        last_title = com_retry(lambda: slide_title(ppt_last_slide()))
+        d2 = run_cli("ppt.py", "slide", "--action", "move", "--slide", str(n1), "--to", "1")[0]
+        moved = com_retry(lambda: slide_title(pp_prs("A.pptx").Slides(1)))
+        run_cli("ppt.py", "slide", "--action", "move", "--slide", "1", "--to", str(n1))
+        d3 = run_cli("ppt.py", "slide", "--action", "delete", "--slide", "2")[0]
+        n2 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        d4, c, r, e = run_cli("ppt.py", "slide", "--action", "list")
+        listed = len((d4 or {}).get("slides", []))
+        ok = all(ok_(x) for x in (d1, d2, d3, d4)) and n1 == n0 + 1 and t2 == t1 and moved == last_title \
+            and n2 == n0 and listed == n0
+        record(ctx, "I19", "PPT 슬라이드 복제 / 이동 / 삭제 / 목록", ok,
+               f"장수 {n0}->{n1}->{n2}, 복제 제목 일치={t2 == t1}, 이동 후 1번={moved!r}, 목록 {listed}장", d4, c, r, e)
+
+    def i20():
+        prs = pp_prs("A.pptx")
+
+        def make_group():
+            s = prs.Slides.Add(prs.Slides.Count + 1, 12)
+            a = s.Shapes.AddTextbox(1, 50, 50, 200, 40)
+            a.TextFrame.TextRange.Text = "그룹안글자"
+            b = s.Shapes.AddTextbox(1, 50, 120, 200, 40)
+            b.TextFrame.TextRange.Text = "옆 상자"
+            s.Shapes.Range([a.Name, b.Name]).Group()
+            return prs.Slides.Count
+        gslide = com_retry(make_group)
+        d, c, r, e = run_cli("ppt.py", "replace", "--map", '{"품목07":"변경07","그룹안글자":"그룹바뀜"}')
+        group_text = com_retry(lambda: [prs.Slides(gslide).Shapes(1).GroupItems(i).TextFrame.TextRange.Text
+                                        for i in range(1, prs.Slides(gslide).Shapes(1).GroupItems.Count + 1)])
+
+        def table_hit():
+            for i in range(1, prs.Slides.Count + 1):
+                s = prs.Slides(i)
+                for j in range(1, s.Shapes.Count + 1):
+                    sp = s.Shapes(j)
+                    if sp.HasTable:
+                        t = sp.Table
+                        for rr in range(1, t.Rows.Count + 1):
+                            if t.Cell(rr, 1).Shape.TextFrame.TextRange.Text == "변경07":
+                                return True
+            return False
+        hit = com_retry(table_hit)
+        ok = ok_(d) and hit and "그룹바뀜" in group_text
+        record(ctx, "I20", "PPT 치환 (표 셀, 그룹 도형 안)", ok, f"표 셀 변경={hit}, 그룹 글자={group_text}", d, c, r, e)
+
+    def i21():
+        prs = pp_prs("A.pptx")
+        full = com_retry(lambda: prs.FullName)
+        n = com_retry(lambda: prs.Slides.Count)
+        d, c, r, e = run_cli("ppt.py", "export", "--save", "i_copy.pptx")
+        out = (d or {}).get("output_file", "")
+        count = None
+        if out and os.path.exists(out):
+            import pptx
+            count = len(pptx.Presentation(out).slides)
+        full_after = com_retry(lambda: pp_prs("A.pptx").FullName)
+        ok = ok_(d) and count == n and full_after == full
+        record(ctx, "I21", "PPT .pptx 사본 저장 (원본 경로 그대로)", ok,
+               f"사본 장수={count} (원본 {n}), 원본 경로 유지={full_after == full}", d, c, r, e)
+
+    # --- 앱 간 전달 -------------------------------------------------------------
+    def i22():
+        activate_xl("A.xlsx", "I_DATA")
+        doc = wd_doc("A.docx")
+        t0 = com_retry(lambda: doc.Tables.Count)
+        n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        d, c, r, e = run_cli("office.py", "transfer", "--from", "excel", "--sheet", "I_DATA", "--range", "A1:C4", "--to", "word,ppt")
+        doc = wd_doc("A.docx")
+        t1 = com_retry(lambda: doc.Tables.Count)
+        wcell = com_retry(lambda: doc.Tables(t1).Cell(4, 1).Range.Text.rstrip("\r\x07")) if t1 > t0 else None
+
+        def ppt_cell():
+            prs = pp_prs("A.pptx")
+            for i in range(n0, prs.Slides.Count + 1):
+                s = prs.Slides(i)
+                for j in range(1, s.Shapes.Count + 1):
+                    if s.Shapes(j).HasTable:
+                        t = s.Shapes(j).Table
+                        if t.Rows.Count >= 4 and t.Cell(1, 1).Shape.TextFrame.TextRange.Text == "품목":
+                            return t.Cell(4, 1).Shape.TextFrame.TextRange.Text
+            return None
+        pcell = com_retry(ppt_cell)
+        ok = ok_(d) and t1 == t0 + 1 and wcell == "포도" and pcell == "포도"
+        record(ctx, "I22", "엑셀 범위 -> 워드/PPT 표", ok, f"워드 표 {t0}->{t1} (4,1)={wcell!r}, PPT 표 (4,1)={pcell!r}",
+               d, c, r, e)
+
+    def i23():
+        before = set(sheet_names())
+        d, c, r, e = run_cli("office.py", "transfer", "--from", "word", "--what", "table", "--table", "1", "--to", "excel")
+        new = [s for s in sheet_names() if s not in before]
+        vals = com_retry(lambda: xl_sheet(new[0]).Range("A1:C2").Value) if new else None
+        ok = ok_(d) and len(new) == 1 and vals == (("품목", "수량", "금액"), ("사과", 3.0, 1500.0))
+        record(ctx, "I23", "워드 표 -> 엑셀 새 시트", ok, f"새 시트={new}, A1:C2={vals}", d, c, r, e)
+
+    def i24():
+        doc = wd_doc("A.docx")
+        n0 = com_retry(lambda: doc.InlineShapes.Count)
+        d, c, r, e = run_cli("office.py", "transfer", "--from", "excel", "--chart", "I 막대", "--to", "word", "--method", "redraw")
+        n1 = com_retry(lambda: wd_doc("A.docx").InlineShapes.Count)
+        method = (((d or {}).get("results") or {}).get("word") or {}).get("method")
+        ok = ok_(d) and method == "redraw" and n1 == n0 + 1
+        record(ctx, "I24", "차트 전달 redraw 방식 강제 (DRM 대비 경로)", ok, f"방식={method}, 워드 그림 {n0}->{n1}", d, c, r, e)
+
+    # --- 되돌리기 / 창 -----------------------------------------------------------
+    def i25():
+        activate_xl("A.xlsx", "Sheet1")
+        run_cli("excel.py", "sheet", "--action", "add", "--name", "I_UNDO")
+        run_cli("excel.py", "write", "--sheet", "I_UNDO", "--range", "A1", "--value", "v1")
+        run_cli("excel.py", "write", "--sheet", "I_UNDO", "--range", "A1", "--value", "v2")
+        dl = run_cli("office.py", "undo", "--app", "excel", "--list")[0]
+        snaps = (dl or {}).get("snapshots") or []
+        d, c, r, e = run_cli("office.py", "undo", "--app", "excel", "--pick", "2")
+        wait_for(lambda: xl_wb("A.xlsx"), timeout=20)
+        names = sheet_names()
+        a1 = com_retry(lambda: xl_sheet("I_UNDO").Range("A1").Value) if "I_UNDO" in names else "(시트 없음)"
+        ok = ok_(dl) and len(snaps) >= 2 and snaps[0].get("pick") == 1 and ok_(d) and a1 is None
+        record(ctx, "I25", "undo --list / --pick 2 (두 단계 전으로)", ok,
+               f"지점 {len(snaps)}개, pick 2 후 I_UNDO!A1={a1!r}", d, c, r, e)
+
+    def i26():
+        b = ctx.path("B.xlsx")
+        d1 = run_cli("excel.py", "write", "--target", b, "--range", "D5", "--value", "닫힌값")[0]
+        import openpyxl
+        v1 = openpyxl.load_workbook(b).active["D5"].value
+        d, c, r, e = run_cli("office.py", "undo", "--app", "excel")
+        v2 = openpyxl.load_workbook(b).active["D5"].value
+        ok = ok_(d1) and v1 == "닫힌값" and ok_(d) and v2 is None
+        record(ctx, "I26", "닫힌 파일 쓰기 후 undo", ok,
+               f"쓰기 후 D5={v1!r}, undo 후 D5={v2!r}, restored_as={(d or {}).get('restored_as')}", d, c, r, e)
+
+    def i27():
+        app = xl_app()
+        com_retry(lambda: setattr(app, "WindowState", -4137))       # xlMaximized
+        com_retry(lambda: wd_doc("A.docx").Activate())
+        d, c, r, e = run_cli("office.py", "focus", "--app", "excel")
+        state = com_retry(lambda: int(xl_app().WindowState))
+        fg = ""
+        try:
+            import win32gui
+            fg = win32gui.GetClassName(win32gui.GetForegroundWindow())
+        except Exception:
+            pass
+        ok = ok_(d) and state == -4137
+        record(ctx, "I27", "창 전환 시 최대화 유지", ok, f"WindowState={state} (최대화 -4137), 앞 창 클래스={fg}", d, c, r, e)
+
+    for tid, title, fn in [
+        ("I1", "엑셀 CSV/append", i1), ("I2", "엑셀 --values", i2), ("I3", "엑셀 search/save", i3), ("I4", "엑셀 잘림", i4),
+        ("I5", "차트 종류", i5), ("I6", "차트 목록/삭제", i6), ("I7", "엑셀 서식", i7), ("I8", "시트 관리", i8),
+        ("I9", "범위 작업", i9), ("I10", "워드 그림", i10), ("I11", "워드 표", i11), ("I12", "워드 앵커", i12),
+        ("I13", "워드 제목/쪽/목차", i13), ("I14", "워드 치환", i14), ("I15", "PPT 그림", i15), ("I16", "PPT 카드", i16),
+        ("I17", "PPT 마크다운", i17), ("I18", "PPT 긴 표", i18), ("I19", "PPT 슬라이드 관리", i19), ("I20", "PPT 치환", i20),
+        ("I21", "PPT 사본", i21), ("I22", "범위 -> 표", i22), ("I23", "워드 표 -> 엑셀", i23), ("I24", "redraw", i24),
+        ("I25", "undo pick", i25), ("I26", "닫힌 파일 undo", i26), ("I27", "창 최대화", i27),
+    ]:
+        run_test(ctx, tid, title, fn)
+
+
+# ---------------------------------------------------------------------------
 def write_report(ctx):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = ctx.path(f"report_{stamp}.txt")
@@ -961,7 +1435,7 @@ def write_report(ctx):
 
 
 GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G),
-          ("H", test_H)]
+          ("H", test_H), ("I", test_I)]
 
 
 def main():
