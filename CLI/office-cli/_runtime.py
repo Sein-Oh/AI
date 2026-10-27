@@ -269,7 +269,7 @@ def set_config(key: str, value: Any) -> None:
     """설정 값을 저장합니다 (예: transfer 방식 자동 판별 결과)."""
     cfg = dict(load_config())
     cfg[key] = value
-    atomic_write_text(CONFIG_FILE, json.dumps(cfg, ensure_ascii=False, indent=2))
+    safe_write_text(CONFIG_FILE, json.dumps(cfg, ensure_ascii=False, indent=2))
     global _config_cache
     _config_cache = cfg
 
@@ -407,7 +407,7 @@ def retry_fs(fn: Callable[[], Any], attempts: int = 6, delay: float = 0.5) -> An
     raise last
 
 
-def atomic_write_text(path: str, text: str, encoding: str = "utf-8") -> None:
+def safe_write_text(path: str, text: str, encoding: str = "utf-8") -> None:
     """임시 파일에 쓴 뒤 교체해, 쓰다가 중단돼도 기존 파일이 깨지지 않게 합니다."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = f"{path}.tmp_{os.getpid()}"

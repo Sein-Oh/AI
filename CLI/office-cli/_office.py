@@ -298,7 +298,7 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
         meta = {"app": kind, "name": name, "original_path": path, "snapshot_file": data_file,
                 "snapshot_format": fmt, "created_at": stamp, "by": f"{tool} {command}".strip(),
                 "doc_created": doc_identity(path)}
-        rt.atomic_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
+        rt.safe_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
         _rotate_snapshots(kind, key)
         rt.debug(f"스냅샷 저장: {os.path.basename(data_file)}")
         return data_file

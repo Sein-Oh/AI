@@ -6,13 +6,15 @@
     python tools/run_win_tests.py --self-email me@company.com   # G3 실제 발송 테스트 포함
     python tools/run_win_tests.py --auto              # 질문 없이 자동 판정 항목만
     python tools/run_win_tests.py --dir D:\\office_test --skip-outlook
+    python tools/run_win_tests.py --agent --skip-outlook   # 에이전트(OpenCode 스킬)용: 질문 없음, stdout은 JSON 1줄
 
 진행 방식:
     1) 테스트 폴더(기본 C:\\office_test)에 A/B 테스트 파일(xlsx, docx, pptx)을 새로 만듭니다.
     2) A.xlsx, A.docx, A.pptx를 더블클릭한 것처럼 화면에 엽니다.
     3) 체크리스트 순서대로 도구를 실행하고, COM으로 결과(셀 값, 파일 수정 시각, 슬라이드 수 등)를 자동 검증합니다.
     4) 화면 깜빡임처럼 눈으로만 확인 가능한 항목은 y/n으로 묻습니다.
-    5) 결과를 테스트 폴더의 report_*.txt로 저장합니다. 이 파일 내용을 공유해 주세요.
+    5) 결과를 테스트 폴더의 report_*.txt(요약)와 errors_*.txt(오류 분석용 상세 로그)로 저장합니다.
+       문제가 있으면 errors_*.txt 파일을 그대로 공유해 주세요.
 
 주의:
     - 실행 전에 다른 Excel/Word/PowerPoint 문서는 저장 후 모두 닫아 주세요 (활성 문서 판정이 섞이지 않도록).
@@ -21,6 +23,7 @@
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -32,13 +35,45 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 CMD_TIMEOUT = 120
 RUN_ENV = {}   # 도구에 넘길 환경변수 (테스트 폴더 전용 캐시/데이터 폴더). main()에서 채움
+AGENT = "--agent" in sys.argv   # 에이전트 모드: 로그는 stderr, stdout은 마지막 JSON 1줄만
+
+# 오류 로그(errors_*.txt)용 기록: 모든 로그 줄과 도구 실행(명령, 종료 코드, stdout/stderr 전체)
+LOG_LINES = []
+CALLS = []
+CALL_OUTPUT_LIMIT = 20000   # 실행 1건의 stdout/stderr 보관 상한(글자)
+
+if AGENT:
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def emit_agent_json(payload, code):
+    """에이전트 모드의 마지막 출력: stdout에 JSON 1줄을 쓰고 종료합니다."""
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+    sys.exit(code)
+
 
 try:
     import pythoncom
     import win32com.client
 except ImportError:
+    if AGENT:
+        emit_agent_json({"status": "error", "error_type": "dependency", "message": "pywin32가 필요합니다.",
+                         "agent_directive": "STOP_RETRY: pywin32가 설치되어 있지 않습니다. "
+                                            "사용자에게 'python -m pip install pywin32'가 필요하다고 알리세요."}, 1)
     print("[ERROR] pywin32가 필요합니다. (python -m pip install pywin32)")
     sys.exit(1)
+
+
+class SetupError(Exception):
+    """테스트 준비(파일 만들기, 창 열기)가 실패해 테스트를 진행할 수 없음."""
+    def __init__(self, label, detail="", trace=""):
+        super().__init__(f"{label}: {detail}" if detail else label)
+        self.label, self.detail, self.trace = label, detail, trace
 
 
 # ---------------------------------------------------------------------------
@@ -52,26 +87,38 @@ class Ctx:
         self.auto = args.auto
         self.untitled_before = []
         self.start_time = time.time()           # 이 시각 뒤에 생긴 Office 프로세스만 정리 대상
+        self.stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.mark = (0, 0)                      # 현재 항목이 시작된 CALLS, LOG_LINES 위치
 
     def path(self, name):
         return os.path.join(self.dir, name)
 
 
 def log(msg):
-    print(msg, flush=True)
+    LOG_LINES.append(str(msg))
+    print(msg, flush=True, file=sys.stderr if AGENT else sys.stdout)
 
 
 def run_cli(module, *cli_args):
     """도구를 별도 프로세스로 실행하고 (JSON dict 또는 None, 종료 코드, stdout, stderr 마지막 부분)을 반환합니다."""
     cmd = [PY, os.path.join(ROOT, module)] + [str(a) for a in cli_args]
-    log(f"    $ python {module} {' '.join(str(a) for a in cli_args)}")
+    shown = f"python {module} {subprocess.list2cmdline([str(a) for a in cli_args])}"
+    log(f"    $ {shown}")
     env = dict(os.environ, PYTHONIOENCODING="utf-8", **RUN_ENV)
+    call = {"command": shown, "started": datetime.now().strftime("%H:%M:%S")}
+    CALLS.append(call)
+    t0 = time.time()
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, timeout=CMD_TIMEOUT, env=env)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
+        call.update(exit_code="TIMEOUT", elapsed=round(time.time() - t0, 2),
+                    stdout=(e.stdout or b"").decode("utf-8", errors="replace")[-CALL_OUTPUT_LIMIT:],
+                    stderr=(e.stderr or b"").decode("utf-8", errors="replace")[-CALL_OUTPUT_LIMIT:])
         return None, "TIMEOUT", "", f"{CMD_TIMEOUT}초 안에 끝나지 않음 (대화상자가 떠서 멈췄을 가능성)"
     out = proc.stdout.decode("utf-8", errors="replace")
     err = proc.stderr.decode("utf-8", errors="replace")
+    call.update(exit_code=proc.returncode, elapsed=round(time.time() - t0, 2),
+                stdout=out[-CALL_OUTPUT_LIMIT:], stderr=err[-CALL_OUTPUT_LIMIT:])
     data = None
     for line in reversed(out.strip().splitlines()):
         line = line.strip()
@@ -150,9 +197,8 @@ def step(label, fn):
     except Exception as e:
         log(f"[ERROR] 준비 단계 실패: {label}")
         log(f"        {describe_com_error(e)}")
-        log("        위 두 줄을 그대로 알려 주세요.")
         log(traceback.format_exc())
-        raise SystemExit(1)
+        raise SetupError(label, describe_com_error(e), traceback.format_exc())
 
 
 def mtime(path):
@@ -178,6 +224,13 @@ def pdf_unavailable(data):
     return data.get("error_type") == "input" and "PDF 내보내기 기능이 없습니다" in data.get("message", "")
 
 
+def _evidence(ctx):
+    """지금 항목이 시작된 뒤의 도구 실행 기록과 로그 줄을 꺼내고 다음 항목의 시작 위치를 옮깁니다."""
+    c0, l0 = ctx.mark
+    ctx.mark = (len(CALLS), len(LOG_LINES))
+    return CALLS[c0:], LOG_LINES[l0:]
+
+
 def record(ctx, tid, title, ok, detail="", data=None, code=None, raw="", err=""):
     if ok is None:
         status = "MANUAL-SKIP"
@@ -189,18 +242,25 @@ def record(ctx, tid, title, ok, detail="", data=None, code=None, raw="", err="")
              "exit_code": code, "json": short(data, raw)}
     if status == "FAIL" and err:
         entry["stderr_tail"] = err.strip()[-600:]
-    ctx.results.append(entry)
     log(f"  => [{status}] {tid} {title} {('- ' + detail) if detail else ''}")
+    calls, lines = _evidence(ctx)
+    if status == "FAIL":
+        entry["calls"], entry["log"] = calls, lines
+    ctx.results.append(entry)
 
 
 def run_test(ctx, tid, title, fn):
+    ctx.mark = (len(CALLS), len(LOG_LINES))
     log(f"\n[{tid}] {title}")
     try:
         fn()
     except Exception as e:
-        ctx.results.append({"id": tid, "title": title, "status": "ERROR",
-                            "detail": f"테스트 스크립트 예외: {describe_com_error(e)}", "trace": traceback.format_exc()[-800:]})
+        trace = traceback.format_exc()
         log(f"  => [ERROR] {tid} {e}")
+        calls, lines = _evidence(ctx)
+        ctx.results.append({"id": tid, "title": title, "status": "ERROR",
+                            "detail": f"테스트 스크립트 예외: {describe_com_error(e)}", "trace": trace[-800:],
+                            "full_trace": trace, "calls": calls, "log": lines})
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +363,7 @@ def setup_files(ctx):
                 os.remove(p)
             except PermissionError:
                 log(f"[ERROR] {p} 파일이 열려 있어 다시 만들 수 없습니다. 닫고 다시 실행하세요.")
-                sys.exit(1)
+                raise SetupError(f"{f} 다시 만들기", "파일이 열려 있음 (닫고 다시 실행)")
 
     log("[준비] Excel 테스트 파일 생성")
     xl = step("Excel 백그라운드 실행 (DispatchEx)", lambda: win32com.client.DispatchEx("Excel.Application"))
@@ -386,15 +446,15 @@ def open_user_windows(ctx):
     os.startfile(ctx.path("A.xlsx"))
     if not wait_for(lambda: xl_wb("A.xlsx")):
         log("[ERROR] A.xlsx가 열리지 않았습니다.")
-        sys.exit(1)
+        raise SetupError("A.xlsx 화면에 열기", "제한 시간 안에 열린 문서를 찾지 못함")
     os.startfile(ctx.path("A.docx"))
     if not wait_for(lambda: wd_doc("A.docx")):
         log("[ERROR] A.docx가 열리지 않았습니다.")
-        sys.exit(1)
+        raise SetupError("A.docx 화면에 열기", "제한 시간 안에 열린 문서를 찾지 못함")
     os.startfile(ctx.path("A.pptx"))
     if not wait_for(lambda: pp_prs("A.pptx")):
         log("[ERROR] A.pptx가 열리지 않았습니다.")
-        sys.exit(1)
+        raise SetupError("A.pptx 화면에 열기", "제한 시간 안에 열린 문서를 찾지 못함")
     time.sleep(2)
 
 
@@ -1536,7 +1596,7 @@ def close_test_documents(ctx, only_name=""):
 
 # ---------------------------------------------------------------------------
 def write_report(ctx):
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = ctx.stamp
     path = ctx.path(f"report_{stamp}.txt")
     counts = {}
     for r in ctx.results:
@@ -1565,6 +1625,142 @@ def write_report(ctx):
     return path, counts
 
 
+# ---------------------------------------------------------------------------
+# 오류 분석용 상세 로그 (errors_*.txt)
+# ---------------------------------------------------------------------------
+PROBLEM = ("FAIL", "ERROR")
+LIBS = ("pywin32", "openpyxl", "python-docx", "python-pptx", "pymupdf", "olefile", "matplotlib", "numpy")
+
+
+def tool_version():
+    try:
+        with open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("version:"):
+                    return line.split(":", 1)[1].strip().strip('"')
+    except Exception:
+        pass
+    return "?"
+
+
+def environment_lines(ctx):
+    """PC, Python, 라이브러리, Office 버전, 도구 설정. 실패해도 다른 줄은 남깁니다."""
+    from importlib import metadata
+    lines = [f"office-cli 버전: {tool_version()} ({ROOT})",
+             f"Windows: {platform.platform()} / {platform.version()}",
+             f"Python: {sys.version.split()[0]} ({sys.executable})"]
+    vers = []
+    for lib in LIBS:
+        try:
+            vers.append(f"{lib} {metadata.version(lib)}")
+        except Exception:
+            vers.append(f"{lib} (없음)")
+    lines.append("라이브러리: " + ", ".join(vers))
+    try:
+        proc = subprocess.run([PY, os.path.join(ROOT, "office.py"), "windows"], cwd=ROOT, capture_output=True,
+                              timeout=30, env=dict(os.environ, PYTHONIOENCODING="utf-8", **RUN_ENV))
+        out = proc.stdout.decode("utf-8", errors="replace").strip().splitlines()
+        data = json.loads(out[-1]) if out else {}
+        lines.append("Office (office.py windows의 office): " + json.dumps(data.get("office"), ensure_ascii=False))
+    except Exception as e:
+        lines.append(f"Office: 확인 실패 ({type(e).__name__}: {e})")
+    cfg = os.path.join(ROOT, "config.json")
+    try:
+        with open(cfg, encoding="utf-8") as f:
+            lines.append("config.json: " + json.dumps(json.load(f), ensure_ascii=False))
+    except FileNotFoundError:
+        lines.append("config.json: 없음 (transfer --probe 전)")
+    except Exception as e:
+        lines.append(f"config.json: 읽기 실패 ({e})")
+    a = ctx.args
+    lines.append(f"러너 옵션: only={a.only} auto={a.auto} agent={a.agent} skip_outlook={a.skip_outlook} "
+                 f"self_email={'있음' if a.self_email else '없음'} keep_open={a.keep_open}")
+    lines.append(f"테스트 폴더: {ctx.dir} / 도구 환경변수: {json.dumps(RUN_ENV, ensure_ascii=False)}")
+    lines.append(f"소요 시간: {round(time.time() - ctx.start_time)}초")
+    return lines
+
+
+def _indent(text, pad="        "):
+    return pad + str(text).rstrip().replace("\n", "\n" + pad)
+
+
+def _call_lines(call):
+    lines = [f"    $ {call['command']}",
+             f"      시작 {call.get('started')} / 종료코드 {call.get('exit_code')} / {call.get('elapsed')}초"]
+    out = (call.get("stdout") or "").strip()
+    if out:
+        try:
+            pretty = json.dumps(json.loads(out.splitlines()[-1]), ensure_ascii=False, indent=2)
+            rest = "\n".join(out.splitlines()[:-1]).strip()
+            lines.append("      stdout(JSON):")
+            lines.append(_indent(pretty))
+            if rest:
+                lines.append("      stdout(JSON 앞의 다른 출력, 계약 위반):")
+                lines.append(_indent(rest))
+        except Exception:
+            lines.append("      stdout(JSON 아님):")
+            lines.append(_indent(out))
+    else:
+        lines.append("      stdout: (없음)")
+    err = (call.get("stderr") or "").strip()
+    if err:
+        lines.append("      stderr:")
+        lines.append(_indent(err))
+    return lines
+
+
+def write_error_log(ctx, fatal=None):
+    """Claude가 읽고 원인을 판단할 수 있도록 실패 항목의 근거를 빠짐없이 모읍니다.
+    실패가 없어도 환경 정보와 요약을 남깁니다(통과 확인용)."""
+    path = ctx.path(f"errors_{ctx.stamp}.txt")
+    counts = {}
+    for r in ctx.results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    problems = [r for r in ctx.results if r["status"] in PROBLEM]
+    lines = [
+        "# office-cli 실기 테스트 오류 로그 (분석용)",
+        f"# 생성 {ctx.stamp}. 이 파일 전체를 그대로 Claude에게 전달하세요. 편집하지 마세요.",
+        "",
+        "## 1. 환경",
+    ]
+    try:
+        lines += environment_lines(ctx)
+    except Exception as e:
+        lines.append(f"환경 정보 수집 실패: {e}")
+    lines += ["", "## 2. 요약",
+              "결과: " + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "실행된 항목 없음"),
+              "문제 항목: " + (", ".join(f"{r['id']}({r['status']})" for r in problems) or "없음")]
+    skipped = [r for r in ctx.results if r["status"] in ("ENV-SKIP", "MANUAL-SKIP")]
+    if skipped:
+        lines.append("건너뜀: " + ", ".join(f"{r['id']}({r['status']}: {r.get('detail', '')})" for r in skipped))
+    if fatal is not None:
+        lines += ["", "## 3. 테스트 중단 (준비 단계 또는 러너 오류)",
+                  f"단계: {getattr(fatal, 'label', type(fatal).__name__)}",
+                  f"내용: {getattr(fatal, 'detail', '') or fatal}"]
+        trace = getattr(fatal, "trace", "") or "".join(traceback.format_exception(fatal))
+        lines += ["traceback:", _indent(trace)]
+        lines += ["중단 직전 도구 실행:"] + [ln for c in CALLS[-3:] for ln in _call_lines(c)]
+        lines += ["중단 직전 로그 (최근 200줄):", _indent("\n".join(LOG_LINES[-200:]))]
+    lines += ["", f"## {4 if fatal is not None else 3}. 문제 항목 상세"]
+    if not problems:
+        lines.append("없음")
+    for r in problems:
+        lines += ["", "-" * 70, f"[{r['status']}] {r['id']} {r['title']}"]
+        if r.get("detail"):
+            lines.append(f"  판정 근거: {r['detail']}")
+        if r.get("full_trace") or r.get("trace"):
+            lines += ["  테스트 스크립트 traceback:", _indent(r.get("full_trace") or r.get("trace"))]
+        calls = r.get("calls") or []
+        lines.append(f"  이 항목에서 실행한 도구 명령 {len(calls)}개:")
+        for c in calls:
+            lines += _call_lines(c)
+        if r.get("log"):
+            lines += ["  이 항목의 진행 로그:", _indent("\n".join(r["log"]))]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return path
+
+
 GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G),
           ("H", test_H), ("I", test_I), ("J", test_J)]
 
@@ -1576,9 +1772,13 @@ def main():
     parser.add_argument("--self-email", help="G3 실제 발송 테스트에 쓸 본인 메일 주소 (생략 시 G3 건너뜀)")
     parser.add_argument("--skip-outlook", action="store_true", help="G 그룹(Outlook) 건너뜀")
     parser.add_argument("--auto", action="store_true", help="y/n 질문 없이 자동 판정 항목만 진행")
+    parser.add_argument("--agent", action="store_true",
+                        help="에이전트(OpenCode 스킬)용: --auto와 같고, 로그는 stderr로, stdout에는 결과 JSON 1줄만 출력")
     parser.add_argument("--keep-open", action="store_true",
                         help="끝난 뒤 테스트 문서를 열어 둠 (기본: 테스트 폴더 문서만 저장하지 않고 닫음)")
     args = parser.parse_args()
+    if args.agent:
+        args.auto = True
 
     pythoncom.CoInitialize()
     ctx = Ctx(args)
@@ -1599,29 +1799,57 @@ def main():
         if input("시작할까요? (y/n): ").strip().lower() != "y":
             return
 
-    ctx.untitled_before = untitled_documents()   # 실행 전부터 있던 제목 없는 문서는 닫지 않음
-    setup_files(ctx)
-    open_user_windows(ctx)
-
-    for g, fn in GROUPS:
-        if g in selected:
-            log(f"\n{'-' * 25} 그룹 {g} {'-' * 25}")
-            try:
-                fn(ctx)
-            except Exception as e:
-                ctx.results.append({"id": g, "title": f"그룹 {g} 준비", "status": "ERROR",
-                                    "detail": str(e), "trace": traceback.format_exc()[-800:]})
-                log(f"[ERROR] 그룹 {g}: {e}")
+    try:
+        ctx.untitled_before = untitled_documents()   # 실행 전부터 있던 제목 없는 문서는 닫지 않음
+        setup_files(ctx)
+        open_user_windows(ctx)
+        for g, fn in GROUPS:
+            if g in selected:
+                ctx.mark = (len(CALLS), len(LOG_LINES))
+                log(f"\n{'-' * 25} 그룹 {g} {'-' * 25}")
+                try:
+                    fn(ctx)
+                except Exception as e:
+                    trace = traceback.format_exc()
+                    log(f"[ERROR] 그룹 {g}: {e}")
+                    calls, lines = _evidence(ctx)
+                    ctx.results.append({"id": g, "title": f"그룹 {g} 준비", "status": "ERROR", "detail": str(e),
+                                        "trace": trace[-800:], "full_trace": trace, "calls": calls, "log": lines})
+    except KeyboardInterrupt as e:
+        log("[ERROR] 사용자가 중단했습니다 (Ctrl+C).")
+        err_path = _safe_error_log(ctx, e)
+        log(f" 오류 로그(중단 시점까지): {err_path}")
+        if args.agent:
+            emit_agent_json({"status": "error", "error_type": "interrupted", "message": "사용자가 중단함",
+                             "error_log": err_path, "agent_directive": "STOP_RETRY: 사용자가 중단했습니다. 재시도하지 마세요."}, 130)
+        sys.exit(130)
+    except Exception as e:
+        # 준비 단계 실패나 러너 자체 오류: 테스트를 계속할 수 없으므로 오류 로그만 남기고 끝냅니다.
+        if not isinstance(e, SetupError):
+            log(f"[ERROR] 러너 오류: {describe_com_error(e)}")
+            log(traceback.format_exc())
+        err_path = _safe_error_log(ctx, e)
+        log(f" 오류 로그: {err_path}  <- 이 파일을 그대로 공유해 주세요.")
+        if args.agent:
+            emit_agent_json({
+                "status": "error", "error_type": "setup", "message": str(e), "error_log": err_path,
+                "agent_directive": "STOP_RETRY: 테스트를 시작하지 못했습니다. 재시도하지 말고 message와 "
+                                   "error_log 경로를 사용자에게 그대로 알리세요."}, 1)
+        sys.exit(1)
 
     shots, n_shots = save_shots(ctx)
     path, counts = write_report(ctx)
+    err_path = _safe_error_log(ctx)
+    problems = [r["id"] for r in ctx.results if r["status"] in PROBLEM]
     log("\n" + "=" * 70)
     log(" 결과 요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     for r in ctx.results:
         if r["status"] not in ("PASS",):
             log(f"   [{r['status']}] {r['id']} {r['title']} {r.get('detail', '')}")
     log(f" 보고서: {path}")
+    log(f" 오류 로그: {err_path}" + ("  <- 문제 항목이 있습니다. 이 파일을 그대로 공유해 주세요." if problems else ""))
     log(f" 확인용 그림 {n_shots}개: {shots} (슬라이드, 차트)")
+    closed = []
     if args.keep_open:
         log(" 테스트용 A 파일들은 열린 채로 남아 있습니다. 저장하지 않고 닫아도 됩니다.")
     else:
@@ -1631,6 +1859,30 @@ def main():
         closed = close_test_documents(ctx)
         log(f" 테스트 문서 {len(closed)}개를 저장하지 않고 닫았습니다: {', '.join(closed)}")
     log("=" * 70)
+    if args.agent:
+        if problems:
+            directive = (f"VERIFIED: 테스트 완료, 문제 항목 {len(problems)}개. 재실행하지 말고 summary와 failed를 보고하고, "
+                         "error_log 파일을 Claude에게 전달하라고 사용자에게 안내하세요.")
+        else:
+            directive = "VERIFIED: 테스트 완료, 문제 항목 없음. summary를 사용자에게 보고하세요."
+        emit_agent_json({"status": "ok", "summary": counts, "failed": problems, "report_file": path,
+                         "error_log": err_path, "shots_dir": shots, "closed_documents": len(closed),
+                         "agent_directive": directive}, 0)
+
+
+def _safe_error_log(ctx, fatal=None):
+    try:
+        return write_error_log(ctx, fatal)
+    except Exception as e:
+        # 오류 로그를 못 쓰는 경우(테스트 폴더 쓰기 불가 등): 현재 폴더에 최소 내용이라도 남깁니다.
+        fallback = os.path.join(os.getcwd(), f"errors_{ctx.stamp}.txt")
+        try:
+            with open(fallback, "w", encoding="utf-8") as f:
+                f.write(f"오류 로그 작성 실패: {e}\n중단 원인: {fatal}\n"
+                        + "".join(traceback.format_exception(fatal) if fatal else []) + "\n".join(LOG_LINES[-200:]))
+            return fallback
+        except Exception:
+            return f"(오류 로그를 쓰지 못함: {e})"
 
 
 if __name__ == "__main__":

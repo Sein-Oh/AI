@@ -20,6 +20,7 @@ CLI/office-cli/
 ├── _runtime.py  공통 런타임 (응답 계약, 경로, 입출력, 마크다운 해석)
 ├── _office.py   Office COM 공통 (세션, 스냅샷, 색/테마)
 ├── tools/run_win_tests.py  Windows 실기 테스트 러너
+├── tools/office-cli-test/SKILL.md  실기 테스트를 에이전트가 돌리는 스킬 (스킬 폴더에 office-cli 옆으로 복사)
 └── tests/       오프라인 테스트 (가짜 COM + 실제 샘플 파일)
 ```
 
@@ -163,4 +164,6 @@ python word.py write --file "<결과의 output_file>"
 python -m pytest -q CLI/office-cli          :: 오프라인 (가짜 COM + 실제 샘플 파일)
 python CLI/office-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세한 내용: TEST_CHECKLIST.md)
 ```
+- 실기 테스트는 테스트 폴더에 `report_*.txt`(요약)와 `errors_*.txt`(분석용 상세 로그)를 남깁니다. 문제가 있으면 `errors_*.txt`를 그대로 Claude에게 전달하세요.
+- OpenCode 에이전트에게 실기 테스트를 맡기려면 `tools/office-cli-test` 폴더를 스킬 폴더의 `office-cli` 옆에 복사합니다. 에이전트는 `--agent`로 실행해 결과 JSON 1줄만 읽습니다.
 - 대상은 Office 16.0(2016/2019/2021/365)입니다. Word 2007의 `SaveAs2` 부재는 `SaveAs`로 대체하므로 Office 2007에서도 실기 테스트가 돕니다. 다만 PDF 추가 기능이 없으면 PDF 내보내기 항목은 `ENV-SKIP`으로 기록됩니다.
