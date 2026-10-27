@@ -28,6 +28,13 @@ AI_WORK/
         ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
         ├── ml_report.py       # 3단계: Word 보고서
         └── tests/             # CLI 계약 + 회귀 테스트
+    └── atomic_cli/            # Office(Excel/Word/PPT/Outlook) COM 자동화 마이크로 CLI 모음 (Phase 1 정비 중)
+        ├── README.md          # 상세 설명서 (구버전, 재작성 예정)
+        ├── WORK_PLAN.md       # 오류 수정/최적화/고도화 작업계획 + 진행 현황
+        ├── TEST_CHECKLIST.md  # Windows 실기 테스트 체크리스트
+        ├── *.py               # 도구 진입점(excel_*, word_*, ppt_*, outlook_*, ...) + 공통 모듈(_*.py)
+        ├── tools/             # merge_code.py(반출용 merged_code.md 생성/분리), run_win_tests.py(실기 테스트 러너)
+        └── tests/             # 가짜 COM 기반 오프라인 테스트
 ```
 
 ## 빠른 시작
