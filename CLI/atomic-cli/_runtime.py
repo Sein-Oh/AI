@@ -16,6 +16,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -534,3 +535,108 @@ def next_command(script: str, args: Sequence[Any], purpose: str) -> Dict[str, st
     """next_commands 항목 하나를 만듭니다. script는 도구 폴더 기준 파일명 (예: 'office.py')."""
     parts = [f"python {quote_arg(os.path.join(TOOL_DIR, script))}"] + [quote_arg(a) for a in args]
     return {"purpose": purpose, "command": " ".join(parts)}
+
+
+# ==============================================================================
+# 6. 마크다운 블록 해석 (word.py / ppt.py 공통)
+# ==============================================================================
+
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
+
+
+def split_bold(text: str) -> Tuple[str, List[Tuple[int, int]]]:
+    """'가 **나** 다' -> ('가 나 다', [(2, 3)]). 굵게 표시 구간(시작, 끝 오프셋)을 돌려줍니다."""
+    plain: List[str] = []
+    spans: List[Tuple[int, int]] = []
+    pos = 0
+    length = 0
+    for m in _MD_BOLD.finditer(text):
+        before = text[pos:m.start()]
+        plain.append(before)
+        length += len(before)
+        inner = m.group(1) if m.group(1) is not None else m.group(2)
+        spans.append((length, length + len(inner)))
+        plain.append(inner)
+        length += len(inner)
+        pos = m.end()
+    plain.append(text[pos:])
+    return "".join(plain), spans
+
+
+def parse_markdown_table(lines: List[str]) -> List[List[str]]:
+    rows: List[List[str]] = []
+    for ln in lines:
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if cells and all(re.fullmatch(r":?-{3,}:?", c) for c in cells if c):
+            continue
+        rows.append(cells)
+    width = max((len(r) for r in rows), default=0)
+    return [r + [""] * (width - len(r)) for r in rows]
+
+
+def parse_markdown_blocks(text: str) -> List[Tuple[str, Any]]:
+    """마크다운을 블록 목록으로 바꿉니다.
+    ('heading', (레벨, 텍스트)), ('paragraph', 텍스트), ('bullets', [항목]), ('numbered', [항목]),
+    ('table', [[셀]]), ('break', None)  # '---' 구분선
+    """
+    blocks: List[Tuple[str, Any]] = []
+    para: List[str] = []
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    def flush() -> None:
+        if para:
+            blocks.append(("paragraph", " ".join(s.strip() for s in para)))
+            para.clear()
+
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if not s:
+            flush()
+            i += 1
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", s)
+        if m:
+            flush()
+            blocks.append(("heading", (len(m.group(1)), m.group(2).strip().rstrip("#").strip())))
+            i += 1
+            continue
+        if s.startswith("|"):
+            flush()
+            tbl = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                tbl.append(lines[i])
+                i += 1
+            rows = parse_markdown_table(tbl)
+            if rows:
+                blocks.append(("table", rows))
+            continue
+        if re.match(r"^[-*+]\s+", s):
+            flush()
+            items = []
+            while i < len(lines) and re.match(r"^\s*[-*+]\s+", lines[i]):
+                items.append(re.sub(r"^\s*[-*+]\s+", "", lines[i]).strip())
+                i += 1
+            blocks.append(("bullets", items))
+            continue
+        if re.match(r"^\d+[.)]\s+", s):
+            flush()
+            items = []
+            while i < len(lines) and re.match(r"^\s*\d+[.)]\s+", lines[i]):
+                items.append(re.sub(r"^\s*\d+[.)]\s+", "", lines[i]).strip())
+                i += 1
+            blocks.append(("numbered", items))
+            continue
+        if re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", s):
+            flush()
+            blocks.append(("break", None))
+            i += 1
+            continue
+        para.append(s)
+        i += 1
+    flush()
+    return blocks
+
+
+def looks_like_markdown(text: str) -> bool:
+    return bool(re.search(r"(?m)^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|\|.*\|)", text) or "**" in text)

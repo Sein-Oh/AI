@@ -212,3 +212,12 @@ def test_next_command_quotes_paths():
     assert cmd["purpose"] == "차트 전달"
     assert '"사인 2주기"' in cmd["command"] and '"word,ppt"' in cmd["command"]
     assert "office.py" in cmd["command"]
+
+
+def test_markdown_blocks_and_bold():
+    blocks = rt.parse_markdown_blocks("# 제목\n본문 **굵게**\n이어짐\n\n- a\n- b\n1. x\n2) y\n| 공정 | 수율 |\n|---|---|\n| 가열 | 98 |\n---\n## 끝")
+    assert blocks == [("heading", (1, "제목")), ("paragraph", "본문 **굵게** 이어짐"), ("bullets", ["a", "b"]),
+                      ("numbered", ["x", "y"]), ("table", [["공정", "수율"], ["가열", "98"]]), ("break", None),
+                      ("heading", (2, "끝"))]
+    assert rt.split_bold("가 **나** 다 __라__") == ("가 나 다 라", [(2, 3), (6, 7)])
+    assert rt.looks_like_markdown("- 항목") and not rt.looks_like_markdown("그냥 문장")
