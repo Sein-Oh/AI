@@ -468,7 +468,7 @@ def load_index() -> Dict[str, Dict[str, Any]]:
 
 
 def _save_index(index: Dict[str, Dict[str, Any]]) -> None:
-    rt.atomic_write_text(_index_path(), json.dumps(index, ensure_ascii=False))
+    rt.safe_write_text(_index_path(), json.dumps(index, ensure_ascii=False))
 
 
 def load_document(path: str, use_cache: bool = True) -> Dict[str, Any]:
@@ -491,7 +491,7 @@ def load_document(path: str, use_cache: bool = True) -> Dict[str, Any]:
     doc = {"file": path, "type": ftype, "mtime": st.st_mtime, "size": st.st_size,
            "parser_version": PARSER_VERSION, "parsed_at": rt.timestamp(), "meta": meta, "units": units}
     try:
-        rt.atomic_write_text(cache_file, json.dumps(doc, ensure_ascii=False))
+        rt.safe_write_text(cache_file, json.dumps(doc, ensure_ascii=False))
         index = load_index()
         index[path] = {"type": ftype, "units": len(units), "parsed_at": doc["parsed_at"],
                        "chars": sum(len(u["text"]) for u in units), "cache_file": os.path.basename(cache_file)}
