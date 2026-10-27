@@ -37,6 +37,8 @@ PH_BODY = (2, 7)           # ppPlaceholderBody, ppPlaceholderObject
 MSO_GROUP = 6
 MSO_PLACEHOLDER = 14
 MSO_ROUNDED_RECT = 5
+PP_BULLET_UNNUMBERED = 1    # ppBulletUnnumbered (글머리표)
+PP_BULLET_NUMBERED = 2      # ppBulletNumbered (1. 2. 3.)
 MARGIN = 36.0
 GAP = 14.0
 TABLE_ROWS_PER_SLIDE = 15
@@ -288,8 +290,8 @@ class SlideWriter:
                 continue
         return None
 
-    def body(self, lines: List[Tuple[str, bool]]) -> None:
-        """lines: [(텍스트, 글머리 여부)]"""
+    def body(self, lines: List[Tuple[str, str]]) -> None:
+        """lines: [(텍스트, 목록 종류)]. 목록 종류는 ""(일반), "bullet", "numbered"."""
         text = "\r".join(t for t, _ in lines)
         ph = self._body_placeholder()
         if ph is not None:
@@ -304,9 +306,13 @@ class SlideWriter:
             tr.Text = text
             tr.Font.Size = 18 if len(lines) <= 6 else 14
         tr = shape.TextFrame.TextRange
-        for i, (_, bullet) in enumerate(lines, 1):
+        for i, (_, kind) in enumerate(lines, 1):
             try:
-                tr.Paragraphs(i).ParagraphFormat.Bullet.Visible = -1 if bullet else 0
+                bullet = tr.Paragraphs(i).ParagraphFormat.Bullet
+                bullet.Visible = -1 if kind else 0
+                if kind:
+                    # Visible만 켜면 PowerPoint 2007 글상자는 번호 목록이 됩니다. 종류를 명시합니다.
+                    bullet.Type = PP_BULLET_NUMBERED if kind == "numbered" else PP_BULLET_UNNUMBERED
             except Exception:
                 pass
         self.created.append(f"본문 {len(lines)}줄")
@@ -389,24 +395,27 @@ def _md_sections(text: str) -> List[Dict[str, Any]]:
             cur = {"title": "", "lines": [], "tables": []}
             sections.append(cur)
         if kind == "heading":
-            cur["lines"].append((payload[1], False))
+            cur["lines"].append((payload[1], ""))
         elif kind == "paragraph":
-            cur["lines"].append((rt.split_bold(payload)[0], False))
+            cur["lines"].append((rt.split_bold(payload)[0], ""))
         elif kind in ("bullets", "numbered"):
-            cur["lines"] += [(rt.split_bold(x)[0], True) for x in payload]
+            list_kind = "numbered" if kind == "numbered" else "bullet"
+            cur["lines"] += [(rt.split_bold(x)[0], list_kind) for x in payload]
         elif kind == "table":
             cur["tables"].append(payload)
     return [s for s in sections if s["title"] or s["lines"] or s["tables"]]
 
 
-def _text_lines(text: str) -> List[Tuple[str, bool]]:
+def _text_lines(text: str) -> List[Tuple[str, str]]:
     lines = []
     for ln in text.replace("\\n", "\n").splitlines():
         s = ln.strip()
         if not s:
             continue
         m = re.match(r"^[-*+]\s+(.*)$", s)
-        lines.append((rt.split_bold(m.group(1) if m else s)[0], bool(m)))
+        n = None if m else re.match(r"^\d+[.)]\s+(.*)$", s)
+        body = m.group(1) if m else (n.group(1) if n else s)
+        lines.append((rt.split_bold(body)[0], "bullet" if m else ("numbered" if n else "")))
     return lines
 
 

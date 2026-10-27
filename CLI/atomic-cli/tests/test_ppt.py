@@ -70,6 +70,26 @@ def test_write_new_slide_title_placeholder_and_bullets(pp, capsys):
     assert pp["app"].ActiveWindow.View.goto == [4]                 # 고친 슬라이드로만 이동
 
 
+def bullet(shape, i):
+    return shape.TextFrame.TextRange.paras[i].ParagraphFormat.Bullet
+
+
+def test_write_bullets_set_type_explicitly(pp, capsys):
+    # Visible만 켜면 PowerPoint 2007 글상자는 번호 목록(Type=2)이 되므로 종류를 명시해야 함 (실기 F3)
+    code, out = run(capsys, "write", "--slide", "new", "--title", "목록", "--text", "- 안정성\\n2. 확장성\\n설명")
+    assert code == 0, out
+    body = live(pp["prs"].Slides(4))[1]
+    assert body.TextFrame.TextRange.Text == "안정성\r확장성\r설명"
+    assert bullet(body, 1).Visible == -1 and bullet(body, 1).Type == ppt.PP_BULLET_UNNUMBERED
+    assert bullet(body, 2).Visible == -1 and bullet(body, 2).Type == ppt.PP_BULLET_NUMBERED
+    assert bullet(body, 3).Visible == 0 and "Type" not in vars(bullet(body, 3))
+
+
+def test_markdown_bullets_and_numbered_lists_keep_their_kind():
+    sections = ppt._md_sections("## 제목\n\n- 가\n- 나\n\n1. 첫째\n2. 둘째\n")
+    assert sections[0]["lines"] == [("가", "bullet"), ("나", "bullet"), ("첫째", "numbered"), ("둘째", "numbered")]
+
+
 def test_write_markdown_file_makes_one_slide_per_heading(pp, capsys, tmp_path):
     md = tmp_path / "결과.md"
     md.write_text("# 검색 결과\n\n## 보고서.pdf > p.3\n\n**마일스톤** 일정 정리\n\n## 계획.docx > 단락 2\n\n- 3분기 적용\n\n"

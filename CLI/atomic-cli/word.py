@@ -69,13 +69,39 @@ def _closed_docx(target: str) -> Optional[str]:
     return raw
 
 
+PICTURE_MARK = "[그림]"
+
+
+def _replace_inline_pictures(rng: Any, raw: str) -> str:
+    """본문 그림(InlineShape)은 Range.Text에서 한 글자(Word 2007은 '/', 새 버전은 '\\x01')로 나옵니다.
+    그림의 실제 위치에 있는 글자만 [그림]으로 바꿉니다 (본문에 있는 진짜 '/'는 그대로)."""
+    if "\x01" not in raw and "/" not in raw:
+        return raw
+    try:
+        shapes = rng.InlineShapes
+        count = int(shapes.Count)
+        if not count:
+            return raw
+        start = int(rng.Start)
+        offsets = sorted({int(shapes.Item(i).Range.Start) - start for i in range(1, count + 1)}, reverse=True)
+    except Exception:
+        return raw
+    chars = list(raw)
+    for pos in offsets:
+        if 0 <= pos < len(chars) and chars[pos] in ("\x01", "/"):
+            chars[pos] = PICTURE_MARK
+    return "".join(chars)
+
+
 def _com_units(doc: Any) -> List[Dict[str, str]]:
-    """열린 문서의 단락을 제목 구조와 함께 읽습니다 (단락 단위 COM 호출 2회, 페이지 계산 없음)."""
+    """열린 문서의 단락을 제목 구조와 함께 읽습니다 (단락 단위 COM 호출 2회, 페이지 계산 없음). 그림은 [그림]."""
     units: List[Dict[str, str]] = []
     heading = ""
     n = 0
     for para in doc.Paragraphs:
-        text = str(para.Range.Text).rstrip("\r\x07").replace("\x07", " ").replace("\x0b", "\n").strip()
+        rng = para.Range
+        raw = _replace_inline_pictures(rng, str(rng.Text))
+        text = raw.rstrip("\r\x07").replace("\x07", " ").replace("\x0b", "\n").strip()
         if not text:
             continue
         n += 1

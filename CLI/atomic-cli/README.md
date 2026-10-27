@@ -90,7 +90,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 ### word.py
 | 명령 | 주요 옵션 |
 |---|---|
-| `read` | `--start N`, `--save [경로.md]`. 제목 구조(개요 수준) 포함 |
+| `read` | `--start N`, `--save [경로.md]`. 제목 구조(개요 수준) 포함. 본문 그림은 `[그림]`으로 표시 |
 | `info` | 쪽/단어/글자 수, 표, 그림, 제목 목록. `--all` |
 | `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--theme` |
 | `replace` | `--find/--replace`(빈 문자열은 삭제) 또는 `--map`, `--match-case`, `--whole-word`, `--bold`, `--color`, `--highlight`. 머리글/바닥글/글상자 포함 |
@@ -101,7 +101,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 |---|---|
 | `read` | `--slides 1-3`, `--save` |
 | `info` | 슬라이드별 제목, 도형/표/그림 수. `--all` |
-| `write` | `--slide N\|new`, `--title`, `--text`(`-` 줄은 글머리), `--file (.md: 제목마다 새 슬라이드, .csv: 표)`, `--image`, `--cards "제목:내용\|..."`, `--theme` |
+| `write` | `--slide N\|new`, `--title`, `--text`(`-` 줄은 글머리표, `1.` 줄은 번호), `--file (.md: 제목마다 새 슬라이드, .csv: 표)`, `--image`, `--cards "제목:내용\|..."`, `--theme` |
 | `replace` | `--find/--replace` 또는 `--map`, `--slide`, 서식 옵션. 표와 그룹 도형 포함 |
 | `export` | `--save 경로.pdf\|.pptx`. PDF 기능이 없는 Office(2007 기본 설치 등)는 `.pptx`로 저장하라는 STOP_RETRY를 돌려줍니다 |
 | `slide` | `--action list\|add\|duplicate\|move\|delete\|clear --slide --to --layout`. `clear`는 `--slide` 또는 `--all-slides`가 필요 |
