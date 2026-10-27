@@ -5,7 +5,7 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 | 도구 | 설명 | 스킬 |
 |---|---|---|
 | [`ml-kit/`](ml-kit/) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`ml-kit/SKILL.md`](ml-kit/SKILL.md) |
-| [`atomic_cli/`](atomic_cli/) | Office(Excel/Word/PowerPoint/Outlook) COM 자동화 마이크로 CLI 모음, PDF/HWP/EML 읽기 | 미작성 (정비 중, [`atomic_cli/WORK_PLAN.md`](atomic_cli/WORK_PLAN.md)) |
+| [`atomic-cli/`](atomic-cli/) | Office(Excel/Word/PowerPoint/Outlook) COM 자동화 마이크로 CLI 모음, PDF/HWP/EML 읽기 | 미작성 (정비 중, [`atomic-cli/WORK_PLAN.md`](atomic-cli/WORK_PLAN.md)) |
 
 에이전트 런타임은 **OpenCode** 입니다. 각 도구 폴더가 그대로 OpenCode 스킬 폴더이며, 폴더 이름 = 스킬 이름
 (소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 설치 위치: `C:\Users\<사용자>\.config\opencode\skills\<tool>\`.

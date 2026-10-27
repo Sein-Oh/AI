@@ -1,6 +1,6 @@
-"""atomic_cli Phase 1 Windows 실기 테스트 러너 (TEST_CHECKLIST.md 자동 진행)
+"""atomic-cli Phase 1 Windows 실기 테스트 러너 (TEST_CHECKLIST.md 자동 진행)
 
-사용법 (atomic_cli 폴더에서 실행):
+사용법 (atomic-cli 폴더에서 실행):
     python tools/run_win_tests.py                     # 전체 진행 (눈으로 확인할 항목은 y/n 질문)
     python tools/run_win_tests.py --only A,C          # 특정 그룹만
     python tools/run_win_tests.py --self-email me@company.com   # G3 실제 발송 테스트 포함
@@ -189,7 +189,7 @@ def run_test(ctx, tid, title, fn):
 
 
 # ---------------------------------------------------------------------------
-# Office 객체 조회 (테스트 검증용, atomic_cli 코드와 독립)
+# Office 객체 조회 (테스트 검증용, atomic-cli 코드와 독립)
 # ---------------------------------------------------------------------------
 def xl_app():
     return win32com.client.GetActiveObject("Excel.Application")
@@ -755,14 +755,14 @@ def test_G(ctx):
     def g1():
         to = me or "atomic-test@example.com"
         data, code, raw, err = run_cli("outlook_write.py", "--action", "new", "--to", to,
-                                       "--subject", "[atomic_cli 테스트] 표시 전용", "--body", "본문 테스트")
+                                       "--subject", "[atomic-cli 테스트] 표시 전용", "--body", "본문 테스트")
         ok = (data or {}).get("status") == "ok" and (data or {}).get("sent") is False
         manual = ask(ctx, "메일 작성 창이 떴나요? (확인 후 그 창은 저장하지 않고 닫아 주세요)")
         record(ctx, "G1", "기본 동작: 작성 창만 표시, 미발송", ok and manual is not False, "", data, code, raw, err)
 
     def g2():
         data, code, raw, err = run_cli("outlook_write.py", "--action", "new", "--to", "zz_atomic_invalid_recipient_000",
-                                       "--subject", "[atomic_cli 테스트] 잘못된 수신자", "--body", "발송되면 안 됨", "--send")
+                                       "--subject", "[atomic-cli 테스트] 잘못된 수신자", "--body", "발송되면 안 됨", "--send")
         ok = (data or {}).get("status") == "partial" and (data or {}).get("sent") is False
         ask(ctx, "작성 창이 떴다면 저장하지 않고 닫아 주세요. 닫았나요?")
         record(ctx, "G2", "잘못된 수신자 + --send -> 발송 안 됨", ok,
@@ -776,7 +776,7 @@ def test_G(ctx):
             record(ctx, "G3", "명시적 --send 실제 발송", None, "사용자가 건너뜀")
             return
         data, code, raw, err = run_cli("outlook_write.py", "--action", "new", "--to", me,
-                                       "--subject", "[atomic_cli 테스트] 발송 테스트", "--body", "자동 발송 테스트 메일입니다.", "--send")
+                                       "--subject", "[atomic-cli 테스트] 발송 테스트", "--body", "자동 발송 테스트 메일입니다.", "--send")
         ok = (data or {}).get("status") == "ok" and (data or {}).get("sent") is True
         record(ctx, "G3", "명시적 --send 실제 발송", ok, "", data, code, raw, err)
 
@@ -795,7 +795,7 @@ def write_report(ctx):
     for r in ctx.results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     lines = [
-        f"atomic_cli Phase 1 Windows 테스트 보고서 ({stamp})",
+        f"atomic-cli Phase 1 Windows 테스트 보고서 ({stamp})",
         f"Python {sys.version.split()[0]} / 테스트 폴더 {ctx.dir}",
         "요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
         "",
@@ -822,7 +822,7 @@ GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test
 
 
 def main():
-    parser = argparse.ArgumentParser(description="atomic_cli Phase 1 Windows 실기 테스트 러너")
+    parser = argparse.ArgumentParser(description="atomic-cli Phase 1 Windows 실기 테스트 러너")
     parser.add_argument("--dir", default=r"C:\atomic_test", help="테스트 파일을 만들 폴더 (기본 C:\\atomic_test)")
     parser.add_argument("--only", help="실행할 그룹 (예: A,C,E)")
     parser.add_argument("--self-email", help="G3 실제 발송 테스트에 쓸 본인 메일 주소 (생략 시 G3 건너뜀)")
@@ -837,7 +837,7 @@ def main():
         selected.discard("G")
 
     log("=" * 70)
-    log(" atomic_cli Phase 1 Windows 테스트")
+    log(" atomic-cli Phase 1 Windows 테스트")
     log(f" 대상 그룹: {','.join(sorted(selected))} / 테스트 폴더: {ctx.dir}")
     log(" 실행 전 다른 Excel/Word/PowerPoint 문서는 저장 후 모두 닫아 주세요.")
     log(" 테스트 중에는 Office 창을 직접 조작하지 마세요 (질문 응답 제외).")
