@@ -501,11 +501,12 @@ def build_cli():
 
 def main(argv: Optional[List[str]] = None) -> None:
     rt.setup_console()
+    rt.CURRENT_ARGV = list(argv) if argv is not None else sys.argv[1:]
     args = build_cli().parse_args(argv)
     args._argv = list(argv) if argv is not None else sys.argv[1:]
     handler = {"scan": cmd_scan, "classify": cmd_classify, "peek": cmd_peek, "summary": cmd_summary, "list": cmd_list,
                "jobs": cmd_jobs}[args.command]
-    rt.run_cli(args.command, lambda: handler(args))
+    rt.run_cli(args.command, lambda: handler(args), args._argv)
 
 
 if __name__ == "__main__":

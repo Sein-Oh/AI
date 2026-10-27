@@ -16,7 +16,10 @@ import sys
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 TOOL = "doc_classifier"
+VERSION = "0.9.2"
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
+ERROR_LOG_MAX = 2 * 1024 * 1024          # 오류 로그가 이보다 커지면 errors.old.txt로 넘기고 새로 시작
+CURRENT_ARGV: Optional[List[str]] = None  # 진입점이 채움 (인자 오류 기록에도 실제 명령을 남기려고)
 
 
 # ==============================================================================
@@ -118,9 +121,38 @@ def error_payload(exc: BaseException, command: str = "") -> Dict[str, Any]:
     return base
 
 
-def run_cli(command: str, execute: Callable[[], Dict[str, Any]]) -> None:
+def error_log_path() -> str:
+    return os.path.join(get_data_dir(), "logs", "errors.txt")
+
+
+def write_error_log(command: str, argv: Optional[Sequence[str]], payload: Dict[str, Any], trace: str = "") -> None:
+    """실패한 실행을 data\\logs\\errors.txt에 자동으로 덧붙입니다 (실기 결과를 나중에 읽고 판단하기 위한 기록).
+    기록 실패가 응답 계약(stdout 1줄 JSON)을 깨면 안 되므로 어떤 오류도 삼킵니다."""
+    try:
+        import platform
+        path = error_log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path) and os.path.getsize(path) > ERROR_LOG_MAX:
+            os.replace(path, path[:-4] + ".old.txt")
+        if argv is None:
+            argv = CURRENT_ARGV if CURRENT_ARGV is not None else sys.argv[1:]
+        args = " ".join(quote_arg(a) for a in argv)
+        lines = [f"===== {_dt.datetime.now().isoformat(timespec='seconds')} | {TOOL} {VERSION} | "
+                 f"Python {platform.python_version()} | {platform.platform()}",
+                 f"명령: {args}",
+                 f"결과: {payload.get('error_type')} | {payload.get('message')}"]
+        if trace:
+            lines.append("traceback:\n" + trace.rstrip())
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n\n")
+    except Exception:
+        pass
+
+
+def run_cli(command: str, execute: Callable[[], Dict[str, Any]], argv: Optional[Sequence[str]] = None) -> None:
     """본문을 실행하고, 어떤 경우에도 stdout 1줄 JSON과 종료 코드(0/1/130)를 보장합니다.
-    본문이 결과에 "_exit"를 넣으면 그 종료 코드를 씁니다 (예: 중단 후 저장까지 마친 경우 130)."""
+    본문이 결과에 "_exit"를 넣으면 그 종료 코드를 씁니다 (예: 중단 후 저장까지 마친 경우 130).
+    실패(exit 1)는 data\\logs\\errors.txt에 자동 기록합니다 (사용자 중단은 기록하지 않음)."""
     setup_console()
     try:
         result = execute()
@@ -131,11 +163,14 @@ def run_cli(command: str, execute: Callable[[], Dict[str, Any]]) -> None:
     except SystemExit:
         raise
     except Exception as e:
+        import traceback
+        trace = traceback.format_exc()
         log("ERROR", f"{type(e).__name__}: {e}")
         if _verbose():
-            import traceback
-            sys.stderr.write(traceback.format_exc())
-        emit_json(error_payload(e, command))
+            sys.stderr.write(trace)
+        payload = error_payload(e, command)
+        write_error_log(command, argv, payload, trace if payload.get("error_type") == "internal" else "")
+        emit_json(payload)
         sys.exit(1)
     code = result.pop("_exit", None)
     emit_json(result)
@@ -147,9 +182,11 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
-        emit_json({"status": "error", "tool": TOOL, "command": "", "error_type": "input",
+        payload = {"status": "error", "tool": TOOL, "command": "", "error_type": "input",
                    "message": f"CLI 인자 오류: {message}",
-                   "agent_directive": "STOP_RETRY: CLI 인자가 잘못되었습니다. SKILL.md의 명령 형식을 확인하고 사용자에게 보고하세요."})
+                   "agent_directive": "STOP_RETRY: CLI 인자가 잘못되었습니다. SKILL.md의 명령 형식을 확인하고 사용자에게 보고하세요."}
+        write_error_log("", None, payload)
+        emit_json(payload)
         sys.exit(2)
 
 

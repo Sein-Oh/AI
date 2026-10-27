@@ -237,3 +237,31 @@ def test_default_job_name_from_folder_or_drive():
     assert st.job_name_for("D:\\").startswith("D드라이브_")
     assert st.job_name_for("D:\\자료\\보고서\\").startswith("보고서_")      # 끝 구분자
     assert st.job_name_for("D:/자료/보고서").startswith("보고서_")              # 슬래시 구분자
+
+
+def test_failures_are_appended_to_error_log(tmp_path, run, data_dir, monkeypatch):
+    log = data_dir / "logs" / "errors.txt"
+    run("jobs")
+    assert not log.exists()                                                  # 성공은 기록하지 않음
+    run("scan", "--root", str(tmp_path / "없는폴더"))
+    run("scan", "--없는옵션")
+    monkeypatch.setattr(doc_classifier, "cmd_jobs", lambda args: 1 / 0)     # 내부 오류는 traceback까지
+    code, out = run("jobs")
+    assert code == 1 and out["error_type"] == "internal"
+    text = log.read_text(encoding="utf-8")
+    assert text.count("=====") == 3 and "doc_classifier 0.9." in text
+    assert "명령: scan --root" in text and "찾을 수 없습니다" in text
+    assert "명령: scan --없는옵션" in text and "CLI 인자 오류" in text
+    assert "ZeroDivisionError" in text and "traceback:" in text and text.count("traceback:") == 1
+
+
+def test_error_log_rotates_and_never_breaks_output(tmp_path, run, data_dir, monkeypatch):
+    import _dc_runtime as rt
+    monkeypatch.setattr(rt, "ERROR_LOG_MAX", 10)
+    run("scan", "--root", str(tmp_path / "없음1"))
+    run("scan", "--root", str(tmp_path / "없음2"))
+    logs = data_dir / "logs"
+    assert (logs / "errors.old.txt").exists() and "없음2" in (logs / "errors.txt").read_text(encoding="utf-8")
+    monkeypatch.setattr(rt, "error_log_path", lambda: str(tmp_path / "없는" / "\0잘못된경로"))
+    code, out = run("scan", "--root", str(tmp_path / "없음3"))               # 기록에 실패해도 JSON 응답은 그대로
+    assert code == 1 and out["error_type"] == "input"

@@ -219,3 +219,21 @@ python doc_classifier.py list --job 자료 --category 미분류 --page 2
 python -m pytest -q CLI/doc-classifier           :: 오프라인 (Linux에서도 동작)
 python CLI/doc-classifier/tools/run_win_tests.py  :: Windows 실기 (S1~S9 목록화, S10~S15 분류/확인/보고서)
 ```
+
+### 실기 결과 파일 (테스트 폴더, 기본 `C:\dc_test`)
+| 파일 | 내용 |
+|---|---|
+| `report_<시각>.txt` | 사람이 보는 요약 (항목별 PASS/FAIL/SKIP/ERROR와 수치) |
+| `diag_<시각>.txt` | **AI 판독용 진단 로그**: 환경(OS, Python, 라이브러리 버전, 메모리, 디스크, 파일 시스템, 도구 버전/커밋), 항목별 결과와 시간, 각 항목에서 실행한 모든 명령의 인자·종료코드·시간·결과 JSON(앞 4000자)·stderr의 경고/오류/traceback, 러너 traceback, 도구 오류 로그 |
+
+- 이 진단 로그 파일 하나를 그대로 Claude에게 첨부하거나 붙여넣으면 실패 원인을 판단할 수 있습니다.
+- 러너가 오류나 Ctrl+C로 멈춰도 그때까지의 결과로 두 파일을 저장합니다.
+- 러너는 `DOCCLS_VERBOSE=1`로 도구를 실행해 내부 오류의 traceback을 남깁니다. stderr의 `[PROGRESS]` 줄은 빼고 경고/오류만 담습니다.
+
+## 9. 자동 오류 기록 (`data\logs\errors.txt`)
+
+실행이 실패하면(종료코드 1, 인자 오류 2) 도구가 자동으로 `data\logs\errors.txt`에 덧붙입니다 (`DOCCLS_DATA_DIR`을 바꾸면 그 아래 `logs`).
+- 한 건: 시각, 도구 버전, Python/OS, 실행한 명령 인자, 오류 종류와 메시지. 내부 오류(`ERROR:`)는 traceback까지.
+- 성공과 사용자 중단(Ctrl+C)은 기록하지 않습니다. 2MB를 넘으면 `errors.old.txt`로 넘기고 새로 시작합니다.
+- 기록에 실패해도 응답(stdout 1줄 JSON)은 그대로입니다.
+- 실제 사용 중 문제가 생기면 이 파일을 Claude에게 주면 됩니다. SKILL.md도 `ERROR:`일 때 이 경로를 사용자에게 알리도록 안내합니다.

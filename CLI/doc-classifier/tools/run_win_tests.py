@@ -12,12 +12,18 @@
     S10 대량 트리 분류 속도/메모리   S11 형식별 확인(peek)과 잠긴 파일, 원본 불변   S12 OneDrive 자리표시자를 열지 않음
     S13 엑셀 보고서(대량, 열려 있는 보고서)   S14 list 조회(Windows 경로 조건, 페이지)   S15 실제 드라이브(S7 작업) 분류->확인->보고서
     S9 모든 호출의 stdout 1줄 JSON (마지막)
-작업 DB는 테스트 폴더의 jobs\\ 에 만들고(DOCCLS_DATA_DIR), 결과는 report_*.txt로 저장합니다.
+작업 DB는 테스트 폴더의 jobs\\ 에 만들고(DOCCLS_DATA_DIR), 결과는 두 파일로 저장합니다.
+    report_<시각>.txt  사람이 보는 요약 (항목별 PASS/FAIL/SKIP/ERROR)
+    diag_<시각>.txt    AI 판독용 진단 로그: 환경, 모든 명령의 인자·종료코드·시간·JSON·경고/오류, traceback,
+                       도구의 자동 오류 로그(jobs\\logs\\errors.txt). 이 파일을 그대로 Claude에게 주면 원인을 판단할 수 있습니다.
+중간에 오류나 Ctrl+C로 멈춰도 두 파일은 저장합니다.
 """
 import argparse
 import datetime as dt
 import json
 import os
+import platform
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -37,6 +43,9 @@ class Ctx:
         self.dir = os.path.abspath(args.dir)
         self.jobs = os.path.join(self.dir, "jobs")
         self.results = []
+        self.calls = []              # 모든 doc_classifier 호출 (진단 로그용)
+        self.current = ""            # 지금 실행 중인 항목 id
+        self.started = dt.datetime.now()
 
     def path(self, *parts):
         return os.path.join(self.dir, *parts)
@@ -57,18 +66,30 @@ def _parse(proc_out, proc_err, code, label):
             data = json.loads(lines[-1])
         except Exception:
             CONTRACT.append((label, "stdout 마지막 줄이 JSON이 아님"))
-    return data, code, proc_err.decode("utf-8", errors="replace")[-1500:]
+    return data, code, proc_err.decode("utf-8", errors="replace")
 
 
 def env_for(ctx):
-    return dict(os.environ, PYTHONIOENCODING="utf-8", DOCCLS_DATA_DIR=ctx.jobs)
+    # DOCCLS_VERBOSE=1: 내부 오류면 stderr에 traceback까지 (진단 로그가 걸러 담음)
+    return dict(os.environ, PYTHONIOENCODING="utf-8", DOCCLS_DATA_DIR=ctx.jobs, DOCCLS_VERBOSE="1")
 
 
 def dc(ctx, *args, timeout=7200):
     cmd = [PY, os.path.join(ROOT, "doc_classifier.py")] + [str(a) for a in args]
     log("    $ python doc_classifier.py " + " ".join(str(a) for a in args))
-    p = subprocess.run(cmd, cwd=ROOT, capture_output=True, timeout=timeout, env=env_for(ctx))
-    return _parse(p.stdout, p.stderr, p.returncode, "doc_classifier " + (args[0] if args else ""))
+    t0 = time.time()
+    call = {"test": ctx.current, "args": [str(a) for a in args], "exit": None, "seconds": None, "stdout": "", "stderr": ""}
+    ctx.calls.append(call)
+    try:
+        p = subprocess.run(cmd, cwd=ROOT, capture_output=True, timeout=timeout, env=env_for(ctx))
+    except subprocess.TimeoutExpired as e:
+        call.update(exit="timeout", seconds=round(time.time() - t0, 1),
+                    stderr=(e.stderr or b"").decode("utf-8", errors="replace"))
+        raise
+    call.update(exit=p.returncode, seconds=round(time.time() - t0, 1), stdout=p.stdout.decode("utf-8", errors="replace"),
+                stderr=p.stderr.decode("utf-8", errors="replace"))
+    data, code, err = _parse(p.stdout, p.stderr, p.returncode, "doc_classifier " + (args[0] if args else ""))
+    return data, code, err[-1500:]
 
 
 def record(ctx, tid, title, ok, detail="", data=None, code=None, err=""):
@@ -83,12 +104,17 @@ def record(ctx, tid, title, ok, detail="", data=None, code=None, err=""):
 
 def run_test(ctx, tid, title, fn):
     log(f"\n[{tid}] {title}")
+    ctx.current = tid
+    t0 = time.time()
+    n = len(ctx.results)
     try:
         fn()
     except Exception as e:
         ctx.results.append({"id": tid, "title": title, "status": "ERROR", "detail": f"{type(e).__name__}: {e}",
-                            "trace": traceback.format_exc()[-1000:]})
+                            "trace": traceback.format_exc()[-3000:]})
         log(f"  => [ERROR] {tid} {e}")
+    for r in ctx.results[n:]:
+        r["seconds"] = round(time.time() - t0, 1)
 
 
 def ok_(d):
@@ -451,6 +477,152 @@ def write_report(ctx):
     return path, counts
 
 
+# ==============================================================================
+# AI 판독용 진단 로그
+# ==============================================================================
+
+KEEP_STDERR = re.compile(r"^\[(WARN|ERROR)\]|Traceback|^\s+File |Error:|Exception")
+JSON_LIMIT = 4000
+
+
+def _filter_stderr(text):
+    """stderr에서 [WARN]/[ERROR]/traceback 줄만 남기고, 마지막 진행 줄 3개를 붙입니다 (PROGRESS 홍수 제거)."""
+    lines = text.splitlines()
+    keep, in_trace = [], False
+    for ln in lines:
+        if ln.startswith("Traceback"):
+            in_trace = True
+        if in_trace or KEEP_STDERR.search(ln):
+            keep.append(ln)
+        if in_trace and ln and not ln.startswith((" ", "Traceback")):
+            in_trace = False                         # 예외 마지막 줄까지 담고 끝
+    tail = [ln for ln in lines[-3:] if ln not in keep]
+    out = keep[:80] + (["    ... (생략)"] if len(keep) > 80 else []) + (["  (마지막 줄) " + t for t in tail] if tail else [])
+    return "\n".join(out)
+
+
+def _pkg_versions():
+    out = {}
+    try:
+        from importlib import metadata
+    except ImportError:
+        return out
+    for name in ("pymupdf", "olefile", "openpyxl", "python-docx", "python-pptx", "pywin32"):
+        try:
+            out[name] = metadata.version(name)
+        except Exception:
+            out[name] = "없음"
+    return out
+
+
+def _memory_text():
+    if sys.platform != "win32":
+        return "-"
+    try:
+        import ctypes
+
+        class MS(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong), ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong), ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        m = MS()
+        m.dwLength = ctypes.sizeof(MS)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+        return f"전체 {m.ullTotalPhys / 1073741824:.1f}GB, 사용 가능 {m.ullAvailPhys / 1073741824:.1f}GB"
+    except Exception as e:
+        return f"알 수 없음 ({e})"
+
+
+def _volume_text(path):
+    parts = []
+    try:
+        u = shutil.disk_usage(path)
+        parts.append(f"여유 {u.free / 1073741824:.1f}GB / 전체 {u.total / 1073741824:.1f}GB")
+    except Exception:
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            fs = ctypes.create_unicode_buffer(32)
+            root = os.path.splitdrive(os.path.abspath(path))[0] + "\\"
+            if ctypes.windll.kernel32.GetVolumeInformationW(root, None, 0, None, None, None, fs, 32):
+                parts.append(f"파일 시스템 {fs.value}")
+        except Exception:
+            pass
+    return ", ".join(parts) or "-"
+
+
+def _tool_version():
+    try:
+        with open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8") as f:
+            m = re.search(r'version:\s*"([^"]+)"', f.read())
+        return m.group(1) if m else "?"
+    except OSError:
+        return "?"
+
+
+def _git_commit():
+    try:
+        p = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, timeout=10)
+        return p.stdout.decode().strip() or "-"
+    except Exception:
+        return "-(git 없음)"
+
+
+def write_diag(ctx, stamp, note=""):
+    """AI가 읽고 원인을 판단할 수 있게 실행 기록 전부를 한 파일에 남깁니다."""
+    path = ctx.path(f"diag_{stamp}.txt")
+    counts = {}
+    for r in ctx.results:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    L = ["# doc-classifier 실기 테스트 진단 로그 (AI 판독용)",
+         "# 읽는 법: [요약] -> PASS가 아닌 항목의 [항목] 상세 -> 그 항목의 [호출] 기록(인자, 종료코드, JSON, 경고/오류)",
+         "#         -> [도구 오류 로그]. 종료코드 0=ok, 1=오류, 2=인자 오류, 130=중단. JSON은 앞 4000자까지.", ""]
+    L += ["[환경]",
+          f"  시작/끝: {ctx.started:%Y-%m-%d %H:%M:%S} / {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
+          f"  도구 버전: {_tool_version()} (git {_git_commit()})",
+          f"  OS: {platform.platform()} / {platform.machine()} / CPU {os.cpu_count()}개 / 메모리 {_memory_text()}",
+          f"  Python: {sys.version.split()[0]} ({sys.executable})",
+          "  라이브러리: " + ", ".join(f"{k} {v}" for k, v in _pkg_versions().items()),
+          f"  테스트 폴더: {ctx.dir} ({_volume_text(ctx.dir)})",
+          f"  인자: {' '.join(sys.argv[1:]) or '(기본값)'}", ""]
+    if note:
+        L += ["[러너 중단]", "  " + note.replace("\n", "\n  "), ""]
+    L += ["[요약] " + (", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "결과 없음")]
+    for r in ctx.results:
+        L.append(f"  [{r['status']}] {r['id']} {r['title']} ({r.get('seconds', '-')}초) - {r.get('detail', '')}")
+    L.append("")
+    L.append("[계약 위반] " + ("; ".join(f"{a}: {b}" for a, b in CONTRACT) if CONTRACT else "없음"))
+    L.append("")
+    for r in ctx.results:
+        L.append(f"[항목] {r['id']} {r['status']} {r['title']}")
+        L.append(f"  내용: {r.get('detail', '')}")
+        if r.get("trace"):
+            L.append("  러너 traceback:\n    " + r["trace"].rstrip().replace("\n", "\n    "))
+        for i, c in enumerate([c for c in ctx.calls if c["test"] == r["id"]], 1):
+            L.append(f"  [호출 {i}] doc_classifier.py {' '.join(c['args'])}")
+            L.append(f"    종료코드 {c['exit']}, {c['seconds']}초")
+            out = c["stdout"].strip()
+            if out:
+                L.append("    JSON: " + (out[:JSON_LIMIT] + (" ...(잘림)" if len(out) > JSON_LIMIT else "")))
+            err = _filter_stderr(c["stderr"])
+            if err:
+                L.append("    stderr(경고/오류):\n      " + err.replace("\n", "\n      "))
+        L.append("")
+    elog = os.path.join(ctx.jobs, "logs", "errors.txt")
+    L.append("[도구 오류 로그] " + elog)
+    if os.path.exists(elog):
+        with open(elog, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        L.append(text[-20000:] if len(text) > 20000 else text)
+    else:
+        L.append("  (없음: 도구 실행 오류가 한 번도 없었음)")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description="doc-classifier Windows 실기 테스트 러너")
     parser.add_argument("--dir", default=r"C:\dc_test", help="테스트 폴더 (실행 때마다 새로 만듦)")
@@ -467,14 +639,25 @@ def main():
     log("=" * 70)
     log(f" doc-classifier Windows 테스트 / 테스트 폴더: {ctx.dir}")
     log("=" * 70)
-    test_all(ctx, only)
+    note = ""
+    try:
+        test_all(ctx, only)
+    except KeyboardInterrupt:
+        note = "Ctrl+C로 중단됨 (그때까지의 결과만 기록)"
+    except Exception:
+        note = "러너 자체 오류:\n" + traceback.format_exc()
     path, counts = write_report(ctx)
+    diag = write_diag(ctx, os.path.basename(path)[len("report_"):-len(".txt")], note)
     log("\n" + "=" * 70)
     log(" 결과 요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     for r in ctx.results:
         if r["status"] != "PASS":
             log(f"   [{r['status']}] {r['id']} {r['title']} {r.get('detail', '')}")
+    if note:
+        log(" 러너 중단: " + note.splitlines()[0])
     log(f" 보고서: {path}")
+    log(f" 진단 로그(AI 판독용): {diag}")
+    log("   -> 이 진단 로그 파일을 그대로 Claude에게 첨부하거나 붙여넣으면 결과를 판단할 수 있습니다.")
     log("=" * 70)
 
 
