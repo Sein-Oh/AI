@@ -128,3 +128,13 @@ def test_pre_2_0_model_metadata_is_regression(tmp_path):
     payload = run_tool("ml_predict.py", "-m", str(tmp_path / "old_ml_data" / "v1"),
                        "-i", "반응온도=240,소비전력=65,압축압력=3,촉매비율=0.8,수분함량=20")
     assert payload["predictions_summary"]["생산효율(%)"]["task"] == "regression"
+
+
+def test_delta_compares_same_targets_only(tmp_path):
+    """A new target in the same ledger starts from 'base' instead of comparing with another target."""
+    data = make_class_sample(str(tmp_path / "dt.csv"))
+    run_tool("ml_train.py", "-f", data, "-x", FEATS, "-y", "불량여부", "--task", "classification")
+    second = run_tool("ml_train.py", "-f", data, "-x", FEATS, "-y", "품질등급", "--task", "classification")
+    assert second["delta_score"] == "base" and second["is_best"] is True
+    third = run_tool("ml_train.py", "-f", data, "-x", FEATS, "-y", "품질등급", "--task", "classification", "--seed", "7")
+    assert isinstance(third["delta_score"], float)

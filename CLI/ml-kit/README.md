@@ -37,6 +37,7 @@ ml-kit/
 ├── README.md               # [본 문서] 툴킷 종합 안내서, 완전 CLI 레퍼런스
 ├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
+├── samples/                # PC 실기 테스트 샘플 + PC_TEST.md 체크리스트 (스킬 설치 시 복사 불필요)
 ├── requirements.txt        # 런타임 의존성
 │
 ├── [1단계: 학습 엔진]
@@ -59,7 +60,7 @@ OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이
 | 전체 프로젝트 공용 (권장) | `C:\Users\<사용자>\.config\opencode\skills\ml-kit\` |
 | 특정 프로젝트 전용 | `<프로젝트>\.opencode\skills\ml-kit\` |
 
-1. 위 위치에 `ml-kit` 폴더째 복사합니다 (`SKILL.md`, `ml_*.py` 포함, `tests\`는 생략 가능).
+1. 위 위치에 `ml-kit` 폴더째 복사합니다 (`SKILL.md`, `ml_*.py` 포함, `tests\`, `samples\`는 생략 가능).
 2. **권장**: 복사한 `SKILL.md` 안의 `<SKILL_DIR>` 를 실제 절대 경로(예: `C:\Users\hong\.config\opencode\skills\ml-kit`)로 모두 바꿔 저장합니다. 경량 LLM이 경로를 추론할 필요가 없어집니다.
 3. 권한을 제한하는 경우 `opencode.json` 에 `"permission": {"skill": {"ml-kit": "allow"}}` 를 추가합니다.
 4. OpenCode에서 에이전트가 `skill({ name: "ml-kit" })` 로 스킬을 불러오는지 확인합니다.

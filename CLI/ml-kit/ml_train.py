@@ -1269,7 +1269,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         if not project_desc and history_records:
             project_desc = history_records[-1].get("description", "")
 
-        same_task = [h for h in history_records if h.get("task", TASK_REGRESSION) == task]
+        # Scores are comparable only for the same task AND the same target set
+        same_task = [h for h in history_records
+                     if h.get("task", TASK_REGRESSION) == task and sorted(h.get("targets", [])) == sorted(target_names)]
 
         def _rec_score(h: Dict[str, Any]) -> Optional[float]:
             v = h.get("mean_val_score", h.get("mean_val_r2", h.get("val_r2")))
