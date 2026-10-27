@@ -22,6 +22,8 @@ from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     InputError, sanitize_filename, normalize_version, warn_long_path,
     read_text_file, load_json_file, resolve_column_names, coerce_numeric,
     load_data_file as _load_table, apply_eval_expressions,
+    parse_datetime, normalize_category, prepare_features, date_part_column, input_column_owner, DATE_PARTS,
+    strip_unit,
     retry_fs, remove_tree, atomic_write_text, write_csv_excel_compatible,
 )
 
@@ -47,18 +49,21 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     r2_score, mean_absolute_error, root_mean_squared_error,
     f1_score, accuracy_score, balanced_accuracy_score, roc_auc_score,
-    confusion_matrix, classification_report,
+    confusion_matrix, classification_report, make_scorer,
 )
 from sklearn.inspection import permutation_importance
 from sklearn.exceptions import ConvergenceWarning
 
 # 5 Core Regression Algorithms
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor, ExtraTreesRegressor
-from sklearn.linear_model import Ridge, ElasticNet
+from sklearn.linear_model import RidgeCV, ElasticNetCV
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.base import clone
 
 # 5 Core Classification Algorithms (--task classification)
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.neighbors import KNeighborsClassifier
 
 TASK_REGRESSION = "regression"
@@ -68,6 +73,7 @@ METRIC_LABEL = {TASK_REGRESSION: "Val R2", TASK_CLASSIFICATION: "Val Macro-F1"}
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 # ==============================================================================
@@ -201,6 +207,7 @@ def validate_and_sanitize_data(
     - Fail-fast with suggestions and the available columns list if spelling fails.
     - Converts every X/Y column to float regardless of pandas version (object / str dtype),
       stripping thousands separators and placeholder strings ('-', 'N/A', '미측정', ...).
+    Feature columns are NOT converted here (see infer_feature_schema).
     Returns (df_clean, features, targets, aliases_applied).
     """
     all_available = [str(c) for c in df.columns]
@@ -240,14 +247,10 @@ def validate_and_sanitize_data(
                     except Exception as e:
                         sys.stderr.write(f"[WARN] 타입 변환 실패 ({c_name} -> {c_type}): {e}\n")
 
-    # Sanitize numerical columns (works for pandas 2 'object' and pandas 3 'str' dtypes)
-    numeric_cols = feature_names + (target_names if task == TASK_REGRESSION else [])
+    # Targets: numeric for regression (pandas 2 'object' / pandas 3 'str' safe), labels for classification.
+    # Features keep their raw values here; infer_feature_schema() decides numeric/categorical/datetime.
+    numeric_cols = target_names if task == TASK_REGRESSION else []
     for col in numeric_cols:
-        if pd.api.types.is_datetime64_any_dtype(df_clean[col]):
-            raise InputError(
-                f"컬럼 '{col}'은(는) 날짜/시간 타입이라 피처로 직접 사용할 수 없습니다. "
-                f"-x 목록에서 제외하거나 --eval로 수치 파생변수를 만드십시오."
-            )
         df_clean[col] = coerce_numeric(df_clean[col])
 
     if task == TASK_CLASSIFICATION:
@@ -268,32 +271,194 @@ def validate_and_sanitize_data(
 
 
 # ==============================================================================
+# 4-B. Feature Type Inference (numeric / categorical / datetime)
+# ==============================================================================
+
+MAX_CATEGORIES = 200
+
+
+def infer_feature_schema(
+    df: pd.DataFrame,
+    feature_names: List[str],
+    derived_features: List[str],
+    dtypes_arg: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Decides how each feature enters the model, without LLM involvement:
+    - numeric     : >= 90% of non-empty values parse as numbers (thousands separators allowed)
+    - datetime    : Excel dates or >= 90% 'YYYY-MM-DD[ HH:MM]' strings -> year/month/day/dayofweek/hour
+    - categorical : everything else (one-hot encoded). ID-like columns are rejected.
+    --dtypes 'col:str' forces categorical, 'col:datetime' forces datetime, 'col:float' forces numeric.
+    """
+    forced: Dict[str, str] = {}
+    if dtypes_arg:
+        for pair in dtypes_arg.split(","):
+            if ":" in pair:
+                c, t = pair.split(":", 1)
+                t = t.strip().lower()
+                kind = ("categorical" if t in ("str", "object", "category", "cat") else
+                        "datetime" if t in ("datetime", "date") else
+                        "numeric" if t in ("float", "float64", "int", "int64", "num") else None)
+                if kind:
+                    forced[c.strip()] = kind
+
+    numeric: List[str] = []
+    categorical: Dict[str, List[str]] = {}
+    dates: Dict[str, List[str]] = {}
+
+    for col in feature_names:
+        raw = df[col]
+        kind = forced.get(col)
+        if col in derived_features:
+            kind = "numeric"
+        if kind is None:
+            non_null = raw.notna() & (raw.astype(str).str.strip() != "")
+            n = int(non_null.sum())
+            is_dt_obj = raw.map(lambda v: isinstance(v, (datetime, pd.Timestamp, np.datetime64)))
+            if pd.api.types.is_datetime64_any_dtype(raw) or (n and is_dt_obj.sum() >= 0.9 * n):
+                kind = "datetime"  # Excel date cells arrive as datetime objects
+            elif n == 0 or pd.api.types.is_numeric_dtype(raw):
+                kind = "numeric"
+            elif coerce_numeric(raw).notna().sum() >= 0.9 * n:
+                kind = "numeric"
+            elif parse_datetime(raw).notna().sum() >= 0.9 * n:
+                kind = "datetime"
+            else:
+                kind = "categorical"
+
+        if kind == "numeric":
+            numeric.append(col)
+        elif kind == "datetime":
+            dt = parse_datetime(raw)
+            if dt.notna().sum() == 0:
+                raise InputError(f"컬럼 '{col}'에서 날짜를 읽을 수 없습니다. 'YYYY-MM-DD' 형식인지 확인하십시오.")
+            parts = [pt for pt in DATE_PARTS if getattr(dt.dt, pt).nunique(dropna=True) > 1]
+            dates[col] = parts or ["year"]
+        else:
+            cats = normalize_category(raw)
+            uniq = sorted(cats.dropna().unique().tolist())
+            n_valid = int(cats.notna().sum())
+            if len(uniq) > MAX_CATEGORIES or (len(uniq) > 50 and len(uniq) > 0.5 * max(n_valid, 1)):
+                raise InputError(
+                    f"피처 '{col}'은(는) 문자형 값의 종류가 {len(uniq)}개로 너무 많아 ID/일련번호로 보입니다. "
+                    f"-x 목록에서 제외하십시오. 숫자 컬럼인데 잘못 판별되었다면 --dtypes '{col}:float'를 지정하십시오."
+                )
+            categorical[col] = uniq
+            sys.stderr.write(f"[INFO] 범주형 피처 감지: '{col}' ({len(uniq)}개 범주, 원-핫 인코딩)\n")
+
+    for col, parts in dates.items():
+        sys.stderr.write(f"[INFO] 날짜 피처 감지: '{col}' -> {[date_part_column(col, p) for p in parts]}\n")
+
+    input_columns = numeric + [date_part_column(c, p) for c, ps in dates.items() for p in ps] + list(categorical)
+    return {"numeric": numeric, "categorical": categorical, "datetime": dates, "input_columns": input_columns}
+
+
+def build_pipeline(estimator: Any, schema: Dict[str, Any], step_name: str) -> Pipeline:
+    """Leakage-free pipeline: numeric -> median impute + scale, categorical -> one-hot (unknown ignored)."""
+    num_cols = [c for c in schema["input_columns"] if c not in schema["categorical"]]
+    cat_cols = list(schema["categorical"])
+    transformers = []
+    if num_cols:
+        transformers.append(("num", Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]), num_cols))
+    if cat_cols:
+        transformers.append(("cat", Pipeline([
+            ("imputer", SimpleImputer(strategy="constant", fill_value="__missing__")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]), cat_cols))
+    pre = ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=False)
+    return Pipeline([("preprocess", pre), (step_name, estimator)])
+
+
+PERMUTATION_MAX_ROWS = 5000
+KNN_MAX_ROWS = 50000
+
+
+def feature_importance_ranks(
+    pipe: Pipeline, X: pd.DataFrame, y: np.ndarray, schema: Dict[str, Any], seed: int, scoring: Optional[str]
+) -> List[Dict[str, Any]]:
+    """
+    Permutation importance on at most PERMUTATION_MAX_ROWS rows (keeps large data fast),
+    aggregated back to user-facing columns (date parts are summed into their date column).
+    """
+    Xs, ys = X, y
+    if len(X) > PERMUTATION_MAX_ROWS:
+        idx = np.random.default_rng(seed).choice(len(X), PERMUTATION_MAX_ROWS, replace=False)
+        Xs, ys = X.iloc[idx], y[idx]
+    try:
+        res = permutation_importance(pipe, Xs, ys, n_repeats=5, random_state=seed, scoring=scoring)
+        raw = np.maximum(res.importances_mean, 0)
+    except Exception:
+        raw = np.ones(X.shape[1])
+
+    owner = input_column_owner(schema)
+    agg: Dict[str, float] = {}
+    for col, imp in zip(X.columns, raw):
+        agg[owner.get(col, col)] = agg.get(owner.get(col, col), 0.0) + float(imp)
+    total = sum(agg.values()) or 1.0
+    ranks = [{"feature": f, "importance": round(v, 4), "pct": round(v / total * 100, 1)} for f, v in agg.items()]
+    return sorted(ranks, key=lambda r: r["importance"], reverse=True)
+
+
+def _model_params(pipe: Pipeline) -> Dict[str, Any]:
+    """Hyper-parameters chosen by the CV-tuned linear models (for the leaderboard)."""
+    est = pipe.steps[-1][1]
+    out = {}
+    for attr, key in (("alpha_", "alpha"), ("l1_ratio_", "l1_ratio"), ("C_", "C")):
+        val = getattr(est, attr, None)
+        if val is None:
+            continue
+        first = np.ravel(np.asarray(val, dtype=object))[0]
+        if isinstance(first, (int, float, np.integer, np.floating)):
+            out[key] = round(float(first), 6)
+    return out
+
+
+# ==============================================================================
 # 5. 5-Model Competitive Regression Pool
 # ==============================================================================
 
-def get_regression_models(seed: int = 42) -> Dict[str, Any]:
+LINEAR_ALPHAS = np.logspace(-3, 3, 13)
+
+
+TREE_SAMPLE_ROWS = 10000
+
+
+def _bagging_kwargs(n_rows: int) -> Dict[str, Any]:
+    """Large data: each tree sees a bootstrap sample of TREE_SAMPLE_ROWS rows (3~5x faster, same accuracy class)."""
+    if n_rows > TREE_SAMPLE_ROWS:
+        return {"bootstrap": True, "max_samples": TREE_SAMPLE_ROWS / n_rows}
+    return {}
+
+
+def get_regression_models(seed: int = 42, n_rows: int = 0) -> Dict[str, Any]:
     """
     Returns 5 distinct, mathematically diverse regression models:
     1. HistGradientBoostingRegressor (GBDT, non-linear, robust)
     2. RandomForestRegressor (Bagging ensemble, variance reduction)
     3. ExtraTreesRegressor (Extremely randomized trees, tabular smooth)
-    4. Ridge (L2 regularized linear, multicollinearity guard)
-    5. ElasticNet (L1 + L2 regularized linear, sparse feature selection)
+    4. Ridge (L2 linear; alpha auto-tuned by efficient LOO-CV)
+    5. ElasticNet (L1 + L2 linear; alpha / l1_ratio auto-tuned by inner 3-fold CV)
     """
     return {
         "HistGradientBoosting": HistGradientBoostingRegressor(random_state=seed),
-        "RandomForest": RandomForestRegressor(n_estimators=100, random_state=seed, n_jobs=-1),
-        "ExtraTrees": ExtraTreesRegressor(n_estimators=100, random_state=seed, n_jobs=-1),
-        "Ridge": Ridge(alpha=1.0),
-        "ElasticNet": ElasticNet(alpha=1.0, l1_ratio=0.5, random_state=seed, max_iter=2000)
+        "RandomForest": RandomForestRegressor(n_estimators=100, random_state=seed, n_jobs=-1, **_bagging_kwargs(n_rows)),
+        "ExtraTrees": ExtraTreesRegressor(n_estimators=100, random_state=seed, n_jobs=-1, **_bagging_kwargs(n_rows)),
+        "Ridge": RidgeCV(alphas=LINEAR_ALPHAS),
+        "ElasticNet": ElasticNetCV(l1_ratio=[0.1, 0.5, 0.9], cv=3, max_iter=5000, random_state=seed),
     }
 
 
+PREDICTION_INTERVAL_LEVEL = 0.90
+
+
 def train_and_benchmark_models(
-    X_df: pd.DataFrame,
+    X: pd.DataFrame,
     y_series: pd.Series,
     target_name: str,
-    feature_names: List[str],
+    schema: Dict[str, Any],
     seed: int = 42,
     log_offset: int = 20,
     log_weight: int = 50
@@ -302,15 +467,16 @@ def train_and_benchmark_models(
     Performs 5-Fold Leakage-Free Cross-Validation across the 5 models.
     Selects champion model by Out-of-Fold (OOF) R2 score.
     Fits champion model on 100% of data and extracts permutation feature importance.
+    Prediction interval: 5%/95% quantiles of the champion's OOF residuals (90% level).
     """
-    valid_mask = y_series.notna()
-    X = X_df.loc[valid_mask, feature_names].values
-    y = y_series.loc[valid_mask].values
+    valid_mask = y_series.notna().values
+    X = X.loc[valid_mask].reset_index(drop=True)
+    y = y_series.loc[valid_mask].astype(float).values
 
     if len(y) < 10:
         raise InputError(f"타겟 '{target_name}'의 유효 학습 샘플 수가 너무 적습니다 ({len(y)}개). 최소 10개 이상 필요합니다.")
 
-    models = get_regression_models(seed=seed)
+    models = get_regression_models(seed=seed, n_rows=int(len(y) * 0.8))
     model_count = len(models)
     # Dynamic K-Fold split: adapts gracefully to small sample sizes (N < 25)
     n_splits = min(5, max(2, len(y) // 3))
@@ -322,44 +488,34 @@ def train_and_benchmark_models(
     for m_idx, (model_name, regressor) in enumerate(models.items()):
         oof_preds = np.zeros(len(y))
         train_r2_list = []
+        params = {}
 
         for fold, (train_idx, val_idx) in enumerate(kf.split(X, y), 1):
             pct = log_offset + int(log_weight * (m_idx * n_splits + fold) / (model_count * n_splits))
             log_progress(pct, f"Target '{target_name}' | {model_name} (Fold {fold}/{n_splits})...")
 
-            X_tr, y_tr = X[train_idx], y[train_idx]
-            X_va, y_va = X[val_idx], y[val_idx]
-
             # Leakage-Free Pipeline: fitted ONLY on training fold
-            pipe = Pipeline([
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-                ("regressor", regressor)
-            ])
-
-            pipe.fit(X_tr, y_tr)
-            tr_pred = pipe.predict(X_tr)
-            va_pred = pipe.predict(X_va)
-
-            train_r2_list.append(r2_score(y_tr, tr_pred))
-            oof_preds[val_idx] = va_pred
+            pipe = build_pipeline(clone(regressor), schema, "regressor")
+            pipe.fit(X.iloc[train_idx], y[train_idx])
+            train_r2_list.append(r2_score(y[train_idx], pipe.predict(X.iloc[train_idx])))
+            oof_preds[val_idx] = pipe.predict(X.iloc[val_idx])
+            params = _model_params(pipe)
             del pipe  # Explicit memory cleanup per fold
 
         model_oof_map[model_name] = oof_preds
         val_r2 = float(r2_score(y, oof_preds))
-        mae = float(mean_absolute_error(y, oof_preds))
-        rmse = float(root_mean_squared_error(y, oof_preds))
         avg_train_r2 = float(np.mean(train_r2_list))
-        overfit_gap = float(avg_train_r2 - val_r2)
-
-        leaderboard.append({
+        entry = {
             "model_name": model_name,
             "val_r2": round(val_r2, 4),
             "train_r2": round(avg_train_r2, 4),
-            "overfit_gap": round(overfit_gap, 4),
-            "mae": round(mae, 4),
-            "rmse": round(rmse, 4)
-        })
+            "overfit_gap": round(avg_train_r2 - val_r2, 4),
+            "mae": round(float(mean_absolute_error(y, oof_preds)), 4),
+            "rmse": round(float(root_mean_squared_error(y, oof_preds)), 4)
+        }
+        if params:
+            entry["params"] = params
+        leaderboard.append(entry)
 
     # Sort leaderboard by val_r2 descending
     leaderboard.sort(key=lambda item: item["val_r2"], reverse=True)
@@ -371,39 +527,24 @@ def train_and_benchmark_models(
         entry["rank"] = rank
         entry["is_champion"] = (rank == 1)
 
-    # Calculate Residual Skewness of Champion Model
-    champion_oof = model_oof_map[champion_name]
-    residuals = y - champion_oof
+    # Residual diagnostics of Champion Model (OOF -> honest error estimate)
+    residuals = y - model_oof_map[champion_name]
     residual_skew = round(float(pd.Series(residuals).skew()), 4)
+    alpha = (1 - PREDICTION_INTERVAL_LEVEL) / 2
+    interval = {
+        "level": PREDICTION_INTERVAL_LEVEL,
+        "residual_lower": round(float(np.quantile(residuals, alpha)), 6),
+        "residual_upper": round(float(np.quantile(residuals, 1 - alpha)), 6),
+        "method": "champion OOF residual quantiles (constant width)",
+    }
 
     # Fit Champion Model on 100% of data
     log_progress(log_offset + log_weight - 4, f"Target '{target_name}' | 1위 챔피언({champion_name}) 전체 데이터 적합 중...")
-    champion_model_template = models[champion_name]
-    final_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-        ("regressor", champion_model_template)
-    ])
+    final_pipeline = build_pipeline(clone(models[champion_name]), schema, "regressor")
     final_pipeline.fit(X, y)
 
-    # Calculate Permutation Feature Importance
     log_progress(log_offset + log_weight - 2, f"Target '{target_name}' | 순열 피처 중요도(Feature Importance) 산출 중...")
-    try:
-        perm_res = permutation_importance(final_pipeline, X, y, n_repeats=5, random_state=seed)
-        raw_importances = np.maximum(perm_res.importances_mean, 0)
-    except Exception:
-        raw_importances = np.ones(len(feature_names))
-
-    total_imp = float(np.sum(raw_importances)) or 1.0
-    feature_ranks = []
-    for fname, imp in zip(feature_names, raw_importances):
-        pct = round(float(imp / total_imp * 100), 1)
-        feature_ranks.append({
-            "feature": fname,
-            "importance": round(float(imp), 4),
-            "pct": pct
-        })
-    feature_ranks.sort(key=lambda x: x["importance"], reverse=True)
+    feature_ranks = feature_importance_ranks(final_pipeline, X, y, schema, seed, scoring=None)
 
     champion_summary = {
         "task": TASK_REGRESSION,
@@ -416,6 +557,7 @@ def train_and_benchmark_models(
         "mae": champion_entry["mae"],
         "rmse": champion_entry["rmse"],
         "residual_skew": residual_skew,
+        "prediction_interval": interval,
         "top_features": feature_ranks[:3],
         "weak_features": [f["feature"] for f in feature_ranks if f["pct"] <= 1.0],
         "feature_importances": feature_ranks
@@ -464,24 +606,32 @@ def normalize_labels(series: pd.Series) -> pd.Series:
     return series.astype("object").map(_norm)
 
 
-def get_classification_models(seed: int = 42, balanced: bool = False) -> Dict[str, Any]:
+def get_classification_models(seed: int = 42, balanced: bool = False, n_rows: int = 0) -> Dict[str, Any]:
     """
     Returns 5 distinct classifiers:
     1. HistGradientBoostingClassifier (GBDT, non-linear, robust)
     2. RandomForestClassifier (Bagging ensemble)
     3. ExtraTreesClassifier (Extremely randomized trees)
-    4. LogisticRegression (linear baseline, calibrated probabilities)
-    5. KNeighborsClassifier (instance-based, local decision boundaries)
+    4. LogisticRegression (linear baseline; C auto-tuned by inner 3-fold CV on Macro-F1)
+    5. KNeighborsClassifier (instance-based; skipped above KNN_MAX_ROWS rows for speed)
     balanced=True applies class_weight='balanced' where supported (KNN has no class weights).
     """
     cw = "balanced" if balanced else None
-    return {
+    models = {
         "HistGradientBoosting": HistGradientBoostingClassifier(random_state=seed, class_weight=cw),
-        "RandomForest": RandomForestClassifier(n_estimators=100, random_state=seed, n_jobs=-1, class_weight=cw),
-        "ExtraTrees": ExtraTreesClassifier(n_estimators=100, random_state=seed, n_jobs=-1, class_weight=cw),
-        "LogisticRegression": LogisticRegression(max_iter=2000, class_weight=cw),
+        "RandomForest": RandomForestClassifier(n_estimators=100, random_state=seed, n_jobs=-1, class_weight=cw,
+                                               **_bagging_kwargs(n_rows)),
+        "ExtraTrees": ExtraTreesClassifier(n_estimators=100, random_state=seed, n_jobs=-1, class_weight=cw,
+                                           **_bagging_kwargs(n_rows)),
+        # make_scorer object (not the "f1_macro" string): the string fails for binary labels in scikit-learn 1.9
+        "LogisticRegression": LogisticRegressionCV(Cs=8, cv=3, max_iter=3000, class_weight=cw,
+                                                   scoring=make_scorer(f1_score, average="macro")),
         "KNeighbors": KNeighborsClassifier(n_neighbors=5),
     }
+    if n_rows > KNN_MAX_ROWS:
+        sys.stderr.write(f"[INFO] 데이터 {n_rows}행 > {KNN_MAX_ROWS}행: 속도를 위해 KNeighbors 모델을 경쟁에서 제외\n")
+        models.pop("KNeighbors")
+    return models
 
 
 def _roc_auc(y_true: np.ndarray, proba: np.ndarray, classes: List[str]) -> Optional[float]:
@@ -493,22 +643,42 @@ def _roc_auc(y_true: np.ndarray, proba: np.ndarray, classes: List[str]) -> Optio
         return None
 
 
+def best_binary_threshold(y: np.ndarray, proba_pos: np.ndarray, positive: str) -> Tuple[float, Dict[str, float]]:
+    """Threshold on P(positive) that maximizes positive-class F1 on OOF probabilities."""
+    y_pos = (y == positive)
+    best_t, best_f1 = 0.5, -1.0
+    for t in np.round(np.arange(0.05, 0.951, 0.01), 2):
+        f1 = f1_score(y_pos, proba_pos >= t, zero_division=0)
+        if f1 > best_f1 + 1e-12:
+            best_t, best_f1 = float(t), float(f1)
+    pred = proba_pos >= best_t
+    tp = int((pred & y_pos).sum())
+    stats = {
+        "f1": round(best_f1, 4),
+        "precision": round(tp / max(int(pred.sum()), 1), 4),
+        "recall": round(tp / max(int(y_pos.sum()), 1), 4),
+    }
+    return best_t, stats
+
+
 def train_and_benchmark_classifiers(
-    X_df: pd.DataFrame,
+    X: pd.DataFrame,
     y_series: pd.Series,
     target_name: str,
-    feature_names: List[str],
+    schema: Dict[str, Any],
     seed: int = 42,
     log_offset: int = 20,
-    log_weight: int = 50
+    log_weight: int = 50,
+    positive_class: Optional[str] = None
 ) -> Tuple[Dict[str, Any], Any, Dict[str, Any]]:
     """
     Stratified K-Fold competition of 5 classifiers. Champion = highest Out-of-Fold Macro-F1
     (fair under class imbalance). Fits champion on 100% of data and extracts permutation
-    importance (scoring = f1_macro).
+    importance (scoring = f1_macro). Binary + positive_class: decision threshold tuned on
+    OOF probabilities to maximize the positive-class F1.
     """
-    valid_mask = y_series.notna()
-    X = X_df.loc[valid_mask, feature_names].values
+    valid_mask = y_series.notna().values
+    X = X.loc[valid_mask].reset_index(drop=True)
     y = y_series.loc[valid_mask].astype(str).values
 
     classes = sorted(pd.unique(y).tolist())
@@ -528,6 +698,11 @@ def train_and_benchmark_classifiers(
         )
     if len(y) < 10:
         raise InputError(f"타겟 '{target_name}'의 유효 학습 샘플 수가 너무 적습니다 ({len(y)}개). 최소 10개 이상 필요합니다.")
+    if positive_class is not None:
+        if len(classes) != 2:
+            raise InputError(f"--positive-class는 이진 분류(클래스 2개)에서만 사용할 수 있습니다. 타겟 '{target_name}' 클래스: {classes}")
+        if positive_class not in classes:
+            raise InputError(f"--positive-class '{positive_class}'가 타겟 '{target_name}'의 클래스에 없습니다. [추천] {classes}")
 
     min_ratio = min(class_counts.values()) / len(y)
     balanced = min_ratio < 0.20
@@ -536,42 +711,42 @@ def train_and_benchmark_classifiers(
             f"[WARN] 타겟 '{target_name}' 클래스 불균형 감지 (최소 클래스 비율 {min_ratio:.1%}) -> class_weight='balanced' 적용\n"
         )
 
-    models = get_classification_models(seed=seed, balanced=balanced)
+    models = get_classification_models(seed=seed, balanced=balanced, n_rows=len(y))
     model_count = len(models)
     n_splits = max(2, min(5, min(class_counts.values())))
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     leaderboard = []
     model_oof_map: Dict[str, np.ndarray] = {}
+    model_proba_map: Dict[str, np.ndarray] = {}
 
     for m_idx, (model_name, clf) in enumerate(models.items()):
         oof_pred = np.empty(len(y), dtype=object)
         oof_proba = np.zeros((len(y), len(classes)))
         train_f1_list = []
+        params = {}
 
         for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
             pct = log_offset + int(log_weight * (m_idx * n_splits + fold) / (model_count * n_splits))
             log_progress(pct, f"Target '{target_name}' | {model_name} (Fold {fold}/{n_splits})...")
 
-            pipe = Pipeline([
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-                ("classifier", clf)
-            ])
-            pipe.fit(X[train_idx], y[train_idx])
-            train_f1_list.append(f1_score(y[train_idx], pipe.predict(X[train_idx]), average="macro", zero_division=0))
-            oof_pred[val_idx] = pipe.predict(X[val_idx])
-            proba = pipe.predict_proba(X[val_idx])
+            pipe = build_pipeline(clone(clf), schema, "classifier")
+            pipe.fit(X.iloc[train_idx], y[train_idx])
+            train_f1_list.append(f1_score(y[train_idx], pipe.predict(X.iloc[train_idx]), average="macro", zero_division=0))
+            oof_pred[val_idx] = pipe.predict(X.iloc[val_idx])
+            proba = pipe.predict_proba(X.iloc[val_idx])
             col_idx = [classes.index(c) for c in pipe.classes_]
             oof_proba[np.ix_(val_idx, col_idx)] = proba
+            params = _model_params(pipe)
             del pipe
 
         oof_pred = oof_pred.astype(str)
         model_oof_map[model_name] = oof_pred
+        model_proba_map[model_name] = oof_proba
         val_f1 = float(f1_score(y, oof_pred, average="macro", zero_division=0))
         avg_train_f1 = float(np.mean(train_f1_list))
         auc = _roc_auc(y, oof_proba, classes)
-        leaderboard.append({
+        entry = {
             "model_name": model_name,
             "val_f1_macro": round(val_f1, 4),
             "train_f1_macro": round(avg_train_f1, 4),
@@ -579,7 +754,10 @@ def train_and_benchmark_classifiers(
             "accuracy": round(float(accuracy_score(y, oof_pred)), 4),
             "balanced_accuracy": round(float(balanced_accuracy_score(y, oof_pred)), 4),
             "roc_auc": round(auc, 4) if auc is not None else None,
-        })
+        }
+        if params:
+            entry["params"] = params
+        leaderboard.append(entry)
 
     leaderboard.sort(key=lambda item: item["val_f1_macro"], reverse=True)
     for rank, entry in enumerate(leaderboard, 1):
@@ -588,7 +766,17 @@ def train_and_benchmark_classifiers(
     champion_entry = leaderboard[0]
     champion_name = champion_entry["model_name"]
 
+    # Binary decision threshold for the chosen positive class (default 0.5 otherwise)
+    threshold_info = None
     champion_oof = model_oof_map[champion_name]
+    if positive_class is not None:
+        pos_idx = classes.index(positive_class)
+        thr, stats = best_binary_threshold(y, model_proba_map[champion_name][:, pos_idx], positive_class)
+        neg = classes[1 - pos_idx]
+        champion_oof = np.where(model_proba_map[champion_name][:, pos_idx] >= thr, positive_class, neg).astype(str)
+        threshold_info = {"positive_class": positive_class, "threshold": thr, "oof_positive_metrics": stats}
+        sys.stderr.write(f"[INFO] 타겟 '{target_name}' 양성 클래스 '{positive_class}' 판정 기준 확률 = {thr:.2f} (양성 F1 최대화)\n")
+
     cm = confusion_matrix(y, champion_oof, labels=classes)
     report = classification_report(y, champion_oof, labels=classes, output_dict=True, zero_division=0)
     per_class = {
@@ -602,26 +790,11 @@ def train_and_benchmark_classifiers(
     }
 
     log_progress(log_offset + log_weight - 4, f"Target '{target_name}' | 1위 챔피언({champion_name}) 전체 데이터 적합 중...")
-    final_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-        ("classifier", models[champion_name])
-    ])
+    final_pipeline = build_pipeline(clone(models[champion_name]), schema, "classifier")
     final_pipeline.fit(X, y)
 
     log_progress(log_offset + log_weight - 2, f"Target '{target_name}' | 순열 피처 중요도(Feature Importance) 산출 중...")
-    try:
-        perm_res = permutation_importance(final_pipeline, X, y, n_repeats=5, random_state=seed, scoring="f1_macro")
-        raw_importances = np.maximum(perm_res.importances_mean, 0)
-    except Exception:
-        raw_importances = np.ones(len(feature_names))
-
-    total_imp = float(np.sum(raw_importances)) or 1.0
-    feature_ranks = sorted(
-        [{"feature": f, "importance": round(float(imp), 4), "pct": round(float(imp / total_imp * 100), 1)}
-         for f, imp in zip(feature_names, raw_importances)],
-        key=lambda x: x["importance"], reverse=True
-    )
+    feature_ranks = feature_importance_ranks(final_pipeline, X, y, schema, seed, scoring="f1_macro")
 
     champion_summary = {
         "task": TASK_CLASSIFICATION,
@@ -637,6 +810,7 @@ def train_and_benchmark_classifiers(
         "classes": classes,
         "class_counts": class_counts,
         "class_weight": "balanced" if balanced else None,
+        "decision_threshold": threshold_info,
         "per_class": per_class,
         "confusion_matrix": {"labels": classes, "matrix": cm.tolist()},
         "top_features": feature_ranks[:3],
@@ -790,6 +964,151 @@ def load_history_ledger(ledger_path: str) -> List[Dict[str, Any]]:
 
 
 # ==============================================================================
+# 7-B. Run Lock, Bounded Correlation, Next Commands
+# ==============================================================================
+
+class RunLock:
+    """
+    Prevents two trainings on the same dataset at once (they would collide on version numbers
+    and the startup garbage collection could delete the other run's staging folder).
+    Uses an OS file lock, so a crashed process never leaves a stale lock behind.
+    """
+
+    def __init__(self, data_root: str):
+        self.path = os.path.join(data_root, ".train.lock")
+        self.fh = None
+
+    def acquire(self) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        fh = open(self.path, "a+")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            raise InputError(
+                f"같은 데이터에 대한 다른 학습이 이미 실행 중입니다 ({os.path.dirname(self.path)}). "
+                f"동시에 실행할 수 없으니 진행 중인 학습이 끝난 뒤 다시 실행하십시오."
+            )
+        self.fh = fh
+
+    def release(self) -> None:
+        if self.fh is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self.fh.seek(0)
+                msvcrt.locking(self.fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        self.fh.close()
+        self.fh = None
+
+
+CORR_MAX_FEATURES = 30
+
+
+def bounded_correlation(
+    corr_full: pd.DataFrame, importances: List[Dict[str, Any]], schema: Dict[str, Any], targets: List[str]
+) -> Tuple[Dict[str, Any], bool]:
+    """
+    Ledger copy of the correlation matrix: all columns when small, otherwise the
+    CORR_MAX_FEATURES most important numeric inputs plus targets (full matrix: vX/correlation.csv).
+    """
+    inputs = [c for c in corr_full.columns if c not in targets]
+    if len(inputs) <= CORR_MAX_FEATURES:
+        return corr_full.to_dict(), False
+    owner = input_column_owner(schema)
+    order = {r["feature"]: i for i, r in enumerate(importances)}
+    ranked = sorted(inputs, key=lambda c: order.get(owner.get(c, c), len(order)))
+    keep = ranked[:CORR_MAX_FEATURES] + targets
+    return corr_full.loc[keep, keep].to_dict(), True
+
+
+def _q(v: str) -> str:
+    return '"' + str(v).replace('"', "'") + '"'
+
+
+def build_next_commands(
+    args: argparse.Namespace, raw_file: str, task: str, positive_class: Optional[str],
+    feature_names: List[str], created_features: List[str], applied_evals: List[str],
+    target_names: List[str], champion: Dict[str, Any], schema: Dict[str, Any],
+    mean_score: float, staging_dir: str, final_dir: str, data_root: str,
+) -> List[Dict[str, str]]:
+    """
+    Ready-to-run follow-up commands so a small LLM does not have to compose arguments:
+    deployment/prediction when the goal is met, otherwise feature pruning and an interaction feature.
+    Long feature lists are written to <version>/next_features_*.txt and passed by path.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    train_py = _q(os.path.join(here, "ml_train.py"))
+    base = [f"python {train_py}", "-f", _q(raw_file)]
+    for flag, val in (("--header-row", args.header_row), ("--unit-row", args.unit_row),
+                      ("--data-row", args.data_row), ("--dtypes", args.dtypes)):
+        if val is not None:
+            base += [flag, _q(val)]
+    if task == TASK_CLASSIFICATION:
+        base += ["--task", TASK_CLASSIFICATION]
+        if positive_class is not None:
+            base += ["--positive-class", _q(positive_class)]
+    base += ["-y", _q(",".join(target_names))]
+
+    def features_arg(feats: List[str], tag: str) -> str:
+        if len(feats) <= 15:
+            return _q(",".join(feats))
+        fname = f"next_features_{tag}.txt"
+        with open(os.path.join(staging_dir, fname), "w", encoding="utf-8") as f:
+            f.write("\n".join(feats) + "\n")
+        return _q(os.path.join(final_dir, fname))
+
+    base_features = [f for f in feature_names if f not in created_features]
+    cmds: List[Dict[str, str]] = []
+
+    if mean_score >= 0.90:
+        cmds.append({
+            "purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 실제 파일 경로로 바꿀 것)",
+            "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
+        })
+        if task == TASK_REGRESSION:
+            cmds.append({
+                "purpose": "Word 감사 보고서 생성",
+                "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -d {_q(data_root)}",
+            })
+        return cmds
+
+    weak = [w for w in champion.get("weak_features", []) if w in feature_names]
+    keep_base = [f for f in base_features if f not in weak]
+    keep_evals = [e for e in applied_evals if e.split("=", 1)[0].strip() not in weak]
+    if weak and keep_base:
+        parts = base + ["-x", features_arg(keep_base, "pruned")]
+        if keep_evals:
+            parts += ["--eval", _q("; ".join(keep_evals))]
+        parts += ["--tag", _q("저기여피처_제외")]
+        cmds.append({"purpose": f"기여도 1% 이하 피처 {weak[:5]} 제외 후 재학습", "command": " ".join(parts)})
+
+    numeric_top = [r["feature"] for r in champion.get("top_features", []) if r["feature"] in schema["numeric"]]
+    if len(numeric_top) >= 2:
+        a, b = numeric_top[0], numeric_top[1]
+        new_name = f"{strip_unit(a)}x{strip_unit(b)}"
+        existing = set(feature_names) | {e.split("=", 1)[0].strip() for e in applied_evals}
+        if new_name not in existing:
+            evals = applied_evals + [f"{new_name} = {a} * {b}"]
+            parts = base + ["-x", features_arg(base_features, "all"), "--eval", _q("; ".join(evals)),
+                            "--tag", _q("교차항_추가")]
+            cmds.append({"purpose": f"상위 피처 '{a}', '{b}' 교차항 추가 후 재학습", "command": " ".join(parts)})
+    return cmds
+
+
+# ==============================================================================
 # 8. Main Execution Controller
 # ==============================================================================
 
@@ -797,6 +1116,11 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     """Orchestrates 1-Turn declarative regression / classification pipeline."""
     start_time = time.time()
     task = (getattr(args, "task", None) or TASK_REGRESSION).lower()
+    positive_class = getattr(args, "positive_class", None)
+    if positive_class is not None:
+        if task != TASK_CLASSIFICATION:
+            raise InputError("--positive-class는 --task classification과 함께 사용해야 합니다.")
+        positive_class = normalize_labels(pd.Series([positive_class])).iloc[0]
     primary_metric = PRIMARY_METRIC[task]
     metric_label = METRIC_LABEL[task]
     raw_file = os.path.abspath(args.file)
@@ -809,9 +1133,17 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     data_root = os.path.join(file_dir, f"{file_stem}_ml_data")
     ledger_path = os.path.join(data_root, "history.jsonl")
 
+    # One training run per dataset at a time (OS lock is released automatically if the process dies)
+    run_lock = RunLock(data_root)
+    run_lock.acquire()
+
     # Transaction Guard Setup
     guard = TransactionGuard(data_root=data_root, target_version=args.version)
-    current_version = guard.setup()
+    try:
+        current_version = guard.setup()
+    except BaseException:
+        run_lock.release()
+        raise
 
     try:
         log_progress(5, f"입력 데이터 로드 중: {os.path.basename(raw_file)}...")
@@ -856,11 +1188,23 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 if c_feat not in feature_names:
                     feature_names.append(c_feat)
 
-        # Calculate Correlation Matrix (for SSOT reporting)
+        # Feature typing (numeric / categorical / datetime) and model input frame
+        feature_schema = infer_feature_schema(df_clean, feature_names, created_features, dtypes_arg=args.dtypes)
+        X_all = prepare_features(df_clean, feature_schema)
+        empty_numeric = [c for c in feature_schema["numeric"] if X_all[c].notna().sum() == 0]
+        if empty_numeric:
+            raise InputError(
+                f"컬럼 {empty_numeric}에 숫자로 변환 가능한 값이 하나도 없습니다. 헤더/데이터 시작 행(--header-row, --data-row)을 확인하십시오."
+            )
+        for col in feature_schema["numeric"]:
+            df_clean[col] = X_all[col]
+
+        # Correlation (numeric inputs incl. date parts + numeric targets) for SSOT reporting
         log_progress(20, "변수 간 2차원 상관행렬 계산 중...")
-        all_train_cols = [c for c in feature_names + target_names if c in df_clean.columns]
-        num_df = df_clean[all_train_cols].select_dtypes(include=[np.number])
-        corr_matrix = num_df.corr().round(4).to_dict()
+        num_inputs = [c for c in feature_schema["input_columns"] if c not in feature_schema["categorical"]]
+        target_numeric = target_names if task == TASK_REGRESSION else []
+        corr_frame = pd.concat([X_all[num_inputs], df_clean[target_numeric]], axis=1)
+        corr_full = corr_frame.corr().round(4)
 
         # Multi-Target 5-Model Competitive Training (one task per run)
         target_benchmarks = {}
@@ -876,14 +1220,16 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
 
             log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
+            extra = {"positive_class": positive_class} if task == TASK_CLASSIFICATION else {}
             t_bench, champion_pipe, champion_info = benchmark_fn(
-                X_df=df_clean,
+                X=X_all,
                 y_series=df_clean[target_name],
                 target_name=target_name,
-                feature_names=feature_names,
+                schema=feature_schema,
                 seed=args.seed,
                 log_offset=t_offset,
-                log_weight=t_weight
+                log_weight=t_weight,
+                **extra
             )
 
             target_benchmarks[target_name] = t_bench
@@ -987,6 +1333,21 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         with open(os.path.join(staging_dir, "leaderboard.json"), "w", encoding="utf-8") as f:
             f.write(dumps_json(leaderboard_data, indent=2))
 
+        datetime_stats = {}
+        for col in feature_schema["datetime"]:
+            dt = parse_datetime(df_clean[col]).dropna()
+            if not dt.empty:
+                datetime_stats[col] = {"min": dt.min().isoformat(), "max": dt.max().isoformat()}
+
+        # Correlation: full matrix as a file, a bounded matrix in the ledger (keeps history.json small)
+        corr_full.to_csv(os.path.join(staging_dir, "correlation.csv"), encoding="utf-8-sig")
+        corr_matrix, corr_truncated = bounded_correlation(
+            corr_full, target_champions[target_names[0]]["info"]["feature_importances"],
+            feature_schema, target_numeric)
+        target_correlations = {
+            t: {c: v for c, v in corr_full[t].drop(labels=target_numeric).items()} for t in target_numeric
+        }
+
         # 2. Target Models and Metadata
         for target_name, champ_data in target_champions.items():
             pipe = champ_data["pipeline"]
@@ -997,11 +1358,11 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             joblib_path = os.path.join(staging_dir, f"model_{safe_target}.joblib")
             joblib.dump(pipe, joblib_path, compress=3)
 
-            # Feature statistics for inference validation
+            # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
-            for fname in feature_names:
-                if fname in df_clean.columns and pd.api.types.is_numeric_dtype(df_clean[fname]):
-                    s = df_clean[fname].dropna()
+            for fname in feature_schema["numeric"]:
+                s = df_clean[fname].dropna()
+                if not s.empty:
                     feat_stats[fname] = {
                         "mean": round(float(s.mean()), 4),
                         "std": round(float(s.std()), 4),
@@ -1027,6 +1388,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                     "mae": info["mae"],
                     "rmse": info["rmse"],
                     "residual_skew": info.get("residual_skew", 0.0),
+                    "prediction_interval": info.get("prediction_interval"),
                 })
             else:
                 meta_json.update({
@@ -1036,11 +1398,14 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                     "roc_auc": info["roc_auc"],
                     "classes": info["classes"],
                     "class_counts": info["class_counts"],
+                    "decision_threshold": info.get("decision_threshold"),
                 })
             meta_json.update({
                 "features_required": feature_names,
                 "feature_count": len(feature_names),
                 "feature_stats": feat_stats,
+                "datetime_stats": datetime_stats,
+                "feature_schema": feature_schema,
                 "derived_evals": applied_evals,
                 "target_summary": target_summaries.get(target_name, {}),
                 "sklearn_version": sklearn.__version__,
@@ -1060,7 +1425,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         # 4. Append Record to history.jsonl (SSOT)
         duration_sec = round(time.time() - start_time, 2)
         # Missing feature cells (incl. unparseable strings) that SimpleImputer(median) fills
-        missing_imputed = int(df_clean[feature_names].isna().sum().sum())
+        missing_imputed = int(X_all.isna().sum().sum())
         prescription = recommendations[0] if recommendations else "모델 경쟁 학습 및 평가 완료"
 
         history_record = {
@@ -1084,8 +1449,22 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "prescription": prescription,
             "recommendations": recommendations,
             "targets_benchmark": target_benchmarks,
-            "correlation_matrix": corr_matrix
+            "feature_types": {
+                "numeric": feature_schema["numeric"],
+                "categorical": list(feature_schema["categorical"]),
+                "datetime": feature_schema["datetime"],
+            },
+            "correlation_matrix": corr_matrix,
+            "correlation_truncated": corr_truncated,
+            "target_correlations": target_correlations
         }
+        next_commands = build_next_commands(
+            args=args, raw_file=raw_file, task=task, positive_class=positive_class,
+            feature_names=feature_names, created_features=created_features, applied_evals=applied_evals,
+            target_names=target_names, champion=prim_champ, schema=feature_schema,
+            mean_score=mean_val_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
+        )
+        history_record["next_commands"] = next_commands
         append_history_ledger(ledger_path, history_record)
 
         # Commit Transaction: Atomic rename from .tmp_vX to vX
@@ -1105,7 +1484,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         agent_directive = (
             f"VERIFIED: {current_version} competitive training completed. "
             f"Champion models and leaderboard packaged into '{os.path.basename(final_version_dir)}'. "
-            f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. Next step: proceed to inference or next iteration."
+            f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. "
+            f"Next step: run next_commands[0] if the user wants to continue, or proceed to inference."
         )
 
         result = {
@@ -1120,6 +1500,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             **score_keys,
             "is_best": is_best,
             "recommendations": recommendations,
+            "next_commands": next_commands,
+            "feature_types": history_record["feature_types"],
             "preview": preview,
             "agent_directive": agent_directive
         }
@@ -1131,6 +1513,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         # Includes KeyboardInterrupt (Ctrl+C) so the staging folder never leaks
         guard.rollback()
         raise
+    finally:
+        run_lock.release()
 
 
 # ==============================================================================
@@ -1237,6 +1621,8 @@ def main():
     parser.add_argument("--version", "-v", help="버전 수동 지정 (미지정 시 자동 계산 v1, v2...)")
     parser.add_argument("--task", choices=[TASK_REGRESSION, TASK_CLASSIFICATION], default=TASK_REGRESSION,
                         help="학습 유형: regression(기본값, 연속 수치 예측) 또는 classification(범주/라벨 예측)")
+    parser.add_argument("--positive-class", dest="positive_class",
+                        help="이진 분류의 양성 클래스 (예: 불량). 지정 시 양성 F1이 최대가 되도록 판정 기준 확률을 자동 조정")
     parser.add_argument("--seed", type=int, default=42, help="재현용 난수 시드 (기본값: 42)")
     parser.add_argument("--history", action="store_true", help="누적 실험 이력 조회 모드 (표는 stderr, 요약 JSON은 stdout)")
 

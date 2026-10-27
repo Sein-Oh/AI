@@ -20,6 +20,7 @@ import sys
 import os
 import re
 import ast
+import csv
 import glob
 import json
 import time
@@ -293,6 +294,60 @@ def coerce_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce").astype(float)
 
 
+_CSV_ENCODINGS = ["utf-8-sig", "cp949", "euc-kr", "latin1"]
+
+
+def _sniff_delimiter(sample: str) -> str:
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        return ","
+
+
+def _read_csv_fast(file_path: str) -> pd.DataFrame:
+    """
+    Reads CSV with the fast C parser: encoding and delimiter are detected from the first
+    64KB, then the whole file is parsed as strings (numeric conversion happens later in
+    coerce_numeric, identically for training and inference). Falls back to the slower
+    python parser only for malformed files.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            head = f.read(65536)
+    except PermissionError:
+        raise PermissionError(f"파일이 다른 프로그램(Excel 등)에서 잠겨 있습니다. 파일을 닫고 다시 실행하십시오: {file_path}")
+
+    last_err: Optional[Exception] = None
+    for enc in _CSV_ENCODINGS:
+        sample = None
+        for cut in range(4):  # the 64KB boundary may split a multi-byte character
+            try:
+                sample = head[:len(head) - cut].decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if sample is None:
+            continue
+        sep = _sniff_delimiter("\n".join(sample.splitlines()[:50]))
+        try:
+            return pd.read_csv(file_path, header=None, sep=sep, encoding=enc, dtype=str, low_memory=False)
+        except UnicodeDecodeError as e:
+            last_err = e
+            continue
+        except pd.errors.ParserError:
+            try:
+                return pd.read_csv(file_path, header=None, sep=sep, encoding=enc, dtype=str, engine="python")
+            except Exception as e:
+                last_err = e
+                continue
+        except PermissionError:
+            raise PermissionError(f"파일이 다른 프로그램(Excel 등)에서 잠겨 있습니다. 파일을 닫고 다시 실행하십시오: {file_path}")
+        except Exception as e:
+            last_err = e
+            continue
+    raise InputError(f"CSV 파일 로드 실패 (지원되는 인코딩 모두 시도 완료): {last_err}")
+
+
 def load_data_file(
     file_path: str,
     header_row: Optional[int] = None,
@@ -319,20 +374,7 @@ def load_data_file(
     elif ext == ".xls":
         raise InputError("구형 .xls 형식은 지원하지 않습니다. Excel에서 '.xlsx' 또는 '.csv'로 다른 이름으로 저장 후 지정하십시오.")
     elif ext == ".csv":
-        encodings = ["utf-8-sig", "cp949", "euc-kr", "latin1"]
-        df_raw = None
-        last_err: Optional[Exception] = None
-        for enc in encodings:
-            try:
-                df_raw = pd.read_csv(file_path, header=None, encoding=enc, sep=None, engine="python")
-                break
-            except PermissionError:
-                raise PermissionError(f"파일이 다른 프로그램(Excel 등)에서 잠겨 있습니다. 파일을 닫고 다시 실행하십시오: {file_path}")
-            except Exception as e:
-                last_err = e
-                continue
-        if df_raw is None:
-            raise InputError(f"CSV 파일 로드 실패 (지원되는 인코딩 모두 시도 완료): {last_err}")
+        df_raw = _read_csv_fast(file_path)
     else:
         raise InputError(f"지원하지 않는 데이터 포맷입니다 ({ext}). .xlsx 또는 .csv 파일을 지정하십시오.")
 
@@ -401,6 +443,88 @@ def load_data_file(
     # Clean rows/cols that are entirely NaN
     df_data = df_data.dropna(how="all", axis=0).dropna(how="all", axis=1)
     return df_data
+
+
+# ==============================================================================
+# C4-B. Feature Schema (numeric / categorical / datetime), identical at train and inference
+# ==============================================================================
+#
+# feature_schema (stored in vX/model_<target>.json, models trained by 2.1.0+):
+#   {"numeric": [...], "categorical": {col: [known categories]},
+#    "datetime": {col: [parts]}, "input_columns": [...model input column order...]}
+# Datetime columns are expanded OUTSIDE the sklearn pipeline (no custom code is pickled,
+# so ml_predict.py stays standalone); categorical columns are one-hot encoded INSIDE the
+# pipeline by sklearn's OneHotEncoder.
+
+DATE_PARTS = ["year", "month", "day", "dayofweek", "hour"]
+_DATE_RE = re.compile(r"^\s*\d{4}[-/.]\d{1,2}[-/.]\d{1,2}([ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?)?\s*$")
+
+
+def parse_datetime(series: pd.Series) -> pd.Series:
+    """Parses Excel datetimes and 'YYYY-MM-DD[ HH:MM[:SS]]' strings (also / and . separators)."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+
+    def _one(v):
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return pd.NaT
+        if isinstance(v, (datetime, pd.Timestamp, np.datetime64)):
+            return pd.Timestamp(v)
+        t = str(v).strip()
+        if not _DATE_RE.match(t):
+            return pd.NaT
+        try:
+            return pd.Timestamp(t.replace("/", "-").replace(".", "-", 2))
+        except (ValueError, TypeError):
+            return pd.NaT
+
+    return pd.to_datetime(series.astype("object").map(_one), errors="coerce")
+
+
+def date_part_column(col: str, part: str) -> str:
+    return f"{col}_{part}"
+
+
+def normalize_category(series: pd.Series) -> pd.Series:
+    """Category values as trimmed strings; placeholders become NaN (imputed as '__missing__')."""
+    def _one(v):
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return np.nan
+        if isinstance(v, (float, np.floating)) and float(v).is_integer():
+            v = int(v)
+        t = str(v).strip()
+        return np.nan if t in _NA_PLACEHOLDERS else t
+    return series.astype("object").map(_one).astype("object")
+
+
+def prepare_features(df: pd.DataFrame, schema: Dict[str, Any]) -> pd.DataFrame:
+    """Builds the model input frame (column order = schema['input_columns'])."""
+    out: Dict[str, pd.Series] = {}
+    for col in schema.get("numeric", []):
+        out[col] = coerce_numeric(df[col]).astype(float)
+    for col, parts in schema.get("datetime", {}).items():
+        dt = parse_datetime(df[col])
+        for part in parts:
+            out[date_part_column(col, part)] = getattr(dt.dt, part).astype(float)
+    for col in schema.get("categorical", {}):
+        out[col] = normalize_category(df[col])
+    frame = pd.DataFrame(out, index=df.index)
+    return frame[schema["input_columns"]]
+
+
+def schema_raw_columns(schema: Dict[str, Any]) -> List[str]:
+    """User-facing input columns (before date expansion)."""
+    return list(schema.get("numeric", [])) + list(schema.get("datetime", {})) + list(schema.get("categorical", {}))
+
+
+def input_column_owner(schema: Dict[str, Any]) -> Dict[str, str]:
+    """Maps each model input column back to its raw column (date parts -> date column)."""
+    owner = {c: c for c in schema.get("numeric", [])}
+    owner.update({c: c for c in schema.get("categorical", {})})
+    for col, parts in schema.get("datetime", {}).items():
+        for part in parts:
+            owner[date_part_column(col, part)] = col
+    return owner
 
 
 # ==============================================================================
@@ -856,20 +980,26 @@ LOW_CONFIDENCE_THRESHOLD = 0.6
 
 def _predict_classification(
     pipe: Any,
-    X_frame: pd.DataFrame,
+    X_frame: Any,
     target_name: str,
     df_result: pd.DataFrame,
     is_inline: bool,
     low_conf_warnings: List[str],
+    decision_threshold: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Adds pred_<t> (label), proba_<t>_<class> (per-class probability) and conf_<t>
     (max probability) columns, and returns the JSON summary for a classification target.
+    Binary models trained with --positive-class use the tuned decision threshold.
     """
-    labels = pipe.predict(X_frame.values).astype(str)
     classes = [str(c) for c in pipe.classes_]
-    proba = pipe.predict_proba(X_frame.values)
+    proba = pipe.predict_proba(X_frame)
     conf = proba.max(axis=1)
+    if decision_threshold and decision_threshold.get("positive_class") in classes and len(classes) == 2:
+        pos = classes.index(decision_threshold["positive_class"])
+        labels = np.where(proba[:, pos] >= float(decision_threshold["threshold"]), classes[pos], classes[1 - pos]).astype(str)
+    else:
+        labels = pipe.predict(X_frame).astype(str)
 
     df_result[f"pred_{target_name}"] = labels
     for i, c in enumerate(classes):
@@ -892,6 +1022,11 @@ def _predict_classification(
         "min_confidence": round(float(conf.min()), 4),
         "low_confidence_count": n_low,
     }
+    if decision_threshold:
+        summary["decision_threshold"] = {
+            "positive_class": decision_threshold.get("positive_class"),
+            "threshold": decision_threshold.get("threshold"),
+        }
     if is_inline and len(labels) <= 5:
         summary["predictions"] = labels.tolist()
         summary["probabilities"] = [
@@ -932,6 +1067,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     predictions_summary = {}
     drift_warnings: List[str] = []
     low_conf_warnings: List[str] = []
+    category_warnings: List[str] = []
+    missing_counts: Dict[str, int] = {}
     column_aliases: Dict[str, str] = {}
 
     # 3. Perform Inference per Target
@@ -966,17 +1103,51 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 + f"\n[입력 데이터 컬럼 목록]: {available_cols}"
             )
 
-        # Same numeric parsing as training (thousands separators, '-', 'N/A', pandas 2/3 dtypes)
-        X_frame = pd.DataFrame({f: coerce_numeric(df_evaled[f]) for f in req_features}, index=df_evaled.index)
+        schema = meta.get("feature_schema")  # models trained by 2.1.0+; older models use the numeric-array path
+        if schema:
+            X_model = prepare_features(df_evaled, schema)
+            numeric_view = X_model[[c for c in schema["numeric"]]]
+            owner = input_column_owner(schema)
+        else:
+            # Same numeric parsing as training (thousands separators, '-', 'N/A', pandas 2/3 dtypes)
+            X_model = pd.DataFrame({f: coerce_numeric(df_evaled[f]) for f in req_features}, index=df_evaled.index)
+            numeric_view = X_model
+            owner = {f: f for f in req_features}
+
+        # Missing / unparseable inputs are imputed by the pipeline -> tell the agent explicitly
+        for col, n_miss in X_model.isna().sum().items():
+            if n_miss:
+                raw_col = owner.get(col, col)
+                missing_counts[raw_col] = max(missing_counts.get(raw_col, 0), int(n_miss))
+
+        # Categories never seen in training are encoded as "none of the known categories"
+        if schema:
+            for col, known in schema.get("categorical", {}).items():
+                vals = X_model[col].dropna()
+                unseen = sorted(set(vals) - set(known))
+                if unseen:
+                    category_warnings.append(
+                        f"범주형 피처 '{col}'에 학습 때 없던 값 {unseen[:5]}이(가) {int(vals.isin(unseen).sum())}건 있습니다. "
+                        f"해당 행의 예측 신뢰도가 낮을 수 있습니다. [학습 범주]: {known[:10]}"
+                    )
+            for col, rng in (meta.get("datetime_stats") or {}).items():
+                dt = parse_datetime(df_evaled[col]).dropna()
+                if not dt.empty:
+                    lo, hi = pd.Timestamp(rng["min"]), pd.Timestamp(rng["max"])
+                    n_out = int(((dt < lo) | (dt > hi)).sum())
+                    if n_out:
+                        drift_warnings.append(
+                            f"날짜 피처 '{col}' 학습 기간({lo.date()} ~ {hi.date()}) 밖의 값 {n_out}건 (외삽)"
+                        )
 
         # Data Drift / Out-of-bounds Check (with quantitative severity ratio)
         if feature_stats:
-            for fname in req_features:
+            for fname in numeric_view.columns:
                 if fname in feature_stats:
                     f_min = feature_stats[fname].get("min")
                     f_max = feature_stats[fname].get("max")
                     if f_min is not None and f_max is not None:
-                        col_series = X_frame[fname].dropna()
+                        col_series = numeric_view[fname].dropna()
                         if not col_series.empty:
                             c_min = float(col_series.min())
                             c_max = float(col_series.max())
@@ -994,6 +1165,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                                     f"피처 '{fname}' 하한 미달 외삽(Extrapolation) 감지: 학습 최소={f_min:.2f}, 입력 최소={c_min:.2f} (범위 대비 -{under_pct}% 미달 이탈, 범위 밖 {n_out}건)"
                                 )
 
+        X_input = X_model if schema else X_model.values
+
         # Execute Prediction
         task = meta.get("task", "regression")  # models trained before 2.0.0 have no task -> regression
         estimator = pipe.named_steps.get("regressor") or pipe.named_steps.get("classifier") or pipe
@@ -1005,11 +1178,12 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 "model": meta.get("champion_model", type(estimator).__name__),
                 "description": desc,
                 "features_used": req_features,
-                **_predict_classification(pipe, X_frame, target_name, df_result, is_inline, low_conf_warnings),
+                **_predict_classification(pipe, X_input, target_name, df_result, is_inline, low_conf_warnings,
+                                          meta.get("decision_threshold")),
             }
             continue
 
-        preds = pipe.predict(X_frame.values)
+        preds = pipe.predict(X_input)
 
         pred_col_name = f"pred_{target_name}"
         df_result[pred_col_name] = np.round(preds, 4)
@@ -1024,8 +1198,22 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
             "min_pred": round(float(np.min(preds)), 4),
             "max_pred": round(float(np.max(preds)), 4)
         }
+
+        # Approximate prediction interval from the champion's out-of-fold residuals
+        interval = meta.get("prediction_interval")
+        lo = hi = None
+        if interval:
+            lo = preds + float(interval["residual_lower"])
+            hi = preds + float(interval["residual_upper"])
+            df_result[f"pred_lo_{target_name}"] = np.round(lo, 4)
+            df_result[f"pred_hi_{target_name}"] = np.round(hi, 4)
+            predictions_summary[target_name]["interval_level"] = interval["level"]
         if is_inline and len(preds) <= 5:
             predictions_summary[target_name]["predictions"] = [round(float(p), 4) for p in preds]
+            if lo is not None:
+                predictions_summary[target_name]["intervals"] = [
+                    [round(float(l), 4), round(float(h), 4)] for l, h in zip(lo, hi)
+                ]
 
     # 4. Save Output if Requested or File-based
     out_path = args.out
@@ -1058,6 +1246,15 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
 
     for w in low_conf_warnings:
         sys.stderr.write(f"[WARN] Low confidence: {w}\n")
+    category_warnings = list(dict.fromkeys(category_warnings))
+    for w in category_warnings:
+        sys.stderr.write(f"[WARN] Unseen category: {w}\n")
+    missing_warnings = [
+        f"피처 '{c}': 빈 값 또는 숫자로 읽을 수 없는 값 {n}건 -> 학습 데이터 기준값(중앙값/결측 범주)으로 대치됨"
+        for c, n in missing_counts.items()
+    ]
+    for w in missing_warnings:
+        sys.stderr.write(f"[WARN] Missing input: {w}\n")
 
     def _brief(t: str) -> str:
         ps = predictions_summary[t]
@@ -1071,11 +1268,15 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         f"{'저장: ' + os.path.basename(saved_file) if saved_file else '인라인 반환'}"
         + (f" | 외삽 경고 {len(drift_warnings)}건" if drift_warnings else "")
         + (f" | 저확신 경고 {len(low_conf_warnings)}건" if low_conf_warnings else "")
+        + (f" | 결측 대치 {sum(missing_counts.values())}건" if missing_counts else "")
+        + (f" | 미학습 범주 경고 {len(category_warnings)}건" if category_warnings else "")
     )
     agent_directive = (
         f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
         + (" with extrapolation warning (inputs outside training range; predictions may be unreliable)" if drift_warnings else "")
         + (" with low-confidence warning (class probability < 0.6 for some rows)" if low_conf_warnings else "")
+        + (" with missing-input warning (empty or non-numeric inputs were imputed)" if missing_counts else "")
+        + (" with unseen-category warning" if category_warnings else "")
         + ". "
         + (f"Output saved to {os.path.basename(saved_file)}. " if saved_file else "Inline predictions returned. ")
         + "Next step: report inference results to user."
@@ -1094,6 +1295,11 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         "extrapolation_warnings": drift_warnings,
         "low_confidence_warning": bool(low_conf_warnings),
         "low_confidence_warnings": low_conf_warnings,
+        "missing_input_warning": bool(missing_counts),
+        "missing_input_counts": missing_counts,
+        "missing_input_warnings": missing_warnings,
+        "unseen_category_warning": bool(category_warnings),
+        "unseen_category_warnings": category_warnings,
         "preview": preview,
         "agent_directive": agent_directive
     }
