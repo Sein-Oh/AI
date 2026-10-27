@@ -180,18 +180,30 @@ def clean_old_snapshots_for_doc(app_name: str, doc_key: str, max_keep: int = 2) 
     # 최근 max_keep개를 제외한 나머지 오래된 스냅샷(JSON 및 원본 복사본 데이터) 삭제
     for old_json in json_files[max_keep:]:
         try:
-            base_no_ext = os.path.splitext(old_json)[0]
-            for ext in [".xlsx", ".xlsm", ".xls", ".docx", ".doc", ".pptx", ".ppt"]:
-                data_file = base_no_ext + ext
-                if os.path.exists(data_file):
-                    os.remove(data_file)
-            os.remove(old_json)
+            delete_snapshot_files(old_json)
             log_debug(f"오래된 스냅샷 자동 회전 삭제 (최근 {max_keep}개 유지 정책): {os.path.basename(old_json)}")
         except Exception as e:
             log_debug(f"오래된 스냅샷 삭제 실패: {e}")
 
+def delete_snapshot_files(meta_json_path: str) -> None:
+    """스냅샷 메타 JSON과 같은 이름의 데이터 파일(확장자 무관)을 모두 삭제합니다."""
+    base_no_ext = os.path.splitext(meta_json_path)[0]
+    for data_file in glob.glob(glob.escape(base_no_ext) + ".*"):
+        if data_file != meta_json_path and os.path.exists(data_file):
+            os.remove(data_file)
+    if os.path.exists(meta_json_path):
+        os.remove(meta_json_path)
+
+_DEFAULT_SNAPSHOT_EXT = {"excel": ".xlsx", "word": ".docx", "ppt": ".pptx"}
+
 def save_document_snapshot(app_name: str, doc_obj: Any, max_keep: int = 2) -> Optional[str]:
-    """오피스 활성 문서의 현재 상태를 캐시 디렉터리에 스냅샷으로 저장합니다 (최근 2개 유지)."""
+    """오피스 문서의 현재 상태를 캐시 디렉터리에 스냅샷으로 저장합니다 (최근 2개 유지).
+
+    원본 문서는 저장하거나 경로를 바꾸지 않습니다.
+    - Excel/PowerPoint: SaveCopyAs (원본 형식 그대로 사본 저장, 원본 확장자 유지)
+    - Word: 저장 이후 변경이 없으면 디스크 파일 복사, 미저장 변경이 있거나 새 문서이면
+      WordOpenXML(Flat OPC .xml)로 현재 메모리 상태를 그대로 기록합니다.
+    """
     if doc_obj is None:
         return None
 
@@ -199,70 +211,56 @@ def save_document_snapshot(app_name: str, doc_obj: Any, max_keep: int = 2) -> Op
         cache_dir = get_cache_dir()
         os.makedirs(cache_dir, exist_ok=True)
         app_lower = app_name.lower()
-        
-        # 1. 문서 식별자(이름/경로) 및 확장자 추출
-        doc_name = "unknown"
-        doc_path = ""
-        ext = ".xlsx" if app_lower == "excel" else (".docx" if app_lower == "word" else ".pptx")
 
-        if app_lower == "excel":
-            try:
-                doc_name = doc_obj.Name
-                doc_path = doc_obj.FullName if os.path.isabs(doc_obj.FullName) else ""
-            except Exception:
-                doc_name = "Workbook"
-        elif app_lower == "word":
-            try:
-                doc_name = doc_obj.Name
-                doc_path = doc_obj.FullName if os.path.isabs(doc_obj.FullName) else ""
-            except Exception:
-                doc_name = "Document"
-        elif app_lower == "ppt":
-            try:
-                doc_name = doc_obj.Name
-                doc_path = doc_obj.FullName if os.path.isabs(doc_obj.FullName) else ""
-            except Exception:
-                doc_name = "Presentation"
+        # 1. 문서 식별자(이름/경로) 추출
+        doc_name = {"excel": "Workbook", "word": "Document"}.get(app_lower, "Presentation")
+        doc_path = ""
+        try:
+            doc_name = doc_obj.Name
+            full_name = str(doc_obj.FullName)
+            doc_path = full_name if os.path.isabs(full_name) else ""
+        except Exception:
+            pass
+
+        # SaveCopyAs는 원본 형식으로 저장하므로 확장자도 원본을 따름 (.xlsm/.xls 등 불일치 방지)
+        ext = (os.path.splitext(doc_path)[1].lower() if doc_path else "") or _DEFAULT_SNAPSHOT_EXT.get(app_lower, ".bin")
 
         # doc_key는 이름과 경로를 기반으로 한 8자리 안정적 고유 해시
         raw_key = (doc_path or doc_name).lower()
         doc_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:8]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]
         base_name = f"snapshot_{app_lower}_{doc_key}_{timestamp}"
-        snapshot_data_path = os.path.join(cache_dir, f"{base_name}{ext}").replace("\\", "/")
         snapshot_meta_path = os.path.join(cache_dir, f"{base_name}.json").replace("\\", "/")
 
         # 2. 애플리케이션별 스냅샷 생성
-        saved = False
-        if app_lower == "excel":
+        snapshot_data_path = ""
+        snapshot_format = "native"
+        if app_lower in ("excel", "ppt"):
+            snapshot_data_path = os.path.join(cache_dir, f"{base_name}{ext}").replace("\\", "/")
             try:
-                doc_obj.SaveCopyAs(snapshot_data_path)
-                saved = os.path.exists(snapshot_data_path)
+                doc_obj.SaveCopyAs(os.path.normpath(snapshot_data_path))
             except Exception as e:
-                log_debug(f"Excel SaveCopyAs 실패: {e}")
-        elif app_lower == "ppt":
-            try:
-                doc_obj.SaveCopyAs(snapshot_data_path)
-                saved = os.path.exists(snapshot_data_path)
-            except Exception as e:
-                log_debug(f"PPT SaveCopyAs 실패: {e}")
+                log_debug(f"{app_lower} SaveCopyAs 실패: {e}")
         elif app_lower == "word":
-            try:
+            is_saved = bool(getattr(doc_obj, "Saved", False))
+            if doc_path and os.path.exists(doc_path) and is_saved:
                 import shutil
-                if doc_path and os.path.exists(doc_path):
-                    try:
-                        doc_obj.Save()
-                    except Exception:
-                        pass
+                snapshot_data_path = os.path.join(cache_dir, f"{base_name}{ext}").replace("\\", "/")
+                try:
                     shutil.copy2(doc_path, snapshot_data_path)
-                    saved = True
-                else:
-                    doc_obj.SaveAs(snapshot_data_path)
-                    saved = os.path.exists(snapshot_data_path)
-            except Exception as e:
-                log_debug(f"Word 스냅샷 저장 실패: {e}")
+                except Exception as e:
+                    log_debug(f"Word 스냅샷 파일 복사 실패: {e}")
+            else:
+                snapshot_data_path = os.path.join(cache_dir, f"{base_name}.xml").replace("\\", "/")
+                snapshot_format = "flat_xml"
+                try:
+                    xml_text = doc_obj.WordOpenXML
+                    with open(snapshot_data_path, "w", encoding="utf-8") as f:
+                        f.write(xml_text)
+                except Exception as e:
+                    log_debug(f"Word WordOpenXML 스냅샷 실패: {e}")
 
-        if not saved:
+        if not snapshot_data_path or not os.path.exists(snapshot_data_path):
             return None
 
         # 3. 메타데이터 JSON 저장
@@ -271,6 +269,7 @@ def save_document_snapshot(app_name: str, doc_obj: Any, max_keep: int = 2) -> Op
             "name": doc_name,
             "original_path": doc_path,
             "snapshot_file": snapshot_data_path,
+            "snapshot_format": snapshot_format,
             "timestamp": timestamp,
             "created_at": datetime.now().isoformat()
         }
@@ -304,6 +303,7 @@ def get_latest_snapshot(app_filter: str = "") -> Optional[Dict[str, Any]]:
             if app_filter and data.get("app") != app_filter.lower():
                 continue
             if os.path.exists(data.get("snapshot_file", "")):
+                data["meta_file"] = mf
                 return data
         except Exception:
             continue
@@ -424,22 +424,14 @@ def init_com():
 
 def jit_repair_office_environment(app_name: str = "excel") -> Dict[str, Any]:
     """COM 이상/충돌/RPC 중단 발생 시 호출되는 실시간(JIT) 자가복구 루틴.
-    사용자의 작업 창이나 실행 중인 프로세스는 절대 종료하지 않고, COM 아파트먼트만 안전하게 재초기화합니다.
+    사용자의 작업 창이나 실행 중인 프로세스는 절대 종료하지 않습니다.
+    살아있는 COM 참조가 있는 상태에서 CoUninitialize를 호출하면 프로세스가 비정상 종료될 수 있으므로,
+    아파트먼트는 재초기화하지 않고 Office가 응답 가능한 상태로 돌아올 때까지 잠시 대기한 뒤 재바인딩하도록 합니다.
     """
-    log_debug(f"[JIT 자가복구] {app_name.upper()} COM 아파트먼트 재초기화 시작")
-    try:
-        if pythoncom is not None:
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
-            pythoncom.CoInitialize()
-            log_debug("[JIT 자가복구] COM 아파트먼트 재초기화 완료")
-    except Exception as e:
-        log_debug(f"[JIT 자가복구] COM 재초기화 예외: {e}")
-
+    log_debug(f"[JIT 자가복구] {app_name.upper()} 응답 대기 후 재바인딩 시도")
+    init_com()
     import time
-    time.sleep(0.3)
+    time.sleep(0.5)
     return {"status": "recovered", "killed": []}
 
 class COMError(Exception):
@@ -487,7 +479,6 @@ def _get_active_or_first_prs(app):
     except Exception:
         pass
     return None
-    return None
 
 def _extract_dispatch_from_hwnd(hwnd: int) -> Optional[Any]:
     """HWND로부터 oleacc AccessibleObjectFromWindow를 통해 IDispatch COM 객체를 추출합니다."""
@@ -504,156 +495,145 @@ def _extract_dispatch_from_hwnd(hwnd: int) -> Optional[Any]:
         pass
     return None
 
-def _get_excel_app_from_hwnd(hwnd: int) -> Optional[Any]:
-    """EXCEL7 윈도우 핸들로부터 oleacc를 통해 Excel.Application COM 객체 추출"""
-    disp = _extract_dispatch_from_hwnd(hwnd)
-    if disp:
+def _list_child_windows(parent_hwnd: int, class_name: str) -> List[int]:
+    """부모 창 아래에서 지정 클래스명을 가진 자식 창 핸들을 모두 수집합니다.
+    EnumChildWindows 콜백이 False를 반환하면 pywin32가 예외를 던질 수 있으므로 항상 True를 반환합니다.
+    """
+    found: List[int] = []
+
+    def _cb(hwnd, _):
         try:
-            return getattr(disp, "Application", None)
+            if win32gui.GetClassName(hwnd) == class_name:
+                found.append(hwnd)
         except Exception:
             pass
+        return True
+
+    try:
+        win32gui.EnumChildWindows(parent_hwnd, _cb, None)
+    except Exception:
+        pass
+    return found
+
+def _list_top_windows(match_fn) -> List[int]:
+    """최상위 창 중 match_fn(class_name)이 True인 창 핸들을 모두 수집합니다."""
+    found: List[int] = []
+
+    def _cb(hwnd, _):
+        try:
+            if match_fn(win32gui.GetClassName(hwnd)):
+                found.append(hwnd)
+        except Exception:
+            pass
+        return True
+
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception:
+        pass
+    return found
+
+def _get_window_pid(hwnd: int) -> Optional[int]:
+    try:
+        import win32process
+        return win32process.GetWindowThreadProcessId(hwnd)[1]
+    except Exception:
+        return None
+
+def _app_from_frame(frame_hwnd: int, doc_class: str) -> Optional[Any]:
+    """최상위 프레임 창에서 문서 창(EXCEL7/_WwG/paneClassDC)을 찾아 Application COM 객체를 추출합니다."""
+    for child in _list_child_windows(frame_hwnd, doc_class):
+        disp = _extract_dispatch_from_hwnd(child)
+        if disp:
+            try:
+                app = getattr(disp, "Application", None)
+                if app:
+                    return app
+            except Exception:
+                continue
     return None
 
-def _get_word_app_from_hwnd(hwnd: int) -> Optional[Any]:
-    """_WwG 윈도우 핸들로부터 oleacc를 통해 Word.Application COM 객체 추출"""
-    disp = _extract_dispatch_from_hwnd(hwnd)
-    if disp:
-        try:
-            return getattr(disp, "Application", None)
-        except Exception:
-            pass
-    return None
+# 앱 종류별 (ProgID, 최상위 프레임 클래스 판정, 문서 창 클래스)
+_APP_WINDOW_SPECS = {
+    "excel": ("Excel.Application", lambda c: c == "XLMAIN", "EXCEL7"),
+    "word": ("Word.Application", lambda c: c == "OpusApp", "_WwG"),
+    "ppt": ("PowerPoint.Application", lambda c: c == "PPTFrameClass" or ("PP" in c and "Frame" in c), "paneClassDC"),
+}
 
-def _get_ppt_app_from_hwnd(hwnd: int) -> Optional[Any]:
-    """paneClassDC 윈도우 핸들로부터 oleacc를 통해 PowerPoint.Application COM 객체 추출"""
-    disp = _extract_dispatch_from_hwnd(hwnd)
-    if disp:
+def _find_all_native_apps(app_kind: str) -> List[Any]:
+    """실행 중인 모든 Office Application 인스턴스를 프로세스 단위로 중복 없이 수집합니다 (Native oleacc 우선)."""
+    init_com()
+    prog_id, frame_match, doc_class = _APP_WINDOW_SPECS[app_kind]
+    apps: List[Any] = []
+
+    if win32gui is not None:
+        seen_pids = set()
+        for frame in _list_top_windows(frame_match):
+            pid = _get_window_pid(frame)
+            if pid is not None and pid in seen_pids:
+                continue
+            app = _app_from_frame(frame, doc_class)
+            if app:
+                apps.append(app)
+                if pid is not None:
+                    seen_pids.add(pid)
+
+    if not apps:
         try:
-            return getattr(disp, "Application", None)
+            active_app = win32com.client.GetActiveObject(prog_id)
+            if active_app:
+                apps.append(active_app)
         except Exception:
             pass
-    return None
+
+    return apps
 
 def find_all_native_excel_apps() -> List[Any]:
-    """실행 중인 모든 Excel.Application 인스턴스 탐색 (Native oleacc 우선)"""
-    init_com()
-    apps = []
-
-    try:
-        if win32gui is not None:
-            found = False
-            def enum_child(hwnd, extra):
-                nonlocal found
-                if win32gui.GetClassName(hwnd) == "EXCEL7":
-                    app = _get_excel_app_from_hwnd(hwnd)
-                    if app:
-                        apps.append(app)
-                        found = True
-                        return False
-                return True
-
-            def enum_top(hwnd, extra):
-                nonlocal found
-                if win32gui.GetClassName(hwnd) == "XLMAIN":
-                    win32gui.EnumChildWindows(hwnd, enum_child, None)
-                    if found:
-                        return False
-                return True
-
-            win32gui.EnumWindows(enum_top, None)
-    except Exception:
-        pass
-
-    if not apps:
-        try:
-            active_app = win32com.client.GetActiveObject("Excel.Application")
-            if active_app:
-                apps.append(active_app)
-        except Exception:
-            pass
-
-    return apps
+    """실행 중인 모든 Excel.Application 인스턴스 탐색 (다중 프로세스 지원)"""
+    return _find_all_native_apps("excel")
 
 def find_all_native_word_apps() -> List[Any]:
-    """실행 중인 모든 Word.Application 인스턴스 탐색 (Native oleacc 우선)"""
-    init_com()
-    apps = []
-
-    try:
-        if win32gui is not None:
-            found = False
-            def enum_child(hwnd, extra):
-                nonlocal found
-                if win32gui.GetClassName(hwnd) == "_WwG":
-                    app = _get_word_app_from_hwnd(hwnd)
-                    if app:
-                        apps.append(app)
-                        found = True
-                        return False
-                return True
-
-            def enum_top(hwnd, extra):
-                nonlocal found
-                if win32gui.GetClassName(hwnd) == "OpusApp":
-                    win32gui.EnumChildWindows(hwnd, enum_child, None)
-                    if found:
-                        return False
-                return True
-
-            win32gui.EnumWindows(enum_top, None)
-    except Exception:
-        pass
-
-    if not apps:
-        try:
-            active_app = win32com.client.GetActiveObject("Word.Application")
-            if active_app:
-                apps.append(active_app)
-        except Exception:
-            pass
-
-    return apps
+    """실행 중인 모든 Word.Application 인스턴스 탐색"""
+    return _find_all_native_apps("word")
 
 def find_all_native_ppt_apps() -> List[Any]:
-    """실행 중인 모든 PowerPoint.Application 인스턴스 탐색 (Native oleacc 우선)"""
-    init_com()
-    apps = []
+    """실행 중인 모든 PowerPoint.Application 인스턴스 탐색"""
+    return _find_all_native_apps("ppt")
 
+def _find_sheet(wb, sheet_name: str) -> Optional[Any]:
+    """시트명을 대소문자 구분 없이 찾습니다 (Excel 자체 규칙과 동일)."""
+    target = str(sheet_name).strip().lower()
     try:
-        if win32gui is not None:
-            found = False
-            def enum_child(hwnd, extra):
-                nonlocal found
-                if win32gui.GetClassName(hwnd) == "paneClassDC":
-                    app = _get_ppt_app_from_hwnd(hwnd)
-                    if app:
-                        apps.append(app)
-                        found = True
-                        return False
-                return True
-
-            def enum_top(hwnd, extra):
-                nonlocal found
-                c = win32gui.GetClassName(hwnd)
-                if ("PP" in c and "Frame" in c) or c == "PPTFrameClass":
-                    win32gui.EnumChildWindows(hwnd, enum_child, None)
-                    if found:
-                        return False
-                return True
-
-            win32gui.EnumWindows(enum_top, None)
+        for s in wb.Worksheets:
+            if str(s.Name).strip().lower() == target:
+                return s
     except Exception:
         pass
+    return None
 
-    if not apps:
+def _resolve_sheet(wb, sheet_name: str, readonly: bool) -> Any:
+    """시트를 찾고, 쓰기 모드에서만 없는 시트를 새로 생성합니다."""
+    ws = _find_sheet(wb, sheet_name)
+    if ws is not None:
+        return ws
+    if readonly:
         try:
-            active_app = win32com.client.GetActiveObject("PowerPoint.Application")
-            if active_app:
-                apps.append(active_app)
+            names = [s.Name for s in wb.Worksheets]
         except Exception:
-            pass
+            names = []
+        raise COMError(f"시트 '{sheet_name}'을(를) 찾을 수 없습니다. 존재하는 시트: {names}")
+    log_debug(f"시트 '{sheet_name}' 신규 생성")
+    ws = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+    ws.Name = sheet_name
+    return ws
 
-    return apps
+# 확장자별 저장 형식 (신규 파일 생성 시 확장자와 실제 형식 불일치 방지)
+XL_FILE_FORMATS = {".xlsx": 51, ".xlsm": 52, ".xlsb": 50, ".xls": 56}
+WD_FILE_FORMATS = {".docx": 16, ".docm": 13, ".doc": 0, ".rtf": 6, ".txt": 2}
+PP_FILE_FORMATS = {".pptx": 24, ".pptm": 25, ".ppt": 1}
+
+def _file_format_for(path: str, mapping: Dict[str, int]) -> Optional[int]:
+    return mapping.get(os.path.splitext(path)[1].lower())
 
 def get_all_running_excel_workbooks() -> List[Dict[str, Any]]:
     """실행 중인 모든 Excel 프로세스(다중 창/다중 프로세스)에서 열려 있는 모든 통합 문서를 수집합니다."""
@@ -699,7 +679,7 @@ def get_all_running_excel_workbooks() -> List[Dict[str, Any]]:
 
     # 폴백: GetActiveObject 및 Dispatch
     if not workbooks_info:
-        for method in [win32com.client.GetActiveObject, win32com.client.Dispatch]:
+        for method in [win32com.client.GetActiveObject]:  # 목록 조회가 새 Office 프로세스를 띄우지 않도록 Dispatch 배제
             try:
                 app = method("Excel.Application")
                 if app and hasattr(app, "Workbooks") and app.Workbooks.Count > 0:
@@ -730,13 +710,7 @@ def get_active_excel_app_and_wb(enable_jit: bool = True):
         if win32gui is not None:
             fg_hwnd = win32gui.GetForegroundWindow()
             if fg_hwnd and win32gui.GetClassName(fg_hwnd) == "XLMAIN":
-                app_found = None
-                def _c(h, _):
-                    nonlocal app_found
-                    if win32gui.GetClassName(h) == "EXCEL7":
-                        app_found = _get_excel_app_from_hwnd(h)
-                    return app_found is None
-                win32gui.EnumChildWindows(fg_hwnd, _c, None)
+                app_found = _app_from_frame(fg_hwnd, "EXCEL7")
                 if app_found and getattr(app_found, "ActiveWorkbook", None):
                     log_debug("Foreground Excel 창 바인딩 성공")
                     return app_found, app_found.ActiveWorkbook
@@ -773,121 +747,139 @@ def get_active_excel_app_and_wb(enable_jit: bool = True):
         return get_active_excel_app_and_wb(enable_jit=False)
     raise COMError("화면에 열려 있는 활성 Excel 창이나 통합 문서를 찾을 수 없습니다.")
 
+def _match_running_item(items: List[Dict[str, Any]], target: str) -> Optional[Dict[str, Any]]:
+    """실행 중인 문서 목록에서 이름/파일명/절대경로가 target과 일치하는 항목을 찾습니다."""
+    target_clean = target.strip().lower()
+    target_abs_lower = os.path.abspath(target).lower()
+    for item in items:
+        name_lower = str(item["name"]).lower()
+        path_lower = str(item["path"]).lower() if item["path"] else ""
+        if (target_clean == name_lower or
+                target_clean == os.path.basename(path_lower) or
+                target_abs_lower == path_lower):
+            return item
+    return None
+
+def _release_com():
+    import gc
+    gc.collect()
+    if pythoncom is not None:
+        try:
+            pythoncom.CoFreeUnusedLibraries()
+        except Exception:
+            pass
+
 @contextmanager
 def excel_session(
     target: str = "active",
     sheet_name: Optional[str] = None,
-    snapshot: bool = False
+    snapshot: bool = False,
+    readonly: Optional[bool] = None
 ) -> Generator[Tuple[Any, Any, Any], None, None]:
     """Excel COM 생명주기를 완벽하게 격리하고 관리하는 Context Manager.
-    
+
+    Args:
+        target: "active", 실행 중인 통합 문서 이름, 또는 디스크 파일 경로
+        sheet_name: 대상 시트명 (대소문자 무시)
+        snapshot: 쓰기 작업 전 자동 스냅샷 생성 여부
+        readonly: 읽기 전용 세션 여부. 생략 시 snapshot=False이면 읽기 전용으로 간주합니다.
+            읽기 전용 세션은 시트/파일을 새로 만들지 않고, 디스크 파일을 저장하지 않으며, 사용자 화면(활성 시트/스크롤)을 바꾸지 않습니다.
+
     Yields:
         (app, wb, ws): Excel Application, Workbook, Worksheet COM 객체
     """
     if win32com is None:
         raise COMError("pywin32가 설치되어 있지 않습니다. (pip install pywin32 필요)")
 
+    if readonly is None:
+        readonly = not snapshot
+
     app = None
     wb = None
     ws = None
+    owns_app = False   # 이 세션이 직접 띄운 백그라운드 Excel 인스턴스인지 여부
+    owns_wb = False    # 이 세션이 직접 연 통합 문서인지 여부 (사용자가 열어둔 문서는 닫지 않음)
     is_active_target = (target.strip().lower() == "active")
-    
+
     try:
-        # 이미 실행 중인 Excel에서 대상 문서가 열려 있는지 선제 확인
         matched_running_wb = None
         if not is_active_target:
-            target_clean = target.strip().lower()
-            all_running = get_all_running_excel_workbooks()
-            for item in all_running:
-                wb_name_lower = item["name"].lower()
-                wb_path_lower = item["path"].lower() if item["path"] else ""
-                target_abs_lower = os.path.abspath(target).lower()
-                if (target_clean == wb_name_lower or 
-                    target_clean == os.path.basename(wb_path_lower) or
-                    target_abs_lower == wb_path_lower):
-                    matched_running_wb = item
-                    log_debug(f"실행 중인 Excel 인스턴스에서 대상 문서 발견: {item['name']}")
-                    break
+            matched_running_wb = _match_running_item(get_all_running_excel_workbooks(), target)
+            if matched_running_wb:
+                log_debug(f"실행 중인 Excel 인스턴스에서 대상 문서 발견: {matched_running_wb['name']}")
 
         if is_active_target or matched_running_wb:
             if matched_running_wb:
                 app = matched_running_wb["app"]
                 wb = matched_running_wb["wb"]
-                is_active_target = True  # 사용자가 열어둔 창이므로 세션 종료 시 닫지 않음
             else:
                 app, wb = get_active_excel_app_and_wb()
                 if wb is None:
                     raise COMError("활성 Excel 창에 열린 통합 문서(Workbook)가 없습니다.")
 
-            # COM 인터페이스 안전 디스패치 래핑
             app = win32com.client.Dispatch(app)
             wb = win32com.client.Dispatch(wb)
 
-            # 사용자가 보고 있는 창을 화면 최상단으로 강제 갱신
+            if not readonly:
+                try:
+                    app.Visible = True
+                    app.ScreenUpdating = True
+                except Exception:
+                    pass
+
+            if sheet_name:
+                ws = _resolve_sheet(wb, sheet_name, readonly)
+                if not readonly:
+                    try:
+                        ws.Activate()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    ws = wb.ActiveSheet
+                except Exception:
+                    ws = wb.Worksheets(1)
+        else:
+            abs_path = os.path.abspath(target)
+            file_exists = os.path.exists(abs_path)
+            if not file_exists and readonly:
+                raise COMError(f"대상 Excel 파일이 존재하지 않습니다: {abs_path}")
+
+            # 사용자가 띄워 둔 Excel 인스턴스에 붙어 창을 숨기는 일이 없도록 전용 인스턴스를 생성
             try:
-                app.Visible = True
-                app.ScreenUpdating = True
+                app = win32com.client.DispatchEx("Excel.Application")
+            except Exception as e:
+                log_debug(f"[JIT 자가복구] Excel.Application 생성 실패 ({e}) -> JIT 복구 후 재시도")
+                jit_repair_office_environment("excel")
+                app = win32com.client.DispatchEx("Excel.Application")
+            owns_app = True
+            app.Visible = False
+            app.DisplayAlerts = False
+            try:
+                app.AskToUpdateLinks = False
             except Exception:
                 pass
 
-            if sheet_name:
-                try:
-                    ws = wb.Worksheets(sheet_name)
-                    ws.Activate()
-                except Exception:
-                    log_debug(f"시트 '{sheet_name}' 생성 및 활성화")
-                    ws = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
-                    ws.Name = sheet_name
-                    ws.Activate()
-            else:
-                try:
-                    ws = app.ActiveSheet
-                except Exception:
-                    ws = wb.Worksheets(1)
-                    
-        else:
-            # 디스크 파일 대상 (독립 STA 초기화)
-            if pythoncom is not None:
-                try:
-                    pythoncom.CoInitialize()
-                except Exception:
-                    pass
-            abs_path = os.path.abspath(target)
-            file_exists = os.path.exists(abs_path)
-            
-            try:
-                app = win32com.client.Dispatch("Excel.Application")
-            except Exception as e:
-                log_debug(f"[JIT 자가복구] Excel.Application 생성 실패 ({e}) -> JIT 복구 가동")
-                jit_repair_office_environment("excel")
-                app = win32com.client.Dispatch("Excel.Application")
-
-            app.Visible = False
-            app.DisplayAlerts = False
-            
             if file_exists:
-                log_debug(f"Excel 파일 백그라운드 오픈: {abs_path}")
+                log_debug(f"Excel 파일 백그라운드 오픈 (readonly={readonly}): {abs_path}")
                 try:
-                    wb = app.Workbooks.Open(abs_path)
+                    wb = app.Workbooks.Open(abs_path, UpdateLinks=0, ReadOnly=readonly, AddToMru=False)
                 except Exception as e:
-                    log_debug(f"[JIT 자가복구] Workbooks.Open 실패 ({e}) -> JIT 복구 후 재시도")
+                    log_debug(f"[JIT 자가복구] Workbooks.Open 실패 ({e}) -> JIT 복구 후 1회 재시도")
                     jit_repair_office_environment("excel")
-                    app = win32com.client.Dispatch("Excel.Application")
-                    app.Visible = False
-                    app.DisplayAlerts = False
-                    wb = app.Workbooks.Open(abs_path)
+                    wb = app.Workbooks.Open(abs_path, UpdateLinks=0, ReadOnly=readonly, AddToMru=False)
             else:
                 log_debug(f"Excel 신규 파일 백그라운드 생성: {abs_path}")
                 wb = app.Workbooks.Add()
-                wb.SaveAs(abs_path)
-            
+                fmt = _file_format_for(abs_path, XL_FILE_FORMATS)
+                if fmt is not None:
+                    wb.SaveAs(abs_path, FileFormat=fmt)
+                else:
+                    wb.SaveAs(abs_path)
+            owns_wb = True
+
             if sheet_name:
-                try:
-                    ws = wb.Worksheets(sheet_name)
-                except Exception:
-                    # 시트가 없으면 새로 추가
-                    ws = wb.Worksheets.Add()
-                    ws.Name = sheet_name
+                ws = _resolve_sheet(wb, sheet_name, readonly)
             else:
                 ws = wb.Worksheets(1)
 
@@ -899,67 +891,55 @@ def excel_session(
             except Exception as e:
                 log_debug(f"Excel 자동 스냅샷 예외: {e}")
 
-        # 2. 살아있는 엑셀 COM 객체 주입
         yield app, wb, ws
 
-        # 화면 시선 동기화 (Visual Focus Sync): 활성 시트 즉시 포커스
-        if is_active_target and ws is not None:
+        # 화면 시선 동기화 (Visual Focus Sync): 쓰기 작업 후 사용자 창의 활성 시트만 갱신
+        if not owns_wb and not readonly and ws is not None:
             try:
                 ws.Activate()
             except Exception:
                 pass
+
+        # 정상 종료 시 처리 (이 세션이 연 파일만 저장 및 닫기)
+        if owns_wb and wb is not None:
             try:
-                if app is not None and getattr(app, "ActiveWindow", None):
-                    app.ActiveWindow.ScrollRow = 1
-                    app.ActiveWindow.ScrollColumn = 1
-            except Exception:
-                pass
-        
-        # 3. 정상 종료 시 처리 (파일 모드만 저장 및 닫기)
-        if not is_active_target and wb is not None:
-            try:
-                # 변경 사항이 있을 때만 Save 호출 (단순 읽기 시 mtime 변경 방지)
-                if not getattr(wb, "Saved", True):
-                    log_debug("작업 완료: 변경사항 저장 및 닫기")
+                if not readonly and not getattr(wb, "Saved", True):
+                    log_debug("작업 완료: 변경사항 저장")
                     wb.Save()
                 else:
-                    log_debug("작업 완료: 변경사항 없음 (Save 생략)")
-                wb.Close(SaveChanges=False)
-            except Exception:
-                pass
-            wb = None
-            
+                    log_debug("작업 완료: 저장 생략 (읽기 전용 또는 변경사항 없음)")
+            finally:
+                try:
+                    wb.Close(SaveChanges=False)
+                except Exception:
+                    pass
+                wb = None
+
     except Exception:
-        # 예외 발생 시 파일 모드라면 저장하지 않고 안전 종료
-        if not is_active_target and wb is not None:
+        if owns_wb and wb is not None:
             try:
                 wb.Close(SaveChanges=False)
             except Exception:
                 pass
             wb = None
         raise
-        
+
     finally:
-        # 4. 프로세스 정리 및 COM 참조 해제
-        if not is_active_target and app is not None:
+        # 이 세션이 띄운 전용 인스턴스는 항상 종료 (유령 EXCEL.EXE 방지)
+        if owns_app and app is not None:
             try:
-                # 사용자가 열어둔 다른 통합 문서가 남아 있다면 Excel.Quit() 호출 금지
-                if hasattr(app, "Workbooks") and app.Workbooks.Count == 0:
-                    app.Quit()
+                for i in range(app.Workbooks.Count, 0, -1):
+                    try:
+                        app.Workbooks(i).Close(SaveChanges=False)
+                    except Exception:
+                        pass
+                app.Quit()
             except Exception:
                 pass
-            app = None
-            
         ws = None
         wb = None
         app = None
-        import gc
-        gc.collect()
-        if pythoncom is not None:
-            try:
-                pythoncom.CoFreeUnusedLibraries()
-            except Exception:
-                pass
+        _release_com()
         log_debug("Excel COM 세션 정상 종료 및 메모리 정리 완료")
 
 def get_all_running_word_documents() -> List[Dict[str, Any]]:
@@ -968,7 +948,7 @@ def get_all_running_word_documents() -> List[Dict[str, Any]]:
     docs_info = []
     apps = find_all_native_word_apps()
     if not apps:
-        for method in [win32com.client.GetActiveObject, win32com.client.Dispatch]:
+        for method in [win32com.client.GetActiveObject]:  # 목록 조회가 새 Office 프로세스를 띄우지 않도록 Dispatch 배제
             try:
                 app_inst = method("Word.Application")
                 if app_inst and hasattr(app_inst, "Documents") and app_inst.Documents.Count > 0:
@@ -989,9 +969,11 @@ def get_all_running_word_documents() -> List[Dict[str, Any]]:
             for doc in app.Documents:
                 try:
                     name = doc.Name
-                    if name in seen_doc_names:
+                    full_name = getattr(doc, "FullName", "") or name
+                    # 이름이 같고 폴더가 다른 문서가 누락되지 않도록 전체 경로 기준으로 중복 제거
+                    if full_name.lower() in seen_doc_names:
                         continue
-                    seen_doc_names.add(name)
+                    seen_doc_names.add(full_name.lower())
                     docs_info.append({
                         "app": app,
                         "doc": doc,
@@ -1042,39 +1024,39 @@ def get_active_word_app_and_doc(enable_jit: bool = True):
 @contextmanager
 def word_session(
     target: str = "active",
-    snapshot: bool = False
+    snapshot: bool = False,
+    readonly: Optional[bool] = None
 ) -> Generator[Tuple[Any, Any], None, None]:
-    """Word COM 생명주기를 완벽하게 격리하고 관리하는 Context Manager."""
+    """Word COM 생명주기를 완벽하게 격리하고 관리하는 Context Manager.
+
+    readonly 생략 시 snapshot=False이면 읽기 전용으로 간주합니다.
+    읽기 전용 세션은 존재하지 않는 파일을 새로 만들지 않고, 디스크 파일을 저장하지 않습니다.
+    """
     if win32com is None:
         raise COMError("pywin32가 설치되어 있지 않습니다.")
 
+    if readonly is None:
+        readonly = not snapshot
+
     app = None
     doc = None
+    owns_app = False
+    owns_doc = False
     is_active_target = (target.strip().lower() == "active")
 
     try:
-        # 이미 실행 중인 Word에서 대상 문서가 열려 있는지 선제 확인
         matched_running_doc = None
         if not is_active_target:
-            target_clean = target.strip().lower()
             all_running = get_all_running_word_documents()
-            log_debug(f"Word 검색: target='{target_clean}', 열린 문서 수={len(all_running)}, 목록={[i['name'] for i in all_running]}")
-            for item in all_running:
-                doc_name_lower = item["name"].lower()
-                doc_path_lower = item["path"].lower() if item["path"] else ""
-                target_abs_lower = os.path.abspath(target).lower()
-                if (target_clean == doc_name_lower or 
-                    target_clean == os.path.basename(doc_path_lower) or
-                    target_abs_lower == doc_path_lower):
-                    matched_running_doc = item
-                    log_debug(f"실행 중인 Word 인스턴스에서 대상 문서 발견: {item['name']}")
-                    break
+            log_debug(f"Word 검색: target='{target}', 열린 문서 수={len(all_running)}, 목록={[i['name'] for i in all_running]}")
+            matched_running_doc = _match_running_item(all_running, target)
+            if matched_running_doc:
+                log_debug(f"실행 중인 Word 인스턴스에서 대상 문서 발견: {matched_running_doc['name']}")
 
         if is_active_target or matched_running_doc:
             if matched_running_doc:
                 app = matched_running_doc["app"]
                 doc = matched_running_doc["doc"]
-                is_active_target = True  # 사용자가 열어둔 창이므로 세션 종료 시 닫지 않음
             else:
                 app, doc = get_active_word_app_and_doc()
                 if doc is None:
@@ -1082,36 +1064,41 @@ def word_session(
 
             app = win32com.client.Dispatch(app)
             doc = win32com.client.Dispatch(doc)
-            try:
-                app.Visible = True
-                app.ScreenUpdating = True
-            except Exception:
-                pass
-        else:
-            if pythoncom is not None:
+            if not readonly:
                 try:
-                    pythoncom.CoInitialize()
+                    app.Visible = True
+                    app.ScreenUpdating = True
                 except Exception:
                     pass
+        else:
             abs_path = os.path.abspath(target)
             file_exists = os.path.exists(abs_path)
-            try:
-                app = win32com.client.Dispatch("Word.Application")
-            except Exception as e:
-                log_debug(f"[JIT 자가복구] Word.Application 생성 실패 ({e}) -> JIT 복구 가동")
-                jit_repair_office_environment("word")
-                app = win32com.client.Dispatch("Word.Application")
+            if not file_exists and readonly:
+                raise COMError(f"대상 Word 파일이 존재하지 않습니다: {abs_path}")
 
+            # 사용자가 띄워 둔 Word 인스턴스에 붙어 창을 숨기는 일이 없도록 전용 인스턴스를 생성
+            try:
+                app = win32com.client.DispatchEx("Word.Application")
+            except Exception as e:
+                log_debug(f"[JIT 자가복구] Word.Application 생성 실패 ({e}) -> JIT 복구 후 재시도")
+                jit_repair_office_environment("word")
+                app = win32com.client.DispatchEx("Word.Application")
+            owns_app = True
             app.Visible = False
             app.DisplayAlerts = 0  # wdAlertsNone
 
             if file_exists:
-                log_debug(f"Word 파일 백그라운드 오픈: {abs_path}")
-                doc = app.Documents.Open(abs_path)
+                log_debug(f"Word 파일 백그라운드 오픈 (readonly={readonly}): {abs_path}")
+                doc = app.Documents.Open(abs_path, ConfirmConversions=False, ReadOnly=readonly, AddToRecentFiles=False)
             else:
                 log_debug(f"Word 신규 문서 백그라운드 생성: {abs_path}")
                 doc = app.Documents.Add()
-                doc.SaveAs(abs_path)
+                fmt = _file_format_for(abs_path, WD_FILE_FORMATS)
+                if fmt is not None:
+                    doc.SaveAs2(abs_path, FileFormat=fmt)
+                else:
+                    doc.SaveAs2(abs_path)
+            owns_doc = True
 
         # 쓰기 작업 전 자동 캐시 스냅샷 (최근 2개 유지)
         if snapshot and doc is not None:
@@ -1123,48 +1110,43 @@ def word_session(
 
         yield app, doc
 
-        # 화면 시선 동기화 (Visual Focus Sync): 활성 문서 포커스
-        if is_active_target and doc is not None:
+        # 화면 시선 동기화 (Visual Focus Sync): 쓰기 작업 후 사용자 문서 포커스
+        if not owns_doc and not readonly and doc is not None:
             try:
                 doc.Activate()
             except Exception:
                 pass
 
-        if not is_active_target and doc is not None:
-            if not getattr(doc, "Saved", True):
-                log_debug("Word 변경사항 저장 및 닫기")
-                doc.Save()
-            doc.Close(SaveChanges=False)
-            doc = None
+        if owns_doc and doc is not None:
+            try:
+                if not readonly and not getattr(doc, "Saved", True):
+                    log_debug("Word 변경사항 저장")
+                    doc.Save()
+            finally:
+                try:
+                    doc.Close(SaveChanges=0)  # wdDoNotSaveChanges
+                except Exception:
+                    pass
+                doc = None
 
     except Exception:
-        if not is_active_target and doc is not None:
+        if owns_doc and doc is not None:
             try:
-                doc.Close(SaveChanges=False)
+                doc.Close(SaveChanges=0)
             except Exception:
                 pass
             doc = None
         raise
 
     finally:
-        if not is_active_target:
-            if app is not None:
-                try:
-                    # 사용자가 열어둔 다른 문서가 남아 있다면 Word.Quit() 호출 금지
-                    if hasattr(app, "Documents") and app.Documents.Count == 0:
-                        app.Quit()
-                except Exception:
-                    pass
-                app = None
-        doc = None
-        app = None
-        import gc
-        gc.collect()
-        if pythoncom is not None:
+        if owns_app and app is not None:
             try:
-                pythoncom.CoFreeUnusedLibraries()
+                app.Quit(SaveChanges=0)
             except Exception:
                 pass
+        doc = None
+        app = None
+        _release_com()
         log_debug("Word COM 세션 정상 종료 완료")
 
 def get_all_running_ppt_presentations() -> List[Dict[str, Any]]:
@@ -1173,7 +1155,7 @@ def get_all_running_ppt_presentations() -> List[Dict[str, Any]]:
     prs_info = []
     apps = find_all_native_ppt_apps()
     if not apps:
-        for method in [win32com.client.GetActiveObject, win32com.client.Dispatch]:
+        for method in [win32com.client.GetActiveObject]:  # 목록 조회가 새 Office 프로세스를 띄우지 않도록 Dispatch 배제
             try:
                 app_inst = method("PowerPoint.Application")
                 if app_inst and hasattr(app_inst, "Presentations") and app_inst.Presentations.Count > 0:
@@ -1194,9 +1176,10 @@ def get_all_running_ppt_presentations() -> List[Dict[str, Any]]:
             for prs in app.Presentations:
                 try:
                     name = prs.Name
-                    if name in seen_prs_names:
+                    full_name = getattr(prs, "FullName", "") or name
+                    if full_name.lower() in seen_prs_names:
                         continue
-                    seen_prs_names.add(name)
+                    seen_prs_names.add(full_name.lower())
                     prs_info.append({
                         "app": app,
                         "prs": prs,
@@ -1248,39 +1231,41 @@ def get_active_ppt_app_and_prs(enable_jit: bool = True):
 @contextmanager
 def ppt_session(
     target: str = "active",
-    snapshot: bool = False
+    snapshot: bool = False,
+    readonly: Optional[bool] = None
 ) -> Generator[Tuple[Any, Any], None, None]:
-    """PowerPoint COM 생명주기를 완벽하게 격리하고 관리하는 Context Manager."""
+    """PowerPoint COM 생명주기를 완벽하게 격리하고 관리하는 Context Manager.
+
+    PowerPoint는 단일 인스턴스 앱이라 전용 인스턴스를 만들 수 없으므로,
+    사용자가 이미 띄워 둔 PowerPoint의 창 상태(Visible/WindowState)는 절대 바꾸지 않고
+    대상 파일만 창 없이(WithWindow=False) 열어 작업합니다.
+    readonly 생략 시 snapshot=False이면 읽기 전용으로 간주합니다.
+    """
     if win32com is None:
         raise COMError("pywin32가 설치되어 있지 않습니다.")
 
+    if readonly is None:
+        readonly = not snapshot
+
     app = None
     prs = None
-    file_exists = False
+    owns_app = False
+    owns_prs = False
+    orig_alerts = None
+    abs_path = ""
     is_active_target = (target.strip().lower() == "active")
 
     try:
-        # 이미 실행 중인 PowerPoint에서 대상 프레젠테이션이 열려 있는지 선제 확인
         matched_running_prs = None
         if not is_active_target:
-            target_clean = target.strip().lower()
-            all_running = get_all_running_ppt_presentations()
-            for item in all_running:
-                prs_name_lower = item["name"].lower()
-                prs_path_lower = item["path"].lower() if item["path"] else ""
-                target_abs_lower = os.path.abspath(target).lower()
-                if (target_clean == prs_name_lower or 
-                    target_clean == os.path.basename(prs_path_lower) or
-                    target_abs_lower == prs_path_lower):
-                    matched_running_prs = item
-                    log_debug(f"실행 중인 PowerPoint 인스턴스에서 대상 문서 발견: {item['name']}")
-                    break
+            matched_running_prs = _match_running_item(get_all_running_ppt_presentations(), target)
+            if matched_running_prs:
+                log_debug(f"실행 중인 PowerPoint 인스턴스에서 대상 문서 발견: {matched_running_prs['name']}")
 
         if is_active_target or matched_running_prs:
             if matched_running_prs:
                 app = matched_running_prs["app"]
                 prs = matched_running_prs["prs"]
-                is_active_target = True  # 사용자가 열어둔 창이므로 세션 종료 시 닫지 않음
             else:
                 app, prs = get_active_ppt_app_and_prs()
                 if prs is None:
@@ -1288,46 +1273,54 @@ def ppt_session(
 
             app = win32com.client.Dispatch(app)
             prs = win32com.client.Dispatch(prs)
-            try:
-                app.Visible = True
-            except Exception:
-                pass
         else:
-            if pythoncom is not None:
-                try:
-                    pythoncom.CoInitialize()
-                except Exception:
-                    pass
             abs_path = os.path.abspath(target)
             file_exists = os.path.exists(abs_path)
+            if not file_exists and readonly:
+                raise COMError(f"대상 PowerPoint 파일이 존재하지 않습니다: {abs_path}")
+
+            already_running = False
+            try:
+                win32com.client.GetActiveObject("PowerPoint.Application")
+                already_running = True
+            except Exception:
+                pass
             try:
                 app = win32com.client.Dispatch("PowerPoint.Application")
             except Exception as e:
                 log_debug(f"[JIT 자가복구] PowerPoint.Application 생성 실패 ({e}) -> JIT 복구 가동")
                 jit_repair_office_environment("ppt")
                 app = win32com.client.Dispatch("PowerPoint.Application")
+            owns_app = not already_running
+
             try:
+                orig_alerts = app.DisplayAlerts
                 app.DisplayAlerts = 1  # ppAlertsNone
-                app.Visible = False
-                app.WindowState = 2    # ppWindowMinimized (화면 깜빡임 방지)
             except Exception:
-                pass
-            # WithWindow=0으로 창 없이 백그라운드 오픈
+                orig_alerts = None
+
             if file_exists:
-                log_debug(f"PowerPoint 파일 오픈: {abs_path}")
+                log_debug(f"PowerPoint 파일 창 없이 오픈 (readonly={readonly}): {abs_path}")
+                ms_readonly = -1 if readonly else 0  # msoTrue / msoFalse
                 try:
-                    prs = app.Presentations.Open(abs_path, 0, 0, 0)
+                    prs = app.Presentations.Open(abs_path, ms_readonly, 0, 0)
                 except Exception:
-                    prs = app.Presentations.Open(abs_path)
+                    prs = app.Presentations.Open(abs_path, ms_readonly)
             else:
                 log_debug(f"PowerPoint 신규 파일 생성: {abs_path}")
                 try:
-                    prs = app.Presentations.Add(1)
+                    prs = app.Presentations.Add(0)  # WithWindow=msoFalse
                 except Exception:
                     prs = app.Presentations.Add()
+                fmt = _file_format_for(abs_path, PP_FILE_FORMATS)
+                if fmt is not None:
+                    prs.SaveAs(abs_path, fmt)
+                else:
+                    prs.SaveAs(abs_path)
+            owns_prs = True
 
-        # 쓰기 작업 전 자동 캐시 스냅샷 (최근 2개 유지)
-        if snapshot and prs is not None and file_exists:
+        # 쓰기 작업 전 자동 캐시 스냅샷 (활성/파일 모드 공통, 최근 2개 유지)
+        if snapshot and prs is not None:
             try:
                 from _cache import save_document_snapshot
                 save_document_snapshot("ppt", prs)
@@ -1336,8 +1329,8 @@ def ppt_session(
 
         yield app, prs
 
-        # 화면 시선 동기화 (Visual Focus Sync): 활성 슬라이드 즉시 포커스
-        if is_active_target and prs is not None and app is not None:
+        # 화면 시선 동기화 (Visual Focus Sync): 쓰기 작업 후에만 사용자 화면을 마지막 슬라이드로 이동
+        if not owns_prs and not readonly and prs is not None and app is not None:
             try:
                 if getattr(app, "ActiveWindow", None):
                     view = getattr(app.ActiveWindow, "View", None)
@@ -1346,30 +1339,20 @@ def ppt_session(
             except Exception:
                 pass
 
-        if not is_active_target and prs is not None:
-            log_debug(f"PowerPoint 세션 종료 단계 진입: {abs_path}")
+        if owns_prs and prs is not None:
             try:
-                log_debug("PowerPoint prs.Save() 호출 직전")
-                prs.Save()
-                log_debug("PowerPoint prs.Save() 성공")
-            except Exception as e_save:
-                log_debug(f"PowerPoint prs.Save() 예외: {e_save}")
+                if not readonly and not getattr(prs, "Saved", True):
+                    log_debug(f"PowerPoint 변경사항 저장: {abs_path}")
+                    prs.Save()
+            finally:
                 try:
-                    log_debug("PowerPoint prs.SaveCopyAs() 시도 직전")
-                    prs.SaveCopyAs(abs_path)
-                    log_debug("PowerPoint prs.SaveCopyAs() 성공")
-                except Exception as e_copy:
-                    log_debug(f"PowerPoint SaveCopyAs 예외: {e_copy}")
-            try:
-                log_debug("PowerPoint prs.Close() 호출 직전")
-                prs.Close()
-                log_debug("PowerPoint prs.Close() 성공")
-            except Exception as e_close:
-                log_debug(f"PowerPoint prs.Close() 예외: {e_close}")
-            prs = None
+                    prs.Close()
+                except Exception as e_close:
+                    log_debug(f"PowerPoint prs.Close() 예외: {e_close}")
+                prs = None
 
     except Exception:
-        if not is_active_target and prs is not None:
+        if owns_prs and prs is not None:
             try:
                 prs.Close()
             except Exception:
@@ -1378,22 +1361,21 @@ def ppt_session(
         raise
 
     finally:
-        if not is_active_target and app is not None:
-            try:
-                if hasattr(app, "Presentations") and app.Presentations.Count == 0:
-                    app.Quit()
-            except Exception:
-                pass
-            app = None
+        if app is not None:
+            if orig_alerts is not None and not owns_app:
+                try:
+                    app.DisplayAlerts = orig_alerts
+                except Exception:
+                    pass
+            if owns_app:
+                try:
+                    if app.Presentations.Count == 0:
+                        app.Quit()
+                except Exception:
+                    pass
         prs = None
         app = None
-        import gc
-        gc.collect()
-        if pythoncom is not None:
-            try:
-                pythoncom.CoFreeUnusedLibraries()
-            except Exception:
-                pass
+        _release_com()
         log_debug("PowerPoint COM 세션 정상 종료 완료")
 ```
 
@@ -1685,7 +1667,10 @@ def format_response(
         "agent_directive": agent_directive
     }
     if extra:
-        res.update(extra)
+        # 응답 규약의 핵심 키(status/module/action/preview/agent_directive)는 extra로 덮어쓰지 않음
+        for k, v in extra.items():
+            if k not in res:
+                res[k] = v
     return res
 
 def emit_response(response_dict: Dict[str, Any]) -> None:
@@ -1715,6 +1700,14 @@ def read_csv_table(file_path: str) -> List[List[Any]]:
     if content is None:
         raise ValueError(f"CSV 파일을 읽을 수 없습니다 (인코딩 지원 실패): {file_path}")
     return content
+
+def range_to_matrix(values: Any) -> List[List[Any]]:
+    """Excel Range.Value/Formula 결과를 항상 2차원 리스트로 정규화합니다.
+    pywin32는 단일 셀이면 스칼라, 여러 셀이면 (한 행/한 열이어도) 튜플의 튜플을 반환합니다.
+    """
+    if not isinstance(values, (tuple, list)):
+        return [[values]]
+    return [list(row) if isinstance(row, (tuple, list)) else [row] for row in values]
 
 def col_idx_to_name(col_idx: int) -> str:
     """1-based 열 인덱스를 엑셀 열 문자열(예: 1 -> 'A', 28 -> 'AB')로 변환합니다."""
@@ -1816,6 +1809,33 @@ def normalize_and_expand_rules(rules: Dict[str, Any]) -> Dict[str, Any]:
 
     return expanded
 
+
+def exit_code_for(response_dict: Dict[str, Any]) -> int:
+    """응답 status에 따른 프로세스 종료 코드 (ok/no_match=0, 그 외=1)."""
+    return 0 if response_dict.get("status") in ("ok", "no_match") else 1
+
+def run_session_tool(module: str, action: str, session_factory, tool_fn) -> None:
+    """Office 세션을 열고 도구를 실행한 뒤, 결과를 단 1줄 JSON으로 출력하고 종료 코드를 반환하며 종료합니다.
+    세션 연결 실패(대상 문서 없음, 시트 없음 등)를 포함한 모든 예외도 JSON 오류 응답으로 변환합니다.
+
+    Args:
+        session_factory: 인자 없이 호출하면 Context Manager를 반환하는 함수 (예: lambda: excel_session(...))
+        tool_fn: 세션이 yield한 COM 객체들을 위치 인자로 받아 응답 dict를 반환하는 함수
+    """
+    try:
+        with session_factory() as handles:
+            res = tool_fn(*handles)
+    except Exception as e:
+        log_debug(f"{module} 세션/실행 오류: {e}")
+        res = format_response(
+            status="error",
+            module=module,
+            action=action,
+            preview=friendly_error_message(e),
+            agent_directive="STOP_RETRY: 대상 문서에 연결하지 못했거나 실행 중 오류가 발생했습니다. 사용자에게 보고하세요."
+        )
+    emit_response(res)
+    sys.exit(exit_code_for(res))
 ```
 
 === END FILE: _office_utils.py ===
@@ -1960,8 +1980,10 @@ def get_current_active_item(app=None):
 import sys
 import os
 import glob
+import shutil
 import argparse
-from typing import Dict, Any
+from datetime import datetime
+from typing import Dict, Any, Optional
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -1969,128 +1991,236 @@ if CURRENT_DIR not in sys.path:
 
 from _office_utils import format_response, emit_response, log_debug
 from _config import get_cache_dir
-from _cache import get_latest_snapshot
+from _cache import get_latest_snapshot, delete_snapshot_files
 
 def preserve_cache_notice() -> str:
     """캐시 폴더는 중요한 검색 인덱스 자산이므로 일체 삭제하지 않고 영구 보존합니다."""
     return "캐시 인덱스는 중요한 검색 자산이므로 비우지 않고 안전하게 영구 보존됩니다."
 
 def fix_office_environment() -> Dict[str, Any]:
-    """사용자의 정상 오피스 작업 창은 100% 온전히 보존하며, COM 아파트먼트만 안전하게 복구합니다."""
+    """사용자의 정상 오피스 작업 창은 100% 온전히 보존하며, 실행 중인 Office 인스턴스가 COM으로 응답하는지 점검합니다.
+    프로세스는 종료하지 않습니다.
+    """
+    responsive = {}
     try:
-        from _com_guard import attach_user_desktop
+        from _com_guard import attach_user_desktop, find_all_native_excel_apps, find_all_native_word_apps, find_all_native_ppt_apps
         attach_user_desktop()
-        from _com_guard import jit_repair_office_environment
-        jit_repair_office_environment("excel")
-        jit_repair_office_environment("word")
-        jit_repair_office_environment("ppt")
+        for name, finder in (("excel", find_all_native_excel_apps), ("word", find_all_native_word_apps), ("ppt", find_all_native_ppt_apps)):
+            count = 0
+            for app in finder():
+                try:
+                    _ = app.Name
+                    count += 1
+                except Exception:
+                    pass
+            responsive[name] = count
     except Exception as e:
-        log_debug(f"환경 복구 예외: {e}")
+        log_debug(f"환경 점검 예외: {e}")
 
     return {
         "killed_count": 0,
-        "killed_processes": []
+        "killed_processes": [],
+        "responsive_instances": responsive
     }
 
-def undo_latest_backup(app_filter: str = "") -> Dict[str, Any]:
-    """가장 최근에 저장된 캐시 스냅샷(또는 레거시 백업)을 확인하여 복원을 시도합니다."""
-    # 1. atomic_cli/cache/ 내의 스냅샷 우선 검사 (app_filter 지원)
-    latest_snap = get_latest_snapshot(app_filter=app_filter)
-    if latest_snap:
-        snap_file = latest_snap.get("snapshot_file", "")
-        orig_path = latest_snap.get("original_path", "")
-        app_name = latest_snap.get("app", "excel")
-        doc_name = latest_snap.get("name", "")
-        
-        restore_target = snap_file
-        if orig_path and os.path.exists(os.path.dirname(orig_path)):
-            try:
-                import shutil
-                shutil.copy2(snap_file, orig_path)
-                restore_target = orig_path
-            except Exception as e:
-                log_debug(f"스냅샷 파일 복사 예외: {e}")
+def _backup_path(app_name: str, ext: str) -> str:
+    cache_dir = get_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]
+    return os.path.normpath(os.path.join(cache_dir, f"undo_backup_{app_name}_{stamp}{ext}"))
 
-        return {
-            "status": "ok",
-            "action": "restored",
-            "target": app_name,
-            "backup_path": snap_file,
-            "restored_to": restore_target,
-            "snapshot_id": os.path.basename(snap_file),
-            "doc_name": doc_name
-        }
-
-    # 2. 캐시에 없으면 레거시 C:\cli_data\backup\manifest.json 검사 (하위 호환)
-    backup_dir = r"C:\cli_data\backup"
-    manifest_path = os.path.join(backup_dir, "manifest.json")
-    if not os.path.exists(manifest_path):
-        return {"status": "no_match", "preview": "복원 가능한 캐시 스냅샷 또는 백업 기록이 없습니다."}
-    
-    import json
+def _find_open_document(app_name: str, orig_path: str) -> Optional[Dict[str, Any]]:
+    """원본 경로의 문서가 현재 Office에 열려 있으면 해당 항목을 반환합니다."""
     try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-        if not manifest or not isinstance(manifest, list):
-            return {"status": "no_match", "preview": "복원 가능한 백업이 없습니다."}
-        
-        latest = manifest[-1]
-        target_app = latest.get("app_type", "excel")
-        backup_path = latest.get("backup_path", "")
-        
-        if not os.path.exists(backup_path):
-            return {"status": "error", "preview": f"백업 파일이 존재하지 않습니다: {backup_path}"}
-            
-        return {
-            "status": "ok",
-            "action": "restored",
-            "target": target_app,
-            "backup_path": backup_path,
-            "snapshot_id": latest.get("id", "")
-        }
+        from _com_guard import (get_all_running_excel_workbooks, get_all_running_word_documents,
+                                get_all_running_ppt_presentations)
+        lister = {"excel": get_all_running_excel_workbooks, "word": get_all_running_word_documents,
+                  "ppt": get_all_running_ppt_presentations}[app_name]
+        target = os.path.normcase(os.path.abspath(orig_path))
+        for item in lister():
+            path = item.get("path") or ""
+            if path and os.path.normcase(os.path.abspath(path)) == target:
+                return item
     except Exception as e:
-        return {"status": "error", "preview": f"Undo 처리 중 오류: {e}"}
+        log_debug(f"열린 문서 탐색 예외: {e}")
+    return None
+
+def _word_save_flat_xml_as(app, xml_path: str, dest_path: str):
+    """Flat OPC(.xml) 스냅샷을 Word로 열어 원본 확장자 형식으로 저장하고, 저장된 문서 객체를 반환합니다."""
+    from _com_guard import WD_FILE_FORMATS, _file_format_for
+    doc = app.Documents.Open(os.path.normpath(xml_path), ConfirmConversions=False, AddToRecentFiles=False)
+    fmt = _file_format_for(dest_path, WD_FILE_FORMATS)
+    if fmt is not None:
+        doc.SaveAs2(os.path.normpath(dest_path), FileFormat=fmt)
+    else:
+        doc.SaveAs2(os.path.normpath(dest_path))
+    return doc
+
+def _restore_open_document(app_name: str, item: Dict[str, Any], snap: Dict[str, Any], orig_path: str) -> str:
+    """열려 있는 문서를 현재 상태로 백업한 뒤 닫고, 스냅샷으로 교체한 다음 같은 앱에서 다시 엽니다."""
+    import win32com.client
+    app = win32com.client.Dispatch(item["app"])
+    snap_file = snap["snapshot_file"]
+    ext = os.path.splitext(orig_path)[1]
+
+    if app_name == "excel":
+        wb = item["wb"]
+        backup = _backup_path(app_name, ext)
+        wb.SaveCopyAs(backup)
+        wb.Close(SaveChanges=False)
+        shutil.copy2(snap_file, orig_path)
+        app.Workbooks.Open(os.path.normpath(orig_path))
+    elif app_name == "ppt":
+        prs = item["prs"]
+        backup = _backup_path(app_name, ext)
+        prs.SaveCopyAs(backup)
+        prs.Close()
+        shutil.copy2(snap_file, orig_path)
+        app.Presentations.Open(os.path.normpath(orig_path))
+    else:
+        doc = item["doc"]
+        backup = _backup_path(app_name, ".xml")
+        with open(backup, "w", encoding="utf-8") as f:
+            f.write(doc.WordOpenXML)
+        doc.Close(SaveChanges=0)
+        if snap.get("snapshot_format") == "flat_xml":
+            _word_save_flat_xml_as(app, snap_file, orig_path)
+        else:
+            shutil.copy2(snap_file, orig_path)
+            app.Documents.Open(os.path.normpath(orig_path))
+    return backup
+
+def _restore_closed_document(app_name: str, snap: Dict[str, Any], orig_path: str) -> str:
+    """닫혀 있는 원본 파일을 백업한 뒤 스냅샷으로 교체합니다."""
+    backup = ""
+    if os.path.exists(orig_path):
+        backup = _backup_path(app_name, os.path.splitext(orig_path)[1])
+        shutil.copy2(orig_path, backup)
+
+    if app_name == "word" and snap.get("snapshot_format") == "flat_xml":
+        from _com_guard import init_com
+        import win32com.client
+        init_com()
+        app = win32com.client.DispatchEx("Word.Application")
+        try:
+            app.Visible = False
+            app.DisplayAlerts = 0
+            doc = _word_save_flat_xml_as(app, snap["snapshot_file"], orig_path)
+            doc.Close(SaveChanges=0)
+        finally:
+            try:
+                app.Quit(SaveChanges=0)
+            except Exception:
+                pass
+    else:
+        shutil.copy2(snap["snapshot_file"], orig_path)
+    return backup
+
+def _open_snapshot_as_new_document(app_name: str, snap: Dict[str, Any]) -> None:
+    """저장된 적 없는 문서의 스냅샷을 사용자 Office에서 '제목 없는 새 문서'로 엽니다 (캐시 파일 자체를 열지 않음)."""
+    from _com_guard import get_active_excel_app_and_wb, get_active_word_app_and_doc, get_active_ppt_app_and_prs
+    import win32com.client
+    snap_file = os.path.normpath(snap["snapshot_file"])
+    if app_name == "excel":
+        app, _ = get_active_excel_app_and_wb()
+        win32com.client.Dispatch(app).Workbooks.Add(snap_file)
+    elif app_name == "ppt":
+        app, _ = get_active_ppt_app_and_prs()
+        win32com.client.Dispatch(app).Presentations.Open(snap_file, 0, -1, -1)  # Untitled=msoTrue, WithWindow=msoTrue
+    else:
+        app, _ = get_active_word_app_and_doc()
+        win32com.client.Dispatch(app).Documents.Add(Template=snap_file)
+
+def undo_latest_backup(app_filter: str = "") -> Dict[str, Any]:
+    """가장 최근에 저장된 캐시 스냅샷으로 원본 문서를 복원합니다.
+
+    - 복원 직전의 현재 상태는 cache/undo_backup_* 로 먼저 백업합니다 (복원 자체도 되돌릴 수 있도록).
+    - 원본이 Office에 열려 있으면 닫고 교체한 뒤 같은 앱에서 다시 엽니다.
+    - 복원에 성공한 스냅샷은 소비(삭제)되어, 다음 undo는 그 이전 스냅샷으로 진행됩니다.
+    """
+    snap = get_latest_snapshot(app_filter=app_filter)
+    if not snap:
+        return {"status": "no_match", "preview": "복원 가능한 캐시 스냅샷이 없습니다."}
+
+    app_name = snap.get("app", "excel")
+    orig_path = snap.get("original_path", "")
+    doc_name = snap.get("name", "")
+    snap_file = snap.get("snapshot_file", "")
+    restored_as = ""
+    backup = ""
+
+    try:
+        if not orig_path:
+            _open_snapshot_as_new_document(app_name, snap)
+            restored_as = "new_untitled_document"
+        else:
+            if not os.path.isdir(os.path.dirname(orig_path)):
+                return {"status": "error", "preview": f"원본 폴더가 존재하지 않습니다: {os.path.dirname(orig_path)}"}
+            open_item = _find_open_document(app_name, orig_path)
+            if open_item:
+                backup = _restore_open_document(app_name, open_item, snap, orig_path)
+                restored_as = "reopened_in_office"
+            else:
+                backup = _restore_closed_document(app_name, snap, orig_path)
+                restored_as = "file_replaced"
+    except Exception as e:
+        log_debug(f"Undo 복원 예외: {e}")
+        return {"status": "error", "preview": f"스냅샷 복원 실패 ({doc_name}): {e}"}
+
+    try:
+        delete_snapshot_files(snap["meta_file"])
+    except Exception as e:
+        log_debug(f"사용한 스냅샷 정리 실패: {e}")
+
+    return {
+        "status": "ok",
+        "app": app_name,
+        "doc_name": doc_name,
+        "snapshot_id": os.path.basename(snap_file),
+        "restored_to": orig_path or "(새 문서)",
+        "restored_as": restored_as,
+        "pre_undo_backup": backup
+    }
 
 def execute(params: Dict[str, Any]) -> Dict[str, Any]:
-    """캐시 정리, 오피스 고아 프로세스 복구, 또는 직전 작업 되돌리기(Undo)를 수행합니다."""
+    """오피스 COM 응답 점검 또는 직전 작업 되돌리기(Undo)를 수행합니다."""
     action = (params.get("action") or "all").lower()
     app_filter = (params.get("app") or "").lower()
 
     if action == "undo":
         res = undo_latest_backup(app_filter=app_filter)
         if res.get("status") == "ok":
+            extra = {k: v for k, v in res.items() if k != "status"}
             return format_response(
                 status="ok",
                 module="clean",
                 action="undo",
-                preview=f"Restored from snapshot {res.get('snapshot_id')} ({res.get('backup_path')})",
-                agent_directive="VERIFIED: 직전 백업 스냅샷 상태로 복원 정보가 확인되었습니다.",
-                extra=res
+                preview=f"Restored '{res.get('doc_name')}' from snapshot {res.get('snapshot_id')} ({res.get('restored_as')})",
+                agent_directive="VERIFIED: 직전 스냅샷 상태로 복원했습니다. 복원 전 상태는 pre_undo_backup에 보관되어 있습니다.",
+                extra=extra
             )
-        else:
-            return format_response(
-                status=res.get("status", "error"),
-                module="clean",
-                action="undo",
-                preview=res.get("preview", "Undo 실패"),
-                agent_directive="STOP_RETRY: 복원 가능한 백업이 없거나 오류가 발생했습니다."
-            )
+        return format_response(
+            status=res.get("status", "error"),
+            module="clean",
+            action="undo",
+            preview=res.get("preview", "Undo 실패"),
+            agent_directive="STOP_RETRY: 복원 가능한 스냅샷이 없거나 복원 중 오류가 발생했습니다. 사용자에게 보고하세요."
+        )
 
-    fix_result = {"killed_count": 0, "killed_processes": []}
+    fix_result = fix_office_environment()
+    resp = fix_result.get("responsive_instances", {})
+    preview_msg = ("COM 응답 점검 완료 (프로세스 종료 없음): "
+                   + ", ".join(f"{k}={v}" for k, v in resp.items()) + " | 캐시 인덱스 보존")
 
-    if action in ["fix", "fix-env", "env", "all"]:
-        fix_result = fix_office_environment()
-
-    preview_msg = f"Terminated {fix_result['killed_count']} orphaned background processes | Cache indexes preserved intact"
-    
     return format_response(
         status="ok",
         module="clean",
-        action="clean_environment",
+        action="fix_env",
         preview=preview_msg,
-        agent_directive="VERIFIED: Office environment cleaned and recovered.",
+        agent_directive="INFO: 실행 중인 Office 인스턴스의 COM 응답 여부만 점검했습니다. 종료된 프로세스는 없습니다.",
         extra={
-            "killed_orphaned_processes": fix_result["killed_processes"],
+            "responsive_instances": resp,
+            "killed_orphaned_processes": [],
             "cache_status": "preserved"
         }
     )
@@ -2102,8 +2232,13 @@ def main():
     args = parser.parse_args()
 
     params = {"action": args.action, "app": args.app}
-    res = execute(params)
+    try:
+        res = execute(params)
+    except Exception as e:
+        res = format_response("error", "clean", args.action, preview=f"clean 실행 오류: {e}",
+                              agent_directive="STOP_RETRY: 사용자에게 오류를 보고하세요.")
     emit_response(res)
+    sys.exit(0 if res.get("status") in ("ok", "no_match") else 1)
 
 if __name__ == "__main__":
     main()
@@ -3034,7 +3169,7 @@ if CURRENT_DIR not in sys.path:
 
 from _office_utils import (
     format_response, emit_response, log_debug, parse_color_to_bgr,
-    parse_replace_rules, normalize_and_expand_rules
+    parse_replace_rules, normalize_and_expand_rules, range_to_matrix
 )
 from _com_guard import excel_session
 from _config import resolve_data_path, get_data_dir
@@ -3393,17 +3528,12 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
 
         # B. 텍스트/숫자 검색 기반 내용 수정 및 서식 적용
         try:
-            cells = used_range.Cells
             row_count = used_range.Rows.Count
             col_count = used_range.Columns.Count
 
-            values = used_range.Value
-            if row_count == 1 and col_count == 1:
-                values = ((values,),)
-            elif row_count == 1:
-                values = (values,)
-            elif col_count == 1:
-                values = tuple((row,) for row in values)
+            values = range_to_matrix(used_range.Value)
+            # 수식 셀은 계산 결과값으로 매칭되더라도 수식을 상수 텍스트로 덮어쓰지 않도록 수식 문자열을 함께 일괄 조회
+            formulas = range_to_matrix(used_range.Formula)
 
             start_row = used_range.Row
             start_col = used_range.Column
@@ -3425,7 +3555,14 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
                         cell_obj = ws.Cells(start_row + r_idx, start_col + c_idx)
                         target_style = dict(style)
                         text_val = target_style.get("text") if "text" in target_style else target_style.get("replace")
-                        if text_val is not None and not str(text_val).strip().startswith("="):
+                        formula_str = formulas[r_idx][c_idx]
+                        has_formula = isinstance(formula_str, str) and formula_str.startswith("=")
+                        if has_formula:
+                            # 수식 셀은 서식만 적용하고 내용(수식)은 보존
+                            target_style.pop("text", None)
+                            target_style.pop("replace", None)
+                            log_debug(f"수식 셀 내용 치환 생략 (서식만 적용): 셀({start_row + r_idx}, {start_col + c_idx}) {formula_str}")
+                        elif text_val is not None and not str(text_val).strip().startswith("="):
                             # 부분 문자열 치환 지원 (Word/PPT와 동작 일치: 기존 셀 내용 내 매칭 키워드만 치환)
                             target_style["text"] = val_str.replace(key_str, str(text_val))
                         apply_edit_to_range(cell_obj, target_style)
@@ -3519,7 +3656,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _config import get_data_dir
 from _com_guard import excel_session
 
@@ -3689,27 +3826,46 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
         # B. XLSX 내보내기 (기존 활성 창 손상 없이 새 독립 워크북으로 저장)
         elif out_format == "xlsx":
             app = wb.Application
-            app.DisplayAlerts = False
-            
-            # 새 백그라운드 워크북 생성
-            new_wb = app.Workbooks.Add()
-            new_ws = new_wb.Worksheets(1)
-            new_ws.Name = target_ws.Name
+            prev_alerts = app.DisplayAlerts
+            new_wb = None
+            try:
+                app.DisplayAlerts = False
+                # 새 워크북 생성 (사용자 화면에 새 창이 뜨지 않도록 즉시 숨김)
+                new_wb = app.Workbooks.Add()
+                try:
+                    new_wb.Windows(1).Visible = False
+                except Exception:
+                    pass
+                new_ws = new_wb.Worksheets(1)
+                new_ws.Name = target_ws.Name
 
-            if is_col_mode:
-                from _office_utils import get_target_range_address
-                target_range_addr = get_target_range_address("A1", row_count, col_count)
-                new_ws.Range(target_range_addr).Value = tuple(tuple(r) for r in matrix)
-            else:
-                target_rng = target_ws.Range(rng_address) if rng_address else target_ws.UsedRange
-                target_rng.Copy(Destination=new_ws.Range("A1"))
+                if is_col_mode:
+                    from _office_utils import get_target_range_address
+                    target_range_addr = get_target_range_address("A1", row_count, col_count)
+                    new_ws.Range(target_range_addr).Value = tuple(tuple(r) for r in matrix)
+                else:
+                    target_rng = target_ws.Range(rng_address) if rng_address else target_ws.UsedRange
+                    target_rng.Copy(Destination=new_ws.Range("A1"))
 
-            new_ws.Columns.AutoFit()
+                new_ws.Columns.AutoFit()
 
-            # 신규 워크북 저장 후 닫기 (원래 창은 100% 유지)
-            new_wb.SaveAs(final_out_path)
-            new_wb.Close()
-            app.DisplayAlerts = True
+                # 숨긴 창 상태가 파일에 저장되어 다음에 열 때 안 보이는 문제 방지
+                try:
+                    new_wb.Windows(1).Visible = True
+                except Exception:
+                    pass
+                new_wb.SaveAs(final_out_path, FileFormat=51)  # xlOpenXMLWorkbook
+            finally:
+                # 실패하더라도 임시 워크북이 사용자 Excel에 남지 않도록 항상 닫고 경고 설정 복원
+                if new_wb is not None:
+                    try:
+                        new_wb.Close(SaveChanges=False)
+                    except Exception:
+                        pass
+                try:
+                    app.DisplayAlerts = prev_alerts
+                except Exception:
+                    pass
 
             preview_msg = f"Exported {source_desc} to new XLSX workbook: {os.path.basename(final_out_path)}"
             return format_response(
@@ -3816,9 +3972,9 @@ def main():
         ))
         return
 
-    with excel_session(target=args.target, sheet_name=args.sheet) as (app, wb, ws):
-        res = execute(wb, ws, params)
-        emit_response(res)
+    run_session_tool("excel_export", "export",
+                     lambda: excel_session(target=args.target, sheet_name=args.sheet),
+                     lambda app, wb, ws: execute(wb, ws, params))
 
 if __name__ == "__main__":
     main()
@@ -4116,7 +4272,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import excel_session
 
 def inspect_single_worksheet(ws) -> Dict[str, Any]:
@@ -4380,9 +4536,9 @@ def main():
 
     params = {"sheet": args.sheet}
 
-    with excel_session(target=args.target, sheet_name=args.sheet) as (app, wb, ws):
-        res = execute(wb, ws, params)
-        emit_response(res)
+    run_session_tool("excel_inspect", "inspect",
+                     lambda: excel_session(target=args.target, sheet_name=args.sheet),
+                     lambda app, wb, ws: execute(wb, ws, params))
 
 if __name__ == "__main__":
     main()
@@ -4430,6 +4586,16 @@ def apply_borders(rng, weight: str = "thin", box_only: bool = False) -> None:
             except Exception:
                 pass
 
+def resolve_sheet_range(wb, ws, address: str):
+    """'A1:C10', 'Sheet1!A1', "'My Sheet'!A1" 형태의 주소를 Range 객체로 해석합니다."""
+    if "!" in address:
+        sheet_part, cell_part = address.rsplit("!", 1)
+        sheet_part = sheet_part.strip()
+        if len(sheet_part) >= 2 and sheet_part[0] == "'" and sheet_part[-1] == "'":
+            sheet_part = sheet_part[1:-1].replace("''", "'")
+        return wb.Worksheets(sheet_part).Range(cell_part)
+    return ws.Range(address)
+
 def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
     """run.py에서 주입받은 COM 객체로 셀 범위 조작(AutoFit, 테두리, 너비/높이, 병합, 틀고정, 숨김)을 수행합니다."""
     action = (params.get("action") or "autofit").lower()
@@ -4438,11 +4604,7 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         # 대상 범위 지정 (생략 시 UsedRange, 시트명 포함 시 'Sheet1!A1:C10' 자동 해석)
-        if rng_address and "!" in rng_address:
-            src_sheet, src_cell = rng_address.split("!", 1)
-            target_rng = wb.Worksheets(src_sheet).Range(src_cell)
-        else:
-            target_rng = ws.Range(rng_address) if rng_address else ws.UsedRange
+        target_rng = resolve_sheet_range(wb, ws, rng_address) if rng_address else ws.UsedRange
 
         if action == "autofit":
             target_rng.Columns.AutoFit()
@@ -4495,7 +4657,17 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
             )
 
         elif action == "merge":
-            target_rng.Merge()
+            # 범위 생략 시 UsedRange 전체가 병합되는 사고 방지
+            if not rng_address:
+                raise ValueError("'merge' 작업에는 병합할 범위(range)를 반드시 지정해야 합니다.")
+            # 여러 셀에 값이 있으면 '왼쪽 위 값만 유지' 확인 대화상자가 COM 호출을 멈추게 하므로 일시적으로 끔
+            xl_app = ws.Application
+            prev_alerts = xl_app.DisplayAlerts
+            xl_app.DisplayAlerts = False
+            try:
+                target_rng.Merge()
+            finally:
+                xl_app.DisplayAlerts = prev_alerts
             return format_response(
                 status="ok",
                 module="excel_range",
@@ -4603,18 +4775,13 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
             if not dest_address:
                 raise ValueError(f"'{action}' 작업에는 'dest' 대상 셀 주소가 필요합니다.")
             
-            if "!" in dest_address:
-                dest_sheet, dest_cell = dest_address.split("!", 1)
-                dest_rng = wb.Worksheets(dest_sheet).Range(dest_cell)
-            else:
-                dest_rng = ws.Range(dest_address)
+            dest_rng = resolve_sheet_range(wb, ws, dest_address)
 
             if action == "copy":
                 target_rng.Copy(Destination=dest_rng)
             else:
-                # move: 복사 후 원본 지우기
-                target_rng.Copy(Destination=dest_rng)
-                target_rng.Clear()
+                # move: Excel 네이티브 잘라내기 이동 (원본/대상 범위가 겹쳐도 데이터가 사라지지 않고 수식 참조도 갱신됨)
+                target_rng.Cut(Destination=dest_rng)
 
             return format_response(
                 status="ok",
@@ -4691,7 +4858,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import excel_session
 from _cache import get_file_cache, save_file_cache
 
@@ -4963,9 +5130,9 @@ def main():
         "file_path": file_path
     }
 
-    with excel_session(target=args.target, sheet_name=args.sheet) as (app, wb, ws):
-        res = execute(wb, ws, params)
-        emit_response(res)
+    run_session_tool("excel_read", "read",
+                     lambda: excel_session(target=args.target, sheet_name=args.sheet),
+                     lambda app, wb, ws: execute(wb, ws, params))
 
 if __name__ == "__main__":
     main()
@@ -5517,7 +5684,7 @@ import os
 import sys
 import argparse
 import traceback
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -5818,7 +5985,8 @@ def copy_excel_to_ppt(from_target: str, sheet_name: Optional[str], range_str: Op
 def copy_excel_to_excel(from_target: str, sheet_name: Optional[str], range_str: Optional[str],
                         chart_idx: Optional[int], to_target: str, dest_range: Optional[str] = None) -> Dict[str, Any]:
     """Excel 범위 또는 차트를 이미지로 복사하여 엑셀 시트의 특정 위치에 붙여넣습니다."""
-    with excel_session(target=from_target, sheet_name=sheet_name) as (xl_app, wb, ws):
+    # 같은 시트에 붙여넣는 쓰기 작업이므로 쓰기 세션(스냅샷 포함)으로 엶
+    with excel_session(target=from_target, sheet_name=sheet_name, snapshot=True) as (xl_app, wb, ws):
         item_desc = ""
         if chart_idx is not None:
             if ws.ChartObjects().Count < chart_idx:
@@ -7296,7 +7464,7 @@ Safely displays draft window on screen by default (Human-in-the-Loop); only send
 import sys
 import os
 import argparse
-import json
+import re
 from typing import Dict, Any, List, Optional
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7335,9 +7503,88 @@ def _format_html_body_prefix(plain_text: str) -> str:
         f"</div><br>"
     )
 
+def _prepend_to_html_body(html: str, prefix_html: str) -> str:
+    """HTML 본문의 <body> 태그 바로 뒤에 새 내용을 삽입합니다 (<html> 앞에 붙여 문서 구조가 깨지는 문제 방지)."""
+    if not prefix_html:
+        return html
+    m = re.search(r"<body[^>]*>", html or "", re.IGNORECASE)
+    if m:
+        return html[:m.end()] + prefix_html + html[m.end():]
+    return prefix_html + (html or "")
+
+def _parse_send_flag(value: Any) -> bool:
+    """명시적인 참 값(True, "true", "1", "yes")만 발송 요청으로 인정합니다. ("false" 문자열 등이 참으로 처리되는 사고 방지)"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "y")
+    return False
+
+def _load_default_signature(mail_item) -> None:
+    """Inspector를 미리 생성하면 Outlook이 사용자 기본 서명을 본문에 채워 넣습니다 (창은 표시되지 않음)."""
+    try:
+        _ = mail_item.GetInspector
+    except Exception:
+        pass
+
+def _finalize(mail_item, send: bool, kind: str, to_desc: str, attached: List[str]) -> Dict[str, Any]:
+    """기본은 화면 표시(사용자가 직접 [보내기] 클릭). send=True(명시적 요청)일 때만 수신자 확인 후 발송합니다."""
+    subject = mail_item.Subject
+    extra = {"to": to_desc, "subject": subject, "attached": attached, "sent": False}
+
+    if send:
+        unresolved = []
+        try:
+            recipients = mail_item.Recipients
+            if recipients.Count == 0:
+                unresolved.append("(수신자 없음)")
+            elif not recipients.ResolveAll():
+                for i in range(1, recipients.Count + 1):
+                    if not recipients.Item(i).Resolved:
+                        unresolved.append(recipients.Item(i).Name)
+        except Exception as e:
+            unresolved.append(f"(수신자 확인 실패: {e})")
+
+        if unresolved:
+            # 주소가 확인되지 않은 메일은 자동 발송하지 않고 사용자 확인 창으로 전환
+            mail_item.Display()
+            extra["unresolved_recipients"] = unresolved
+            return format_response(
+                status="partial",
+                module="outlook_write",
+                action=kind,
+                preview=f"Recipient check failed ({', '.join(unresolved)}). Draft displayed on screen instead of sending.",
+                agent_directive="STOP_RETRY: 수신자 주소를 확인할 수 없어 발송하지 않고 작성 창만 띄웠습니다. 사용자에게 수신자 확인을 요청하세요.",
+                extra=extra
+            )
+
+        mail_item.Send()
+        extra["sent"] = True
+        return format_response(
+            status="ok",
+            module="outlook_write",
+            action=kind,
+            preview=f"Sent {kind} mail to '{to_desc}' with subject '{subject}'. Attachments: {len(attached)}",
+            agent_directive="VERIFIED: 사용자의 명시적 발송 요청에 따라 메일을 발송했습니다.",
+            extra=extra
+        )
+
+    mail_item.Display()
+    return format_response(
+        status="ok",
+        module="outlook_write",
+        action=kind,
+        preview=f"Displayed {kind} mail draft to '{to_desc}' with subject '{subject}' on screen.",
+        agent_directive="VERIFIED: 메일 작성 창을 화면에 띄웠습니다. 발송은 사용자가 직접 [보내기]를 눌러야 합니다. 대신 발송하지 마세요.",
+        extra=extra
+    )
+
 def action_new(app, to: str, cc: str, subject: str, body: str, attach: str, send: bool) -> Dict[str, Any]:
     """Creates a brand new email. Displays window on screen by default."""
     mail = app.CreateItem(0)  # 0 = olMailItem
+    _load_default_signature(mail)
     if to:
         mail.To = to
     if cc:
@@ -7345,149 +7592,101 @@ def action_new(app, to: str, cc: str, subject: str, body: str, attach: str, send
     if subject:
         mail.Subject = subject
     if body:
-        mail.Body = body
+        # Body 대입은 사용자 서명을 지우므로 HTML 본문(서명 포함) 앞에 삽입
+        mail.HTMLBody = _prepend_to_html_body(mail.HTMLBody, _format_html_body_prefix(body))
 
     attached = _attach_files_to_item(mail, attach)
+    return _finalize(mail, send, "new", to, attached)
 
-    if send:
-        mail.Send()
-        return format_response(
-            status="ok",
-            module="outlook_write",
-            action="new_sent",
-            preview=f"Sent email to '{to}' with subject '{subject}'. Attachments: {len(attached)}",
-            agent_directive="VERIFIED: Email sent in background.",
-            extra={"to": to, "subject": subject, "attached": attached}
-        )
-    else:
-        mail.Display()
-        return format_response(
-            status="ok",
-            module="outlook_write",
-            action="new_display",
-            preview=f"Displayed new mail draft to '{to}' with subject '{subject}' on screen.",
-            agent_directive="VERIFIED: New email draft opened on user's screen. Awaiting user click on Send button.",
-            extra={"to": to, "subject": subject, "attached": attached}
-        )
+def _get_target_item(app, ns, entry_id: Optional[str]):
+    if entry_id:
+        return ns.GetItemFromID(entry_id)
+    target_item, _source = get_current_active_item(app)
+    return target_item
 
 def action_reply(app, ns, entry_id: Optional[str], reply_all: bool, body: str, attach: str, send: bool) -> Dict[str, Any]:
     """
     Replies to the active or specified email.
     Uses Outlook's native Reply() / ReplyAll() to preserve 100% of original history, headers and formatting.
     """
-    target_item = None
-    if entry_id:
-        target_item = ns.GetItemFromID(entry_id)
-    else:
-        target_item, source = get_current_active_item(app)
-        if not target_item:
-            return format_response(
-                status="no_match",
-                module="outlook_write",
-                action="reply",
-                preview="No active email is currently open or selected to reply to. Specify --id <entry_id>.",
-                agent_directive="STOP_RETRY: No active email found. User must select an email or provide --id."
-            )
+    target_item = _get_target_item(app, ns, entry_id)
+    if not target_item:
+        return format_response(
+            status="no_match",
+            module="outlook_write",
+            action="reply",
+            preview="No active email is currently open or selected to reply to. Specify --id <entry_id>.",
+            agent_directive="STOP_RETRY: No active email found. User must select an email or provide --id."
+        )
 
     # Use native Reply / ReplyAll to retain native headers & thread lineage
     reply_mail = target_item.ReplyAll() if reply_all else target_item.Reply()
+    _load_default_signature(reply_mail)
 
     # Prepend new message above original history
     if body:
-        prefix_html = _format_html_body_prefix(body)
-        reply_mail.HTMLBody = prefix_html + reply_mail.HTMLBody
+        reply_mail.HTMLBody = _prepend_to_html_body(reply_mail.HTMLBody, _format_html_body_prefix(body))
 
     attached = _attach_files_to_item(reply_mail, attach)
-
-    if send:
-        reply_mail.Send()
-        return format_response(
-            status="ok",
-            module="outlook_write",
-            action="reply_sent",
-            preview=f"Sent native reply to '{reply_mail.To}' with subject '{reply_mail.Subject}'.",
-            agent_directive="VERIFIED: Reply sent with original history intact.",
-            extra={"to": reply_mail.To, "subject": reply_mail.Subject, "attached": attached}
-        )
-    else:
-        reply_mail.Display()
-        return format_response(
-            status="ok",
-            module="outlook_write",
-            action="reply_display",
-            preview=f"Displayed native reply window on screen for '{reply_mail.Subject}' with complete history intact.",
-            agent_directive="VERIFIED: Reply window opened on user screen with original history preserved. Awaiting user click on Send.",
-            extra={"to": reply_mail.To, "subject": reply_mail.Subject, "attached": attached}
-        )
+    return _finalize(reply_mail, send, "reply", reply_mail.To, attached)
 
 def action_forward(app, ns, entry_id: Optional[str], to: str, body: str, attach: str, send: bool) -> Dict[str, Any]:
     """
     Forwards the active or specified email.
     Uses Outlook's native Forward() to preserve complete original email thread.
     """
-    target_item = None
-    if entry_id:
-        target_item = ns.GetItemFromID(entry_id)
-    else:
-        target_item, source = get_current_active_item(app)
-        if not target_item:
-            return format_response(
-                status="no_match",
-                module="outlook_write",
-                action="forward",
-                preview="No active email found to forward. Specify --id <entry_id>.",
-                agent_directive="STOP_RETRY: No active email found."
-            )
+    target_item = _get_target_item(app, ns, entry_id)
+    if not target_item:
+        return format_response(
+            status="no_match",
+            module="outlook_write",
+            action="forward",
+            preview="No active email found to forward. Specify --id <entry_id>.",
+            agent_directive="STOP_RETRY: No active email found."
+        )
 
     fwd_mail = target_item.Forward()
+    _load_default_signature(fwd_mail)
     if to:
         fwd_mail.To = to
 
     if body:
-        prefix_html = _format_html_body_prefix(body)
-        fwd_mail.HTMLBody = prefix_html + fwd_mail.HTMLBody
+        fwd_mail.HTMLBody = _prepend_to_html_body(fwd_mail.HTMLBody, _format_html_body_prefix(body))
 
     attached = _attach_files_to_item(fwd_mail, attach)
-
-    if send:
-        fwd_mail.Send()
-        return format_response(
-            status="ok",
-            module="outlook_write",
-            action="forward_sent",
-            preview=f"Forwarded email to '{to}' with subject '{fwd_mail.Subject}'.",
-            agent_directive="VERIFIED: Forwarded email sent.",
-            extra={"to": to, "subject": fwd_mail.Subject, "attached": attached}
-        )
-    else:
-        fwd_mail.Display()
-        return format_response(
-            status="ok",
-            module="outlook_write",
-            action="forward_display",
-            preview=f"Displayed forward window on screen for '{fwd_mail.Subject}' to '{to}' with complete thread intact.",
-            agent_directive="VERIFIED: Forward window opened on user screen. Awaiting user click on Send.",
-            extra={"to": to, "subject": fwd_mail.Subject, "attached": attached}
-        )
+    return _finalize(fwd_mail, send, "forward", to, attached)
 
 def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
-    """run.py recipe dispatcher compatible executor."""
+    """에이전트/레시피 호출용 실행기.
+
+    params["send"]는 사용자가 '보내줘', '바로 발송' 등 발송을 명시적으로 요청한 경우에만 true로 지정합니다.
+    생략하면 작성 창만 화면에 띄우고 사용자가 직접 [보내기]를 누릅니다.
+    """
     action = params.get("action", "new")
-    app = app or get_outlook_app()
-    ns = get_mapi_namespace(app)
+    try:
+        app = app or get_outlook_app()
+        ns = get_mapi_namespace(app)
 
-    send_flag = bool(params.get("send", False))
-    attach_files = params.get("attach", "")
-    body_text = params.get("body", "")
+        send_flag = _parse_send_flag(params.get("send", False))
+        attach_files = params.get("attach", "") or ""
+        body_text = params.get("body", "") or ""
 
-    if action == "new":
-        return action_new(app, params.get("to", ""), params.get("cc", ""), params.get("subject", ""), body_text, attach_files, send_flag)
-    elif action == "reply":
-        return action_reply(app, ns, params.get("id"), bool(params.get("reply_all", False)), body_text, attach_files, send_flag)
-    elif action == "forward":
-        return action_forward(app, ns, params.get("id"), params.get("to", ""), body_text, attach_files, send_flag)
-    else:
-        return format_response(status="error", module="outlook_write", action=action, preview=f"Unknown action: {action}")
+        if action == "new":
+            return action_new(app, params.get("to", "") or "", params.get("cc", "") or "", params.get("subject", "") or "", body_text, attach_files, send_flag)
+        elif action == "reply":
+            return action_reply(app, ns, params.get("id"), _parse_send_flag(params.get("reply_all", False)), body_text, attach_files, send_flag)
+        elif action == "forward":
+            return action_forward(app, ns, params.get("id"), params.get("to", "") or "", body_text, attach_files, send_flag)
+        return format_response(status="error", module="outlook_write", action=action, preview=f"Unknown action: {action}",
+                               agent_directive="STOP_RETRY: action은 new, reply, forward 중 하나여야 합니다.")
+    except Exception as e:
+        return format_response(
+            status="error",
+            module="outlook_write",
+            action=action,
+            preview=f"Outlook Compose Error: {e}",
+            agent_directive="STOP_RETRY: Check Outlook status or attachment existence."
+        )
 
 def main():
     parser = argparse.ArgumentParser(description="Outlook Safe Mail Composer, Reply & Forward Engine")
@@ -7500,34 +7699,25 @@ def main():
     parser.add_argument("--body", type=str, help="Email body text to prepend")
     parser.add_argument("--attach", type=str, help="Comma-separated filenames/paths to attach from data_dir")
     parser.add_argument("--reply-all", action="store_true", help="Reply to all recipients on reply action")
-    parser.add_argument("--send", action="store_true", help="Explicitly send immediately instead of displaying draft on screen")
+    parser.add_argument("--send", action="store_true",
+                        help="사용자가 명시적으로 요청한 경우에만 사용: 화면 표시 대신 수신자 확인 후 즉시 발송 (기본: 작성 창만 표시)")
 
     args = parser.parse_args()
 
-    try:
-        app = get_outlook_app()
-        ns = get_mapi_namespace(app)
-
-        if args.action == "new":
-            res = action_new(app, args.to or "", args.cc or "", args.subject or "", args.body or "", args.attach or "", args.send)
-        elif args.action == "reply":
-            res = action_reply(app, ns, args.id, args.reply_all, args.body or "", args.attach or "", args.send)
-        elif args.action == "forward":
-            res = action_forward(app, ns, args.id, args.to or "", args.body or "", args.attach or "", args.send)
-        else:
-            res = format_response(status="error", module="outlook_write", action=args.action, preview=f"Unknown action: {args.action}")
-
-        emit_response(res)
-
-    except Exception as e:
-        emit_response(format_response(
-            status="error",
-            module="outlook_write",
-            action=args.action,
-            preview=f"Outlook Compose Error: {str(e)}",
-            agent_directive="STOP_RETRY: Check Outlook status or attachment existence."
-        ))
-        sys.exit(1)
+    params = {
+        "action": args.action,
+        "id": args.id,
+        "to": args.to,
+        "cc": args.cc,
+        "subject": args.subject,
+        "body": args.body,
+        "attach": args.attach,
+        "reply_all": args.reply_all,
+        "send": args.send,
+    }
+    res = execute(None, None, params)
+    emit_response(res)
+    sys.exit(0 if res.get("status") == "ok" else 1)
 
 if __name__ == "__main__":
     main()
@@ -8095,7 +8285,16 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out_format = "pdf"
 
-        final_out_path = resolve_output_path(out_arg, default_ext=f".{out_format}")
+        # 형식과 확장자 불일치 방지 (예: --format pdf -o deck.pptx -> deck.pdf)
+        # SaveCopyAs는 원본 형식으로 저장하므로 pptx 사본의 확장자는 원본 확장자(.pptx/.pptm/.ppt)를 따름
+        if out_format == "pdf":
+            wanted_ext = ".pdf"
+        else:
+            src_ext = os.path.splitext(str(getattr(prs, "FullName", "")))[1].lower()
+            wanted_ext = src_ext if src_ext in (".pptx", ".pptm", ".ppt") else ".pptx"
+        if out_ext and out_ext != wanted_ext:
+            out_arg = os.path.splitext(out_arg)[0] + wanted_ext
+        final_out_path = resolve_output_path(out_arg, default_ext=wanted_ext)
         log_debug(f"PowerPoint Export 대상: '{prs.Name}', 포맷='{out_format}', 경로='{final_out_path}'")
 
         if out_format == "pdf":
@@ -8108,7 +8307,8 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e_fixed:
                 log_debug(f"ExportAsFixedFormat 실패, SaveAs 시도: {e_fixed}")
                 raw_fixed = repr(e_fixed) + " " + str(e_fixed)
-                if "-2147467259" in raw_fixed or "기능이 설치되어 있지 않아" in raw_fixed or "can not be converted" in raw_fixed:
+                # -2147467259(E_FAIL)는 파일 잠금 등 일반 실패에도 쓰이므로 판별 근거로 사용하지 않음
+                if "기능이 설치되어 있지 않아" in raw_fixed or "can not be converted" in raw_fixed:
                     pdf_missing_feature = True
 
             if not saved_pdf:
@@ -8117,7 +8317,7 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
                     saved_pdf = True
                 except Exception as e_saveas:
                     raw_saveas = repr(e_saveas) + " " + str(e_saveas)
-                    if pdf_missing_feature or "-2147467259" in raw_saveas or "기능이 설치되어 있지 않아" in raw_saveas:
+                    if pdf_missing_feature or "기능이 설치되어 있지 않아" in raw_saveas:
                         raise RuntimeError("PowerPoint PDF 내보내기 기능(Office 2007 추가 기능)이 설치되어 있지 않습니다. --format pptx 형식을 사용하세요.")
                     raise e_saveas
             preview_msg = f"Exported PowerPoint presentation to PDF: {os.path.basename(final_out_path)}"
@@ -8161,11 +8361,14 @@ def main():
         "format": args.format
     }
 
-    with ppt_session(target=args.target) as (app, prs):
-        res = execute(app, prs, params)
-        emit_response(res)
-    sys.stdout.flush()
-    os._exit(0)
+    try:
+        with ppt_session(target=args.target) as (app, prs):
+            res = execute(app, prs, params)
+    except Exception as e:
+        res = format_response("error", "ppt_export", "export", preview=f"PowerPoint 세션 오류: {e}",
+                              agent_directive="STOP_RETRY: PowerPoint 프레젠테이션에 연결하지 못했습니다. 사용자에게 보고하세요.")
+    emit_response(res)
+    sys.exit(0 if res.get("status") == "ok" else 1)
 
 if __name__ == "__main__":
     main()
@@ -8187,7 +8390,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import ppt_session
 
 def inspect_shape_recursive(shape):
@@ -8455,9 +8658,9 @@ def main():
         emit_response(res)
         return
 
-    with ppt_session(target=args.target) as (app, prs):
-        res = execute(app, prs, {})
-        emit_response(res)
+    run_session_tool("ppt_inspect", "inspect",
+                     lambda: ppt_session(target=args.target),
+                     lambda app, prs: execute(app, prs, {}))
 
 if __name__ == "__main__":
     main()
@@ -8909,13 +9112,22 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
                     target_slide.Shapes.Item(i).Delete()
                     cleared_shapes += 1
                 msg = f"슬라이드 {s_idx}의 모든 요소({cleared_shapes}개)를 삭제했습니다."
-            else:
+            elif params.get("all_slides") is True:
                 for s in range(1, prs.Slides.Count + 1):
                     target_slide = prs.Slides(s)
                     for i in range(target_slide.Shapes.Count, 0, -1):
                         target_slide.Shapes.Item(i).Delete()
                         cleared_shapes += 1
                 msg = f"모든 슬라이드의 요소({cleared_shapes}개)를 전체 삭제했습니다."
+            else:
+                # 슬라이드 번호 없이 호출하면 전체 슬라이드가 지워지는 사고를 막기 위해 명시적 --all-slides 요구
+                return format_response(
+                    status="error",
+                    module="ppt_slide",
+                    action="clear",
+                    preview="clear 작업에는 --slide 번호가 필요합니다. 전체 슬라이드를 비우려면 --all-slides를 명시하세요.",
+                    agent_directive="STOP_RETRY: 지울 슬라이드 번호를 사용자에게 확인하세요. 전체 삭제는 사용자가 명시적으로 요청한 경우에만 all_slides=true로 호출합니다."
+                )
 
             return format_response(
                 status="ok",
@@ -8944,19 +9156,24 @@ def main():
     parser.add_argument("--action", default="add", choices=["add", "duplicate", "delete", "move", "count", "list", "clear"])
     parser.add_argument("--slide", type=int, help="대상 슬라이드 번호 (1-based)")
     parser.add_argument("--dest", type=int, help="이동할 목적 위치 번호 (1-based)")
+    parser.add_argument("--all-slides", action="store_true", help="clear 시 모든 슬라이드의 요소를 삭제 (명시적 지정 필요)")
     args = parser.parse_args()
 
     params = {
         "action": args.action,
         "slide": args.slide,
-        "dest": args.dest
+        "dest": args.dest,
+        "all_slides": args.all_slides
     }
 
-    with ppt_session(target=args.target, snapshot=True) as (app, prs):
-        res = execute(app, prs, params)
-        emit_response(res)
-    sys.stdout.flush()
-    os._exit(0)
+    try:
+        with ppt_session(target=args.target, snapshot=True) as (app, prs):
+            res = execute(app, prs, params)
+    except Exception as e:
+        res = format_response("error", "ppt_slide", args.action, preview=f"PowerPoint 세션 오류: {e}",
+                              agent_directive="STOP_RETRY: PowerPoint 프레젠테이션에 연결하지 못했습니다. 사용자에게 보고하세요.")
+    emit_response(res)
+    sys.exit(0 if res.get("status") == "ok" else 1)
 
 if __name__ == "__main__":
     main()
@@ -10168,11 +10385,44 @@ def resolve_output_path(file_path: str, default_ext: str = ".pdf") -> str:
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     return os.path.abspath(out_path)
 
+def _is_pdf_feature_missing(err: Exception) -> bool:
+    """PDF 내보내기 추가 기능 미설치 오류인지 판별합니다.
+    -2147467259(E_FAIL)는 대상 파일 잠금 등 일반 실패에도 쓰이므로 판별 근거로 사용하지 않습니다.
+    """
+    raw = repr(err) + " " + str(err)
+    return "기능이 설치되어 있지 않아" in raw or "25726" in raw
+
+def _open_working_copy(app, doc):
+    """원본 문서를 건드리지 않도록 현재 메모리 상태(미저장 변경 포함)를 창 없는 사본 문서로 엽니다."""
+    import tempfile
+    fd, tmp_xml = tempfile.mkstemp(prefix="atomic_word_copy_", suffix=".xml")
+    os.close(fd)
+    with open(tmp_xml, "w", encoding="utf-8") as f:
+        f.write(doc.WordOpenXML)
+    work = app.Documents.Open(tmp_xml, ConfirmConversions=False, AddToRecentFiles=False, Visible=False)
+    return work, tmp_xml
+
+def _export_pdf(target_doc, out_path: str) -> None:
+    try:
+        target_doc.ExportAsFixedFormat(
+            OutputFileName=out_path,
+            ExportFormat=17,   # wdExportFormatPDF
+            OpenAfterExport=False,
+            OptimizeFor=0,     # wdExportOptimizeForPrint
+            Range=0            # wdExportAllDocument
+        )
+        log_debug("ExportAsFixedFormat으로 PDF 저장 성공")
+    except Exception as e_fixed:
+        log_debug(f"ExportAsFixedFormat 실패: {e_fixed}")
+        if _is_pdf_feature_missing(e_fixed):
+            raise RuntimeError("Word PDF 내보내기 기능이 설치되어 있지 않습니다. --format docx 형식을 사용하세요.")
+        raise
+
 def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
-    """run.py 또는 CLI에서 Word 문서를 PDF 또는 복제본 DOCX로 안전하게 내보냅니다."""
+    """Word 문서를 PDF 또는 복제본 DOCX로 내보냅니다. 원본 문서(경로, 내용, 저장 상태)는 변경하지 않습니다."""
     out_arg = params.get("output_file") or params.get("output")
     fmt = (params.get("format") or "").lower()
-    page_number = params.get("page_number", False)
+    page_number = bool(params.get("page_number", False))
 
     if not out_arg:
         return format_response(
@@ -10183,17 +10433,10 @@ def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
             agent_directive="STOP_RETRY: Missing output file path."
         )
 
+    work_doc = None
+    tmp_xml = None
+    page_number_applied = False
     try:
-        # 페이지 번호 자동 주입
-        if page_number:
-            try:
-                for section in doc.Sections:
-                    footer = section.Footers(1)  # wdHeaderFooterPrimary = 1
-                    footer.PageNumbers.Add(PageNumberAlignment=1)  # wdAlignPageNumberCenter = 1
-                log_debug("Word 페이지 번호(하단 중앙) 주입 완료")
-            except Exception as pe:
-                log_debug(f"페이지 번호 주입 예외: {pe}")
-
         out_ext = os.path.splitext(out_arg)[1].lower()
         if fmt:
             out_format = fmt
@@ -10201,79 +10444,46 @@ def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
             out_format = out_ext[1:]
         else:
             out_format = "pdf"
+        if out_format not in ("pdf", "docx"):
+            raise ValueError(f"지원하지 않는 Word 내보내기 형식입니다: {out_format} (pdf 또는 docx 지원)")
 
+        # 형식과 확장자 불일치 방지 (예: --format pdf -o report.docx -> report.pdf)
+        if out_ext and out_ext != f".{out_format}":
+            out_arg = os.path.splitext(out_arg)[0] + f".{out_format}"
         final_out_path = resolve_output_path(out_arg, default_ext=f".{out_format}")
         log_debug(f"Word Export 대상: '{doc.Name}', 포맷='{out_format}', 경로='{final_out_path}'")
 
-        if out_format == "pdf":
-            saved_pdf = False
-            # 1. ExportAsFixedFormat 시도 (Word 2007 SP2+ 권장 표준)
-            pdf_missing_feature = False
-            if hasattr(doc, "ExportAsFixedFormat"):
-                try:
-                    doc.ExportAsFixedFormat(
-                        OutputFileName=final_out_path,
-                        ExportFormat=17,  # wdExportFormatPDF
-                        OpenAfterExport=False,
-                        OptimizeFor=0,     # wdExportOptimizeForPrint
-                        Range=0            # wdExportAllDocument
-                    )
-                    saved_pdf = True
-                    log_debug("ExportAsFixedFormat으로 PDF 저장 성공")
-                except Exception as e_fixed:
-                    log_debug(f"ExportAsFixedFormat 실패: {e_fixed}")
-                    raw_str = repr(e_fixed) + " " + str(e_fixed)
-                    if "기능이 설치되어 있지 않아" in raw_str or "25726" in raw_str or "-2147467259" in raw_str:
-                        pdf_missing_feature = True
-
-            # 2. SaveAs2 / SaveAs 시도 (폴백)
-            if not saved_pdf:
-                if pdf_missing_feature:
-                    raise RuntimeError("Word PDF 내보내기 기능(Office 2007 추가 기능)이 설치되어 있지 않습니다. --format docx 형식을 사용하세요.")
-                try:
-                    if hasattr(doc, "SaveAs2"):
-                        doc.SaveAs2(final_out_path, FileFormat=WD_FORMAT_PDF)
-                    else:
-                        doc.SaveAs(final_out_path, FileFormat=WD_FORMAT_PDF)
-                    saved_pdf = True
-                except Exception as e_saveas:
-                    log_debug(f"SaveAs(2) 실패, 위치 인자 호출 시도: {e_saveas}")
-                    try:
-                        doc.SaveAs(final_out_path, WD_FORMAT_PDF)
-                        saved_pdf = True
-                    except Exception as e_final:
-                        err_str = str(e_final) + " " + fixed_err_msg
-                        if "기능이 설치되어 있지 않아" in err_str or "-2147467259" in err_str:
-                            raise RuntimeError("Word PDF 내보내기 기능(Office 2007 추가 기능)이 설치되어 있지 않습니다. --format docx 형식을 사용하세요.")
-                        raise e_final
-
-            preview_msg = f"Exported Word document to PDF: {os.path.basename(final_out_path)}"
-        elif out_format == "docx":
-            try:
-                if hasattr(doc, "FullName") and os.path.exists(doc.FullName):
-                    if not getattr(doc, "Saved", True):
-                        doc.Save()
-                    import shutil
-                    shutil.copy2(doc.FullName, final_out_path)
-                else:
-                    doc.SaveAs(final_out_path)
-            except Exception as e_copy:
-                log_debug(f"Save & Copy 실패, SaveAs 시도: {e_copy}")
-                doc.SaveAs(final_out_path)
-            preview_msg = f"Exported Word copy to DOCX: {os.path.basename(final_out_path)}"
+        # 페이지 번호 삽입이나 DOCX 사본 저장은 원본이 아닌 창 없는 사본에서 수행
+        if page_number or out_format == "docx":
+            work_doc, tmp_xml = _open_working_copy(app, doc)
+            target_doc = work_doc
         else:
-            raise ValueError(f"지원하지 않는 Word 내보내기 형식입니다: {out_format} (pdf 또는 docx 지원)")
+            target_doc = doc
+
+        if page_number:
+            for section in target_doc.Sections:
+                footer = section.Footers(1)  # wdHeaderFooterPrimary = 1
+                footer.PageNumbers.Add(PageNumberAlignment=1)  # wdAlignPageNumberCenter = 1
+            page_number_applied = True
+            log_debug("사본 문서에 페이지 번호(하단 중앙) 주입 완료")
+
+        if out_format == "pdf":
+            _export_pdf(target_doc, final_out_path)
+            preview_msg = f"Exported Word document to PDF: {os.path.basename(final_out_path)}"
+        else:
+            target_doc.SaveAs2(final_out_path, FileFormat=WD_FORMAT_DOCX)
+            preview_msg = f"Exported Word copy to DOCX: {os.path.basename(final_out_path)}"
 
         return format_response(
             status="ok",
             module="word_export",
             action=f"export_{out_format}",
             preview=preview_msg,
-            agent_directive="VERIFIED: Document exported successfully. Active window preserved.",
+            agent_directive="VERIFIED: Document exported successfully. Original document left unchanged.",
             extra={
                 "file_path": final_out_path,
                 "format": out_format,
-                "page_number": page_number
+                "page_number": page_number_applied
             }
         )
 
@@ -10285,6 +10495,17 @@ def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
             preview=str(e),
             agent_directive=f"STOP_RETRY: Word export failed: {e}"
         )
+    finally:
+        if work_doc is not None:
+            try:
+                work_doc.Close(SaveChanges=0)
+            except Exception:
+                pass
+        if tmp_xml and os.path.exists(tmp_xml):
+            try:
+                os.remove(tmp_xml)
+            except Exception:
+                pass
 
 def main():
     parser = argparse.ArgumentParser(description="Word Export Micro Block with Page Numbering")
@@ -10300,9 +10521,14 @@ def main():
         "page_number": args.page_number
     }
 
-    with word_session(target=args.target, snapshot=False) as (app, doc):
-        res = execute(app, doc, params)
-        emit_response(res)
+    try:
+        with word_session(target=args.target, snapshot=False) as (app, doc):
+            res = execute(app, doc, params)
+    except Exception as e:
+        res = format_response("error", "word_export", "export", preview=f"Word 세션 오류: {e}",
+                              agent_directive="STOP_RETRY: Word 문서에 연결하지 못했습니다. 사용자에게 보고하세요.")
+    emit_response(res)
+    sys.exit(0 if res.get("status") == "ok" else 1)
 
 if __name__ == "__main__":
     main()
@@ -10324,7 +10550,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import word_session
 
 def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -10498,9 +10724,9 @@ def main():
         emit_response(res)
         return
 
-    with word_session(target=args.target) as (app, doc):
-        res = execute(app, doc, {})
-        emit_response(res)
+    run_session_tool("word_inspect", "inspect",
+                     lambda: word_session(target=args.target),
+                     lambda app, doc: execute(app, doc, {}))
 
 if __name__ == "__main__":
     main()
@@ -11149,6 +11375,7 @@ def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         is_pure_table = False
+        matrix = None  # 표 분기에서만 할당되므로, 일반 텍스트/제목/글머리 경로의 UnboundLocalError 방지
         if data_file and os.path.exists(data_file):
             matrix = read_csv_table(data_file)
             is_pure_table = True

@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 140
+target-version = "py38"
+extend-exclude = ["cache", "data"]
+
+[tool.ruff.lint]
+# F: pyflakes (정의되지 않은 이름, 미사용 변수 등), E9: 문법 오류
+select = ["F", "E9"]
+ignore = ["F401"]  # 미사용 import는 Phase 3 정리 대상
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
