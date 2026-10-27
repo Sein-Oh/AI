@@ -27,6 +27,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 3. 이모지/원문자 금지. 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`.
 4. 기존 CLI 인자·JSON 키는 삭제/의미 변경 금지 (추가는 OK). 바꿔야 하면 alias 유지.
 5. 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/model_<target>.joblib|json`)과 원장 스키마는 하위 호환.
+   - 규칙 4, 5는 각 도구의 **1.0.0 첫 배포 이후**부터 적용한다. 첫 배포 전에는 불편한 인터페이스를 자유롭게 정리한다.
 6. 학습과 추론이 같아야 하는 로직(데이터 로딩, 수치 변환, `--eval` 수식)은 `ml_predict.py` PART C 한 곳에만 둔다.
    `ml_predict.py`는 다른 ml-kit 파일을 import하지 않는다 (모델 폴더와 함께 단독 배포). `ml_train.py`/`ml_report.py`가 `ml_predict.py`를 import한다.
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""2.1.0 train/predict features: categorical & datetime inputs, tuned linear models, fast CSV,
+"""Train/predict features: categorical & datetime inputs, tuned linear models, fast CSV,
 missing-input warnings, prediction intervals, binary threshold, bounded correlation,
 next_commands, run lock, xlsx layouts and multi-target runs."""
 import json

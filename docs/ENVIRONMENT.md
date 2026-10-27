@@ -39,7 +39,7 @@
 
 | 도구 | 상태 | 비고 |
 |---|---|---|
-| `ml-kit` 학습/예측/보고서 | 추가 설치 없이 동작 | 동일 버전(pandas 3.0.5, scikit-learn 1.9.0, openpyxl 3.1.5, python-docx 1.2.0)으로 전체 테스트 통과 |
+| `ml-kit` 학습/예측/보고서 | 추가 설치 없이 동작 | 동일 버전(pandas 3.0.5, scikit-learn 1.9.0, openpyxl 3.1.5, python-docx 1.2.0, matplotlib 3.11.1)으로 전체 테스트 통과 |
 
 ## 새 도구를 만들 때 규칙
 

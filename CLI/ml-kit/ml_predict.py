@@ -449,7 +449,7 @@ def load_data_file(
 # C4-B. Feature Schema (numeric / categorical / datetime), identical at train and inference
 # ==============================================================================
 #
-# feature_schema (stored in vX/model_<target>.json, models trained by 2.1.0+):
+# feature_schema (stored in vX/model_<target>.json):
 #   {"numeric": [...], "categorical": {col: [known categories]},
 #    "datetime": {col: [parts]}, "input_columns": [...model input column order...]}
 # Datetime columns are expanded OUTSIDE the sklearn pipeline (no custom code is pickled,
@@ -1065,7 +1065,7 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
 
     df_result = df_input.copy()
     predictions_summary = {}
-    drift_warnings: List[str] = []
+    extrapolation_warnings: List[str] = []
     low_conf_warnings: List[str] = []
     category_warnings: List[str] = []
     missing_counts: Dict[str, int] = {}
@@ -1129,7 +1129,7 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 lo, hi = pd.Timestamp(rng["min"]), pd.Timestamp(rng["max"])
                 n_out = int(((dt < lo) | (dt > hi)).sum())
                 if n_out:
-                    drift_warnings.append(
+                    extrapolation_warnings.append(
                         f"날짜 피처 '{col}' 학습 기간({lo.date()} ~ {hi.date()}) 밖의 값 {n_out}건 (외삽)"
                     )
 
@@ -1149,12 +1149,12 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
 
                             if c_max > f_max:
                                 over_pct = round(float((c_max - f_max) / f_range * 100), 1)
-                                drift_warnings.append(
+                                extrapolation_warnings.append(
                                     f"피처 '{fname}' 상한 초과 외삽(Extrapolation) 감지: 학습 최대={f_max:.2f}, 입력 최대={c_max:.2f} (범위 대비 +{over_pct}% 초과 이탈, 범위 밖 {n_out}건)"
                                 )
                             if c_min < f_min:
                                 under_pct = round(float((f_min - c_min) / f_range * 100), 1)
-                                drift_warnings.append(
+                                extrapolation_warnings.append(
                                     f"피처 '{fname}' 하한 미달 외삽(Extrapolation) 감지: 학습 최소={f_min:.2f}, 입력 최소={c_min:.2f} (범위 대비 -{under_pct}% 미달 이탈, 범위 밖 {n_out}건)"
                                 )
 
@@ -1233,8 +1233,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
             saved_file = write_csv_excel_compatible(df_result, saved_file, encoding=getattr(args, "encoding", None))
 
     # 5. Build Response
-    drift_warnings = list(dict.fromkeys(drift_warnings))  # same feature is checked once per target
-    for w in drift_warnings:
+    extrapolation_warnings = list(dict.fromkeys(extrapolation_warnings))  # same feature is checked once per target
+    for w in extrapolation_warnings:
         sys.stderr.write(f"[WARN] Extrapolation detected: {w}\n")
 
     for w in low_conf_warnings:
@@ -1259,14 +1259,14 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     preview = (
         f"[추론 완료] 소스: {source_desc} | 타겟 예측 요약: [{targets_brief}] | "
         f"{'저장: ' + os.path.basename(saved_file) if saved_file else '인라인 반환'}"
-        + (f" | 외삽 경고 {len(drift_warnings)}건" if drift_warnings else "")
+        + (f" | 외삽 경고 {len(extrapolation_warnings)}건" if extrapolation_warnings else "")
         + (f" | 저확신 경고 {len(low_conf_warnings)}건" if low_conf_warnings else "")
         + (f" | 결측 대치 {sum(missing_counts.values())}건" if missing_counts else "")
         + (f" | 미학습 범주 경고 {len(category_warnings)}건" if category_warnings else "")
     )
     agent_directive = (
         f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
-        + (" with extrapolation warning (inputs outside training range; predictions may be unreliable)" if drift_warnings else "")
+        + (" with extrapolation warning (inputs outside training range; predictions may be unreliable)" if extrapolation_warnings else "")
         + (" with low-confidence warning (class probability < 0.6 for some rows)" if low_conf_warnings else "")
         + (" with missing-input warning (empty or non-numeric inputs were imputed)" if missing_counts else "")
         + (" with unseen-category warning" if category_warnings else "")
@@ -1282,8 +1282,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         "targets_predicted": list(predictions_summary.keys()),
         "output_file": saved_file,
         "predictions_summary": predictions_summary,
-        "extrapolation_warning": bool(drift_warnings),
-        "extrapolation_warnings": drift_warnings,
+        "extrapolation_warning": bool(extrapolation_warnings),
+        "extrapolation_warnings": extrapolation_warnings,
         "low_confidence_warning": bool(low_conf_warnings),
         "low_confidence_warnings": low_conf_warnings,
         "missing_input_warning": bool(missing_counts),

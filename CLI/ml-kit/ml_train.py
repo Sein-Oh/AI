@@ -1076,11 +1076,10 @@ def build_next_commands(
             "purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 실제 파일 경로로 바꿀 것)",
             "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
         })
-        if task == TASK_REGRESSION:
-            cmds.append({
-                "purpose": "Word 감사 보고서 생성",
-                "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -d {_q(data_root)}",
-            })
+        cmds.append({
+            "purpose": "ML 결과 보고서(Word) 생성",
+            "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -m {_q(final_dir)}",
+        })
         return cmds
 
     weak = [w for w in champion.get("weak_features", []) if w in feature_names]
@@ -1510,6 +1509,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "targets": target_names,
             **score_keys,
             "is_best": is_best,
+            "goal_met": bool(min_score >= 0.90),
             "recommendations": recommendations,
             "next_commands": next_commands,
             "feature_types": history_record["feature_types"],

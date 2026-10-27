@@ -129,11 +129,11 @@ def make_quality():
 
 def make_slots():
     slots = {
-        "slot1_residual": "교차검증 잔차는 전 운전 구간에서 대칭에 가깝게 분포하며, 고효율 구간(70% 이상)에서만 소폭 과소 예측 경향이 확인됨.",
-        "slot2_feature": "반응온도와 촉매비율이 예측의 대부분을 설명하며, 야간 운전(측정일시_hour) 효과가 독립적으로 관측됨.",
-        "slot3_lineage": "베이스라인 대비 저기여 피처 제외와 교차항 추가로 검증 성능이 단계적으로 개선됨.",
-        "slot4_correlation": "소비전력과 반응온도 간 상관이 중간 수준으로, 선형 모델 해석 시 주의가 필요함.",
-        "slot5_serving": "신규 라인(D라인) 투입 시 범주 미학습 경고가 발생하므로 재학습 후 배포를 권고함.",
+        "summary": "생산효율 모델은 운영 적용이 가능한 수준이며, 인장강도 모델은 촉매비율 측정 정밀도 개선 후 재평가가 필요합니다.",
+        "operation": "신규 라인(D라인) 투입 시 범주 미학습 경고가 발생하므로 해당 라인 데이터를 확보해 재학습한 뒤 배포합니다.",
+        "targets": {
+            "생산효율(%)": {"features": "반응온도와 촉매비율이 예측의 대부분을 설명하며, 야간 운전(측정일시_hour) 효과가 독립적으로 관측됩니다."}
+        },
     }
     with open(os.path.join(HERE, "sample_slots.json"), "w", encoding="utf-8") as f:
         json.dump(slots, f, ensure_ascii=False, indent=2)
