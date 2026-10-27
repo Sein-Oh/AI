@@ -110,11 +110,13 @@ def test_history_mixed_tasks_compare_within_task(multiclass):
     assert set(hist["best_by_task"]) == {"classification", "regression"}
 
 
-def test_report_rejects_classification(multiclass):
+def test_report_supports_classification(multiclass):
+    """Classification versions get the integrated report (2.2.0); -d/-t compatibility still works."""
     pytest.importorskip("docx")
+    pytest.importorskip("matplotlib")
     work, _, _ = multiclass
-    payload = run_fail("ml_report.py", "-d", str(work / "proc_ml_data"), "-t", "품질등급")
-    assert "분류" in payload["message"]
+    payload = run_tool("ml_report.py", "-d", str(work / "proc_ml_data"), "-t", "품질등급", "-v", "v1")
+    assert payload["task"] == "classification" and payload["targets"] == ["품질등급"]
 
 
 def test_pre_2_0_model_metadata_is_regression(tmp_path):
