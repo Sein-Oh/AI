@@ -1,6 +1,7 @@
 @echo off
 REM ml_kit offline installer for Windows closed networks.
 REM Usage: copy this folder with the "wheels" folder next to it, then run install_offline.bat
+REM Uses the "python" found on PATH (WinPython). The py launcher is not used.
 setlocal
 set "HERE=%~dp0"
 if not exist "%HERE%wheels" (

@@ -1,7 +1,7 @@
 # AI_WORK
 
 AI 에이전트가 CLI 도구로 호출하는 **Agent-Computer Interface(ACI)** 툴킷 저장소입니다.
-대상 환경: **Windows 11 폐쇄망, Python 3.13.13**, 26B~30B 경량 LLM 에이전트(스킬로 제공).
+대상 환경: **Windows 11 폐쇄망, WinPython (Python 3.13.13, PATH 등록)**, 26B~30B 경량 LLM 에이전트(스킬로 제공).
 라이브러리 버전은 [`constraints.txt`](constraints.txt) / [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
 
 ## 트리

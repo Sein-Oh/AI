@@ -4,6 +4,7 @@
 - 표준 사용자 환경(Windows 11, Python 3.13.13, pandas 3.0.5, scikit-learn 1.9.0, openpyxl 3.1.5) 기준으로 검증.
 - `ml_report.py`: python-docx 미설치 시 traceback 대신 `STOP_RETRY` JSON 반환 (표준 환경에 python-docx 없음).
 - 테스트: python-docx 없는 환경에서는 보고서 테스트를 건너뛰고, 미설치 안내 JSON을 검증.
+- 표준 환경에 python-docx 1.2.0 포함 확인 -> 보고서 포함 전체 기능이 추가 설치 없이 동작.
 
 ## [1.1.0] - 2026-10-27
 

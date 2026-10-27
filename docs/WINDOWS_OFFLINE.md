@@ -5,8 +5,8 @@
 
 ## 1. 인터넷 PC에서 준비
 
-표준 환경은 Python 3.13 입니다 ([`ENVIRONMENT.md`](ENVIRONMENT.md)). 대부분의 패키지는 이미 설치되어 있으므로
-**표준 환경에 없는 패키지만** 반입하면 됩니다 (현재 ml_kit 기준: `python-docx`와 의존성 `lxml`).
+표준 환경은 WinPython (Python 3.13) 입니다 ([`ENVIRONMENT.md`](ENVIRONMENT.md)). 대부분의 패키지는 이미 설치되어 있으므로
+**표준 환경에 없는 패키지만** 반입하면 됩니다. 현재 ml_kit은 추가 반입이 필요 없습니다.
 
 ```bat
 cd CLI\ml_kit
@@ -18,6 +18,8 @@ python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
 - `-c constraints.txt`로 표준 환경과 같은 버전이 받아지므로, 이미 설치된 패키지는 재설치되지 않습니다.
 
 ## 2. 반입 후 폐쇄망 PC에서 설치
+
+PATH에 잡힌 `python`이 WinPython인지 먼저 확인합니다: `python -c "import sys; print(sys.executable)"`
 
 ```bat
 CLI\ml_kit\install_offline.bat
