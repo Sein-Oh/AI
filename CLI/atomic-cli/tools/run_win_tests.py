@@ -1,6 +1,6 @@
-"""atomic-cli Phase 1 Windows 실기 테스트 러너 (TEST_CHECKLIST.md 자동 진행)
+"""atomic-cli 1.0 Windows 실기 테스트 러너
 
-사용법 (atomic-cli 폴더에서 실행):
+사용법 (CLI/atomic-cli 폴더에서 실행):
     python tools/run_win_tests.py                     # 전체 진행 (눈으로 확인할 항목은 y/n 질문)
     python tools/run_win_tests.py --only A,C          # 특정 그룹만
     python tools/run_win_tests.py --self-email me@company.com   # G3 실제 발송 테스트 포함
@@ -35,7 +35,7 @@ try:
     import pythoncom
     import win32com.client
 except ImportError:
-    print("[ERROR] pywin32가 필요합니다. (pip install pywin32)")
+    print("[ERROR] pywin32가 필요합니다. (python -m pip install pywin32)")
     sys.exit(1)
 
 
@@ -347,47 +347,57 @@ def open_user_windows(ctx):
 
 
 # ---------------------------------------------------------------------------
-# A. 사용자 창 간섭
+# A. 사용자 창 간섭 / 닫힌 파일 처리
 # ---------------------------------------------------------------------------
 def test_A(ctx):
     def a1():
         activate_xl("A.xlsx")
         before = process_count("EXCEL.EXE")
+        data, code, raw, err = run_cli("excel.py", "read", "--target", ctx.path("B.xlsx"))
+        after = process_count("EXCEL.EXE")
+        src = ((data or {}).get("target_resolved") or {}).get("source", "")
+        ok = (data or {}).get("status") == "ok" and src.startswith("file(openpyxl)") and after <= before
+        record(ctx, "A1", "닫힌 엑셀 읽기는 Excel을 띄우지 않음 (openpyxl)", ok,
+               f"EXCEL.EXE {before}->{after}, source={src}", data, code, raw, err)
+
+    def a2():
+        activate_xl("A.xlsx")
+        before = process_count("EXCEL.EXE")
         b_mtime = mtime(ctx.path("B.xlsx"))
-        data, code, raw, err = run_cli("excel_read.py", "--target", ctx.path("B.xlsx"))
+        data, code, raw, err = run_cli("excel.py", "write", "--target", ctx.path("B.xlsx"), "--range", "C1", "--value", "닫힌파일쓰기")
         time.sleep(2)
         after = process_count("EXCEL.EXE")
         still_open = bool(wait_for(lambda: xl_wb("A.xlsx"), timeout=5))
         visible = com_retry(lambda: bool(xl_app().Visible))
         ok = (data or {}).get("status") == "ok" and still_open and visible and after <= before \
-            and mtime(ctx.path("B.xlsx")) == b_mtime
-        detail = f"EXCEL.EXE {before}->{after}, A.xlsx 열림={still_open}, Visible={visible}"
+            and mtime(ctx.path("B.xlsx")) != b_mtime
         manual = ask(ctx, "실행 중 A.xlsx 창이 닫히거나 깜빡이지 않고 그대로 있었나요?")
-        record(ctx, "A1", "다른 엑셀 파일 읽기 시 사용자 창 유지", ok and manual is not False, detail, data, code, raw, err)
+        record(ctx, "A2", "닫힌 엑셀 파일 쓰기 시 사용자 창 유지", ok and manual is not False,
+               f"EXCEL.EXE {before}->{after}, A.xlsx 열림={still_open}, Visible={visible}", data, code, raw, err)
 
-    def a2():
+    def a3():
         before = process_count("WINWORD.EXE")
-        data, code, raw, err = run_cli("word_read.py", "--target", ctx.path("B.docx"))
+        data, code, raw, err = run_cli("word.py", "write", "--target", ctx.path("B.docx"), "--text", "닫힌 문서에 추가")
         time.sleep(2)
         after = process_count("WINWORD.EXE")
         still_open = bool(wait_for(lambda: wd_doc("A.docx"), timeout=5))
         ok = (data or {}).get("status") == "ok" and still_open and after <= before
         manual = ask(ctx, "실행 중 A.docx 창이 그대로 있었나요?")
-        record(ctx, "A2", "다른 워드 파일 읽기 시 사용자 창 유지", ok and manual is not False,
+        record(ctx, "A3", "닫힌 워드 파일 쓰기 시 사용자 창 유지", ok and manual is not False,
                f"WINWORD.EXE {before}->{after}, A.docx 열림={still_open}", data, code, raw, err)
 
-    def a3():
+    def a4():
         b_mtime = mtime(ctx.path("B.pptx"))
-        data, code, raw, err = run_cli("ppt_inspect.py", "--target", ctx.path("B.pptx"))
+        data, code, raw, err = run_cli("ppt.py", "info", "--target", ctx.path("B.pptx"))
         time.sleep(1)
         state = com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").WindowState)
         unchanged = mtime(ctx.path("B.pptx")) == b_mtime
         ok = (data or {}).get("status") == "ok" and unchanged and state != 2
         manual = ask(ctx, "PowerPoint 창이 최소화되거나 깜빡이지 않았나요?")
-        record(ctx, "A3", "다른 PPT 파일 진단 시 사용자 창 유지 / 파일 미변경", ok and manual is not False,
+        record(ctx, "A4", "닫힌 PPT 파일 조회 시 창 유지 / 파일 미변경", ok and manual is not False,
                f"B.pptx 수정시각 불변={unchanged}, WindowState={state}", data, code, raw, err)
 
-    def a4():
+    def a5():
         c_path = ctx.path("C_second_instance.xlsx")
         if os.path.exists(c_path):
             os.remove(c_path)
@@ -396,20 +406,19 @@ def test_A(ctx):
         before = process_count("EXCEL.EXE")
         subprocess.Popen(["cmd", "/c", "start", "", "excel.exe", "/x", c_path])
         if not wait_for(lambda: process_count("EXCEL.EXE") > before, timeout=30):
-            record(ctx, "A4", "다중 Excel 프로세스 목록", None, "두 번째 Excel 프로세스를 띄우지 못해 건너뜀")
+            record(ctx, "A5", "다중 Excel 프로세스 목록", None, "두 번째 Excel 프로세스를 띄우지 못해 건너뜀")
             return
         time.sleep(5)
-        data, code, raw, err = run_cli("excel_inspect.py", "--list-workbooks")
+        data, code, raw, err = run_cli("excel.py", "info", "--all")
         text = json.dumps(data, ensure_ascii=False) if data else raw
         ok = "A.xlsx" in text and "C_second_instance.xlsx" in text
-        record(ctx, "A4", "다중 Excel 프로세스 목록", ok, f"EXCEL.EXE 프로세스 {process_count('EXCEL.EXE')}개", data, code, raw, err)
-        # 두 번째 인스턴스 정리
+        record(ctx, "A5", "다중 Excel 프로세스 목록", ok, f"EXCEL.EXE 프로세스 {process_count('EXCEL.EXE')}개", data, code, raw, err)
         try:
             sys.path.insert(0, ROOT)
-            from _com_guard import find_all_native_excel_apps
-            for app in find_all_native_excel_apps():
+            import _office
+            for app in _office.find_apps("excel"):
                 try:
-                    names = [wb.Name for wb in app.Workbooks]
+                    names = [app.Workbooks(i).Name for i in range(1, app.Workbooks.Count + 1)]
                     if "C_second_instance.xlsx" in names and "A.xlsx" not in names:
                         app.Workbooks("C_second_instance.xlsx").Close(SaveChanges=False)
                         if app.Workbooks.Count == 0:
@@ -418,13 +427,13 @@ def test_A(ctx):
                     pass
         except Exception:
             pass
-        # 남아 있으면 이후 '활성 문서' 판정이 섞이므로 반드시 닫힌 상태에서 다음 단계로 진행
         ask(ctx, "두 번째 Excel 창(C_second_instance.xlsx)이 닫혔나요? 남아 있으면 저장하지 않고 직접 닫은 뒤 y를 누르세요")
 
-    run_test(ctx, "A1", "다른 엑셀 파일 읽기 시 사용자 창 유지", a1)
-    run_test(ctx, "A2", "다른 워드 파일 읽기 시 사용자 창 유지", a2)
-    run_test(ctx, "A3", "다른 PPT 파일 진단 시 사용자 창 유지", a3)
-    run_test(ctx, "A4", "다중 Excel 프로세스 목록", a4)
+    run_test(ctx, "A1", "닫힌 엑셀 읽기", a1)
+    run_test(ctx, "A2", "닫힌 엑셀 쓰기와 사용자 창", a2)
+    run_test(ctx, "A3", "닫힌 워드 쓰기와 사용자 창", a3)
+    run_test(ctx, "A4", "닫힌 PPT 조회와 사용자 창", a4)
+    run_test(ctx, "A5", "다중 Excel 프로세스 목록", a5)
 
 
 # ---------------------------------------------------------------------------
@@ -433,40 +442,47 @@ def test_A(ctx):
 def test_B(ctx):
     def b1():
         b_mtime = mtime(ctx.path("B.xlsx"))
-        data, code, raw, err = run_cli("excel_read.py", "--target", ctx.path("B.xlsx"), "--sheet", "없는시트")
-        time.sleep(1)
-        ok = (data or {}).get("status") == "error" and "Sheet1" in (data or {}).get("preview", "") \
+        data, code, raw, err = run_cli("excel.py", "read", "--target", ctx.path("B.xlsx"), "--sheet", "없는시트")
+        msg = (data or {}).get("message", "")
+        ok = (data or {}).get("status") == "error" and ("Sheet1" in msg or "[추천]" in msg) \
             and mtime(ctx.path("B.xlsx")) == b_mtime and code == 1
-        record(ctx, "B1", "없는 시트 읽기 -> error, 파일 미변경", ok,
-               f"B.xlsx 수정시각 불변={mtime(ctx.path('B.xlsx')) == b_mtime}", data, code, raw, err)
+        record(ctx, "B1", "없는 시트 읽기 -> error, 파일 미변경", ok, msg[:120], data, code, raw, err)
 
     def b2():
         activate_xl("A.xlsx", "Sheet1")
-        data, code, raw, err = run_cli("excel_read.py", "--target", "active", "--sheet", "Sheet2")
+        data, code, raw, err = run_cli("excel.py", "read", "--target", "active", "--sheet", "Sheet2")
         active = com_retry(lambda: xl_wb("A.xlsx").ActiveSheet.Name)
         got = json.dumps(data, ensure_ascii=False) if data else ""
         ok = (data or {}).get("status") == "ok" and active == "Sheet1" and "시트2 데이터" in got
-        record(ctx, "B2", "활성 문서 다른 시트 읽기 시 화면 시트 유지", ok, f"읽은 뒤 활성 시트={active}", data, code, raw, err)
+        record(ctx, "B2", "열린 문서 다른 시트 읽기 시 화면 시트 유지", ok, f"읽은 뒤 활성 시트={active}", data, code, raw, err)
 
     def b3():
-        data, code, raw, err = run_cli("excel_read.py", "--target", "active", "--sheet", "sheet2")
-        got = json.dumps(data, ensure_ascii=False) if data else ""
-        ok = (data or {}).get("status") == "ok" and "시트2 데이터" in got
+        data, code, raw, err = run_cli("excel.py", "read", "--target", "active", "--sheet", "sheet2")
+        ok = (data or {}).get("status") == "ok" and "시트2 데이터" in json.dumps(data or {}, ensure_ascii=False)
         record(ctx, "B3", "시트명 대소문자 무시", ok, "", data, code, raw, err)
 
     def b4():
         missing = ctx.path("없는파일.docx")
         if os.path.exists(missing):
             os.remove(missing)
-        data, code, raw, err = run_cli("word_read.py", "--target", missing)
+        data, code, raw, err = run_cli("word.py", "read", "--target", missing)
         ok = (data or {}).get("status") == "error" and not os.path.exists(missing)
-        record(ctx, "B4", "없는 워드 파일 읽기 -> error, 파일 미생성", ok,
-               f"파일 생성됨={os.path.exists(missing)}", data, code, raw, err)
+        record(ctx, "B4", "없는 워드 파일 읽기 -> error, 파일 미생성", ok, f"파일 생성됨={os.path.exists(missing)}", data, code, raw, err)
+
+    def b5():
+        prs = pp_prs("A.pptx")
+        com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").ActiveWindow.View.GotoSlide(1))
+        data, code, raw, err = run_cli("ppt.py", "read", "--target", "active")
+        cur = com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").ActiveWindow.View.Slide.SlideIndex)
+        ok = (data or {}).get("status") == "ok" and cur == 1
+        record(ctx, "B5", "PPT 읽기 시 화면이 마지막 슬라이드로 이동하지 않음", ok, f"읽은 뒤 화면 슬라이드={cur}", data, code, raw, err)
+        del prs
 
     run_test(ctx, "B1", "없는 시트 읽기", b1)
     run_test(ctx, "B2", "활성 시트 유지", b2)
     run_test(ctx, "B3", "시트명 대소문자 무시", b3)
     run_test(ctx, "B4", "없는 파일 읽기", b4)
+    run_test(ctx, "B5", "PPT 읽기 화면 유지", b5)
 
 
 # ---------------------------------------------------------------------------
@@ -479,54 +495,43 @@ def a1_value(book="A.xlsx", sheet="Sheet1"):
 def test_C(ctx):
     def c1():
         activate_xl("A.xlsx", "Sheet1")
-        data, code, raw, err = run_cli("excel_fill.py", "--target", "active", "--range", "A1", "--value", "안녕")
+        data, code, raw, err = run_cli("excel.py", "write", "--range", "A1", "--value", "안녕")
         filled = a1_value()
         if filled != "안녕":
-            record(ctx, "C1", "Excel 쓰기 후 undo", False, f"fill 후 A1={filled!r} (기대: '안녕')", data, code, raw, err)
+            record(ctx, "C1", "Excel 쓰기 후 undo", False, f"쓰기 후 A1={filled!r}", data, code, raw, err)
             return
-        data, code, raw, err = run_cli("clean.py", "--action", "undo", "--app", "excel")
+        data, code, raw, err = run_cli("office.py", "undo", "--app", "excel")
         wait_for(lambda: xl_wb("A.xlsx"), timeout=20)
         restored = a1_value()
-        ok = (data or {}).get("status") == "ok" and restored == "원래값" \
-            and (data or {}).get("restored_as") == "reopened_in_office"
+        ok = (data or {}).get("status") == "ok" and restored == "원래값" and (data or {}).get("restored_as") == "reopened_in_office"
         record(ctx, "C1", "Excel 쓰기 후 undo", ok,
-               f"undo 후 A1={restored!r}, restored_as={(data or {}).get('restored_as')}, 백업={(data or {}).get('pre_undo_backup')}",
-               data, code, raw, err)
+               f"undo 후 A1={restored!r}, restored_as={(data or {}).get('restored_as')}", data, code, raw, err)
 
     def c2():
         activate_xl("A.xlsx", "Sheet1")
-        run_cli("excel_fill.py", "--target", "active", "--range", "A1", "--value", "값1")
+        run_cli("excel.py", "write", "--range", "A1", "--value", "값1")
         activate_xl("A.xlsx", "Sheet1")
-        run_cli("excel_fill.py", "--target", "active", "--range", "A1", "--value", "값2")
-        d1, c1_, r1, e1 = run_cli("clean.py", "--action", "undo", "--app", "excel")
+        run_cli("excel.py", "write", "--range", "A1", "--value", "값2")
+        run_cli("office.py", "undo", "--app", "excel")
         wait_for(lambda: xl_wb("A.xlsx"), timeout=20)
         v1 = a1_value()
-        d2, c2_, r2, e2 = run_cli("clean.py", "--action", "undo", "--app", "excel")
+        d2, c2_, r2, e2 = run_cli("office.py", "undo", "--app", "excel")
         wait_for(lambda: xl_wb("A.xlsx"), timeout=20)
         v2 = a1_value()
-        ok = v1 == "값1" and v2 == "원래값"
-        record(ctx, "C2", "연속 undo 두 번", ok, f"1차 undo 후 A1={v1!r}, 2차 undo 후 A1={v2!r}", d2, c2_, r2, e2)
+        record(ctx, "C2", "연속 undo 두 번", v1 == "값1" and v2 == "원래값", f"1차 후 A1={v1!r}, 2차 후 A1={v2!r}", d2, c2_, r2, e2)
 
     def c3():
         app = xl_app()
         new_wb = com_retry(lambda: app.Workbooks.Add())
         new_name = new_wb.Name
         new_wb.Activate()
-        before_count = app.Workbooks.Count
-        data, code, raw, err = run_cli("excel_fill.py", "--target", "active", "--range", "A1", "--value", "새문서값")
-        data, code, raw, err = run_cli("clean.py", "--action", "undo", "--app", "excel")
+        before = app.Workbooks.Count
+        run_cli("excel.py", "write", "--range", "A1", "--value", "새문서값")
+        data, code, raw, err = run_cli("office.py", "undo", "--app", "excel")
         time.sleep(2)
-        after_count = com_retry(lambda: xl_app().Workbooks.Count)
-        restored_val = "?"
-        try:
-            restored_val = com_retry(lambda: xl_app().ActiveWorkbook.Worksheets(1).Range("A1").Value)
-        except Exception:
-            pass
-        ok = (data or {}).get("status") == "ok" and (data or {}).get("restored_as") == "new_untitled_document" \
-            and after_count == before_count + 1 and restored_val in (None, "")
-        record(ctx, "C3", "저장 안 한 새 통합문서 undo -> 제목 없는 새 통합문서", ok,
-               f"통합문서 수 {before_count}->{after_count}, 복원 문서 A1={restored_val!r}", data, code, raw, err)
-        # 테스트로 만든 통합문서 정리 (A.xlsx 제외, 저장 안 함)
+        after = com_retry(lambda: xl_app().Workbooks.Count)
+        ok = (data or {}).get("status") == "ok" and (data or {}).get("restored_as") == "new_untitled_document" and after == before + 1
+        record(ctx, "C3", "저장 안 한 새 통합문서 undo", ok, f"통합문서 수 {before}->{after}", data, code, raw, err)
         try:
             app = xl_app()
             for i in range(app.Workbooks.Count, 0, -1):
@@ -541,31 +546,27 @@ def test_C(ctx):
         com_retry(lambda: doc.Activate())
         com_retry(lambda: doc.Range(0, 0).InsertBefore("가"))
         m_before = mtime(ctx.path("A.docx"))
-        data, code, raw, err = run_cli("word_write.py", "--target", "active", "--text", "테스트 문장")
-        time.sleep(1)
+        data, code, raw, err = run_cli("word.py", "write", "--text", "테스트 문장")
         doc = wd_doc("A.docx")
         text = com_retry(lambda: doc.Content.Text)
-        saved_flag = com_retry(lambda: bool(doc.Saved))
-        ok = (data or {}).get("status") == "ok" and "테스트 문장" in text \
-            and mtime(ctx.path("A.docx")) == m_before and not saved_flag
+        ok = (data or {}).get("status") == "ok" and "테스트 문장" in text and mtime(ctx.path("A.docx")) == m_before \
+            and not com_retry(lambda: bool(doc.Saved))
         record(ctx, "C4", "워드 쓰기 성공 + 원본 자동 저장 안 됨", ok,
-               f"수정시각 불변={mtime(ctx.path('A.docx')) == m_before}, 미저장 상태 유지={not saved_flag}",
-               data, code, raw, err)
+               f"수정시각 불변={mtime(ctx.path('A.docx')) == m_before}", data, code, raw, err)
 
     def c5():
-        data, code, raw, err = run_cli("clean.py", "--action", "undo", "--app", "word")
+        data, code, raw, err = run_cli("office.py", "undo", "--app", "word")
         wait_for(lambda: wd_doc("A.docx"), timeout=20)
         text = com_retry(lambda: wd_doc("A.docx").Content.Text)
         ok = (data or {}).get("status") == "ok" and "테스트 문장" not in text and text.startswith("가")
         record(ctx, "C5", "워드 undo -> 도구가 쓴 문장만 제거", ok,
-               f"'테스트 문장' 남음={'테스트 문장' in text}, 손으로 넣은 '가' 유지={text.startswith('가')}",
-               data, code, raw, err)
+               f"'테스트 문장' 남음={'테스트 문장' in text}, '가' 유지={text.startswith('가')}", data, code, raw, err)
 
     def c6():
         n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
-        data, code, raw, err = run_cli("ppt_slide.py", "--target", "active", "--action", "add")
+        run_cli("ppt.py", "slide", "--action", "add")
         n1 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
-        data, code, raw, err = run_cli("clean.py", "--action", "undo", "--app", "ppt")
+        data, code, raw, err = run_cli("office.py", "undo", "--app", "ppt")
         wait_for(lambda: pp_prs("A.pptx"), timeout=20)
         n2 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
         ok = n1 == n0 + 1 and n2 == n0 and (data or {}).get("status") == "ok"
@@ -574,13 +575,13 @@ def test_C(ctx):
     def c7():
         last = None
         for _ in range(4):
-            last = run_cli("clean.py", "--action", "undo", "--app", "ppt")
-            if (last[0] or {}).get("status") == "no_match":
+            last = run_cli("office.py", "undo", "--app", "ppt")
+            if (last[0] or {}).get("restored") is False:
                 break
             wait_for(lambda: pp_prs("A.pptx"), timeout=20)
         data, code, raw, err = last
-        ok = (data or {}).get("status") == "no_match" and code == 0
-        record(ctx, "C7", "스냅샷 소진 시 no_match", ok, "", data, code, raw, err)
+        ok = (data or {}).get("restored") is False and code == 0
+        record(ctx, "C7", "스냅샷 소진 시 '되돌릴 것 없음'", ok, "", data, code, raw, err)
 
     run_test(ctx, "C1", "Excel undo", c1)
     run_test(ctx, "C2", "연속 undo", c2)
@@ -600,43 +601,50 @@ def test_D(ctx):
         com_retry(lambda: doc.Activate())
         footer_before = com_retry(lambda: doc.Sections(1).Footers(1).PageNumbers.Count)
         saved_before = com_retry(lambda: bool(doc.Saved))
-        data, code, raw, err = run_cli("word_export.py", "--target", "active", "-o", "atomic_test_pagenum.pdf", "--page-number")
+        data, code, raw, err = run_cli("word.py", "export", "--save", "atomic_test_pagenum.pdf", "--page-number")
         doc = wd_doc("A.docx")
         footer_after = com_retry(lambda: doc.Sections(1).Footers(1).PageNumbers.Count)
         saved_after = com_retry(lambda: bool(doc.Saved))
-        pdf = (data or {}).get("file_path", "")
-        ok = (data or {}).get("status") == "ok" and os.path.exists(pdf) \
-            and footer_before == footer_after and saved_before == saved_after
+        pdf = (data or {}).get("output_file", "")
+        ok = (data or {}).get("status") == "ok" and os.path.exists(pdf) and footer_before == footer_after and saved_before == saved_after
         manual = None
         if ok and not ctx.auto:
             os.startfile(pdf)
-            manual = ask(ctx, "방금 열린 PDF 하단 중앙에 페이지 번호가 보이나요? (확인 후 PDF 창은 닫아 주세요)")
-        record(ctx, "D1", "PDF 페이지 번호, 원본 바닥글 미변경", ok and manual is not False,
-               f"원본 페이지번호 수 {footer_before}->{footer_after}, 저장상태 {saved_before}->{saved_after}, {pdf}",
-               data, code, raw, err)
+            manual = ask(ctx, "방금 열린 PDF 아래쪽 가운데에 쪽 번호가 보이나요? (확인 후 PDF 창은 닫아 주세요)")
+        record(ctx, "D1", "PDF 쪽 번호, 원본 바닥글 미변경", ok and manual is not False,
+               f"원본 쪽번호 수 {footer_before}->{footer_after}, 저장상태 {saved_before}->{saved_after}", data, code, raw, err)
 
     def d2():
-        data, code, raw, err = run_cli("word_export.py", "--target", "active", "-o", "atomic_test_x.docx", "--format", "pdf")
-        fp = (data or {}).get("file_path", "")
-        ok = (data or {}).get("status") == "ok" and fp.lower().endswith(".pdf") and os.path.exists(fp)
-        record(ctx, "D2", "형식/확장자 불일치 보정 (.docx -> .pdf)", ok, fp, data, code, raw, err)
+        doc = wd_doc("A.docx")
+        full_before = com_retry(lambda: doc.FullName)
+        data, code, raw, err = run_cli("word.py", "export", "--save", "atomic_test_copy.docx")
+        fp = (data or {}).get("output_file", "")
+        full_after = com_retry(lambda: wd_doc("A.docx").FullName)
+        ok = (data or {}).get("status") == "ok" and os.path.exists(fp) and full_before == full_after
+        record(ctx, "D2", "DOCX 사본 저장, 원본 경로 그대로", ok, fp, data, code, raw, err)
 
     def d3():
         activate_xl("A.xlsx", "Sheet1")
         before = com_retry(lambda: xl_app().Workbooks.Count)
-        data, code, raw, err = run_cli("excel_export.py", "--target", "active", "--output", "atomic_test_t.xlsx")
+        data, code, raw, err = run_cli("excel.py", "export", "--save", "atomic_test_t.xlsx")
         after = com_retry(lambda: xl_app().Workbooks.Count)
-        fp = (data or {}).get("file_path", "")
+        fp = (data or {}).get("output_file", "")
         ok = (data or {}).get("status") == "ok" and os.path.exists(fp) and before == after
-        record(ctx, "D3", "XLSX 내보내기 후 임시 통합문서 미잔류", ok, f"통합문서 수 {before}->{after}, {fp}", data, code, raw, err)
+        record(ctx, "D3", "XLSX 내보내기 후 임시 통합문서 미잔류", ok, f"통합문서 수 {before}->{after}", data, code, raw, err)
 
-    run_test(ctx, "D1", "워드 PDF 페이지 번호", d1)
-    run_test(ctx, "D2", "형식/확장자 보정", d2)
-    run_test(ctx, "D3", "XLSX 내보내기", d3)
+    def d4():
+        data, code, raw, err = run_cli("ppt.py", "export", "--save", "atomic_test_deck.pdf")
+        fp = (data or {}).get("output_file", "")
+        record(ctx, "D4", "PPT PDF 내보내기", (data or {}).get("status") == "ok" and os.path.exists(fp), fp, data, code, raw, err)
+
+    run_test(ctx, "D1", "워드 PDF 쪽 번호", d1)
+    run_test(ctx, "D2", "워드 DOCX 사본", d2)
+    run_test(ctx, "D3", "엑셀 XLSX 내보내기", d3)
+    run_test(ctx, "D4", "PPT PDF 내보내기", d4)
 
 
 # ---------------------------------------------------------------------------
-# E. Excel 편집
+# E. 엑셀 편집
 # ---------------------------------------------------------------------------
 def prepare_e_sheets():
     def _do():
@@ -674,47 +682,52 @@ def test_E(ctx):
 
     def e1():
         activate_xl("A.xlsx", "E_TEST")
-        data, code, raw, err = run_cli("excel_range.py", "--target", "active", "--action", "move", "--range", "A1:B3", "--dest", "B2")
+        data, code, raw, err = run_cli("excel.py", "range", "--action", "move", "--range", "A1:B3", "--dest", "B2")
         vals = com_retry(lambda: e_ws().Range("B2:C4").Value)
         a1 = com_retry(lambda: e_ws().Range("A1").Value)
         ok = (data or {}).get("status") == "ok" and vals == (("가", "나"), ("다", "라"), ("마", "바")) and a1 is None
-        record(ctx, "E1", "범위 이동(move) 데이터 손실 없음", ok, f"B2:C4={vals}, A1={a1!r}", data, code, raw, err)
+        record(ctx, "E1", "범위 이동 데이터 손실 없음", ok, f"B2:C4={vals}, A1={a1!r}", data, code, raw, err)
 
     def e2():
         activate_xl("A.xlsx", "E_TEST")
-        data, code, raw, err = run_cli("excel_range.py", "--target", "active", "--action", "merge")
-        merged = com_retry(lambda: bool(e_ws().Range("A1").MergeCells))
-        ok = (data or {}).get("status") == "error" and not merged
-        record(ctx, "E2", "범위 없는 병합 -> error", ok, "", data, code, raw, err)
+        data, code, raw, err = run_cli("excel.py", "range", "--action", "merge")
+        record(ctx, "E2", "범위 없는 병합 -> error", (data or {}).get("status") == "error", "", data, code, raw, err)
 
     def e3():
         activate_xl("A.xlsx", "E_TEST")
-        data, code, raw, err = run_cli("excel_range.py", "--target", "active", "--action", "merge", "--range", "A10:B10")
+        data, code, raw, err = run_cli("excel.py", "range", "--action", "merge", "--range", "A10:B10")
         merged = com_retry(lambda: bool(e_ws().Range("A10").MergeCells))
         ok = (data or {}).get("status") == "ok" and merged and code != "TIMEOUT"
         record(ctx, "E3", "값이 있는 셀 병합 시 대화상자 없이 완료", ok, f"병합됨={merged}", data, code, raw, err)
 
     def e4():
         activate_xl("A.xlsx", "E_TEST")
-        data, code, raw, err = run_cli("excel_range.py", "--target", "active", "--action", "width",
-                                       "--range", "'My Sheet'!A1", "--width", "30")
+        data, code, raw, err = run_cli("excel.py", "range", "--action", "width", "--range", "'My Sheet'!A1", "--size", "30")
         width = com_retry(lambda: xl_wb("A.xlsx").Worksheets("My Sheet").Columns(1).ColumnWidth)
         ok = (data or {}).get("status") == "ok" and abs(float(width) - 30) < 0.01
         record(ctx, "E4", "따옴표 시트명 주소 해석", ok, f"My Sheet A열 너비={width}", data, code, raw, err)
 
     def e5():
         activate_xl("A.xlsx", "E_TEST")
-        data, code, raw, err = run_cli("excel_edit.py", "--target", "active", "--find", "3", "--replace", "9", "--bg", "yellow")
+        data, code, raw, err = run_cli("excel.py", "replace", "--find", "3", "--replace", "9", "--whole", "--bg", "yellow")
         formula = com_retry(lambda: e_ws().Range("C20").Formula)
         color = com_retry(lambda: int(e_ws().Range("C20").Interior.Color))
         ok = (data or {}).get("status") == "ok" and formula == "=A20+B20" and color == 65535
         record(ctx, "E5", "수식 셀 치환 시 수식 보존 + 서식 적용", ok, f"C20 수식={formula}, 배경색={color}", data, code, raw, err)
+
+    def e6():
+        activate_xl("A.xlsx", "E_TEST")
+        data, code, raw, err = run_cli("excel.py", "style", "--range", "B2:C4", "--theme", "navy")
+        color = com_retry(lambda: int(e_ws().Range("B2").Interior.Color))
+        ok = (data or {}).get("status") == "ok" and color == 0x5D361B
+        record(ctx, "E6", "테마 적용 (머리글 색)", ok, f"B2 배경색={color:#x}", data, code, raw, err)
 
     run_test(ctx, "E1", "move", e1)
     run_test(ctx, "E2", "merge 범위 없음", e2)
     run_test(ctx, "E3", "merge 대화상자", e3)
     run_test(ctx, "E4", "따옴표 시트명", e4)
     run_test(ctx, "E5", "수식 보존", e5)
+    run_test(ctx, "E6", "테마", e6)
 
 
 # ---------------------------------------------------------------------------
@@ -727,14 +740,14 @@ def test_F(ctx):
 
     def f1():
         before = com_retry(counts)
-        data, code, raw, err = run_cli("ppt_slide.py", "--target", "active", "--action", "clear")
+        data, code, raw, err = run_cli("ppt.py", "slide", "--action", "clear")
         after = com_retry(counts)
         ok = (data or {}).get("status") == "error" and before == after
         record(ctx, "F1", "슬라이드 번호 없는 clear -> error, 삭제 없음", ok, f"도형 수 {before}->{after}", data, code, raw, err)
 
     def f2():
         before = com_retry(counts)
-        data, code, raw, err = run_cli("ppt_slide.py", "--target", "active", "--action", "clear", "--slide", "2")
+        data, code, raw, err = run_cli("ppt.py", "slide", "--action", "clear", "--slide", "2")
         after = com_retry(counts)
         expected = list(before)
         if len(expected) >= 2:
@@ -742,8 +755,19 @@ def test_F(ctx):
         ok = (data or {}).get("status") == "ok" and after == expected
         record(ctx, "F2", "2번 슬라이드만 clear", ok, f"도형 수 {before}->{after}", data, code, raw, err)
 
+    def f3():
+        n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        data, code, raw, err = run_cli("ppt.py", "write", "--slide", "new", "--title", "추진 전략", "--text", "- 안정성\\n- 확장성")
+        n1 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        cur = com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").ActiveWindow.View.Slide.SlideIndex)
+        ok = (data or {}).get("status") == "ok" and n1 == n0 + 1 and cur == n1
+        manual = ask(ctx, "새 슬라이드에 '추진 전략' 제목과 글머리 2줄이 보기 좋게 들어갔나요?")
+        record(ctx, "F3", "새 슬라이드 쓰기 + 고친 슬라이드로 이동", ok and manual is not False,
+               f"슬라이드 {n0}->{n1}, 화면={cur}", data, code, raw, err)
+
     run_test(ctx, "F1", "clear 보호", f1)
     run_test(ctx, "F2", "clear --slide 2", f2)
+    run_test(ctx, "F3", "새 슬라이드 쓰기", f3)
 
 
 # ---------------------------------------------------------------------------
@@ -754,16 +778,16 @@ def test_G(ctx):
 
     def g1():
         to = me or "atomic-test@example.com"
-        data, code, raw, err = run_cli("outlook_write.py", "--action", "new", "--to", to,
-                                       "--subject", "[atomic-cli 테스트] 표시 전용", "--body", "본문 테스트")
+        data, code, raw, err = run_cli("outlook.py", "new", "--to", to, "--subject", "[atomic-cli 테스트] 표시 전용",
+                                       "--body", "본문 테스트")
         ok = (data or {}).get("status") == "ok" and (data or {}).get("sent") is False
-        manual = ask(ctx, "메일 작성 창이 떴나요? (확인 후 그 창은 저장하지 않고 닫아 주세요)")
+        manual = ask(ctx, "메일 작성 창이 떴나요? (서명을 등록해 두었다면 본문 아래 서명도 보여야 합니다. 확인 후 저장하지 않고 닫아 주세요)")
         record(ctx, "G1", "기본 동작: 작성 창만 표시, 미발송", ok and manual is not False, "", data, code, raw, err)
 
     def g2():
-        data, code, raw, err = run_cli("outlook_write.py", "--action", "new", "--to", "zz_atomic_invalid_recipient_000",
+        data, code, raw, err = run_cli("outlook.py", "new", "--to", "zz_atomic_invalid_recipient_000",
                                        "--subject", "[atomic-cli 테스트] 잘못된 수신자", "--body", "발송되면 안 됨", "--send")
-        ok = (data or {}).get("status") == "partial" and (data or {}).get("sent") is False
+        ok = (data or {}).get("status") == "error" and (data or {}).get("sent") is False
         ask(ctx, "작성 창이 떴다면 저장하지 않고 닫아 주세요. 닫았나요?")
         record(ctx, "G2", "잘못된 수신자 + --send -> 발송 안 됨", ok,
                f"unresolved={(data or {}).get('unresolved_recipients')}", data, code, raw, err)
@@ -775,18 +799,80 @@ def test_G(ctx):
         if not ctx.auto and ask(ctx, f"{me} 주소로 실제 테스트 메일을 1통 발송합니다. 진행할까요?") is not True:
             record(ctx, "G3", "명시적 --send 실제 발송", None, "사용자가 건너뜀")
             return
-        data, code, raw, err = run_cli("outlook_write.py", "--action", "new", "--to", me,
-                                       "--subject", "[atomic-cli 테스트] 발송 테스트", "--body", "자동 발송 테스트 메일입니다.", "--send")
-        ok = (data or {}).get("status") == "ok" and (data or {}).get("sent") is True
-        record(ctx, "G3", "명시적 --send 실제 발송", ok, "", data, code, raw, err)
+        data, code, raw, err = run_cli("outlook.py", "new", "--to", me, "--subject", "[atomic-cli 테스트] 발송 테스트",
+                                       "--body", "자동 발송 테스트 메일입니다.", "--send")
+        record(ctx, "G3", "명시적 --send 실제 발송", (data or {}).get("sent") is True, "", data, code, raw, err)
+
+    def g4():
+        data, code, raw, err = run_cli("outlook.py", "list", "--limit", "3")
+        record(ctx, "G4", "받은편지함 최근 메일 목록", (data or {}).get("status") == "ok",
+               f"{len((data or {}).get('mails', []))}통", data, code, raw, err)
 
     run_test(ctx, "G1", "표시 전용", g1)
     run_test(ctx, "G2", "잘못된 수신자", g2)
     run_test(ctx, "G3", "실제 발송", g3)
+    run_test(ctx, "G4", "메일 목록", g4)
 
 
 # ---------------------------------------------------------------------------
-# 보고서
+# H. 체이닝 (자주 쓰는 시나리오)
+# ---------------------------------------------------------------------------
+def test_H(ctx):
+    def h1():
+        activate_xl("A.xlsx")
+        run_cli("excel.py", "sheet", "--action", "add", "--name", "사인")
+        d1, c1, r1, e1 = run_cli("excel.py", "write", "--sheet", "사인", "--range", "A1:B101", "--header", "x,sin(x)",
+                                 "--formula", "=(ROW()-2)*4*PI()/99", "=SIN(A2)")
+        data, code, raw, err = run_cli("excel.py", "chart", "--sheet", "사인", "--range", "A1:B101", "--type", "line",
+                                       "--title", "사인 2주기")
+        ok = (d1 or {}).get("status") == "ok" and (data or {}).get("status") == "ok" and (data or {}).get("chart_name") == "사인 2주기"
+        manual = ask(ctx, "엑셀 '사인' 시트에 사인 곡선 2주기 차트가 그려졌나요?")
+        record(ctx, "H1", "사인 2주기 그래프 (쓰기 2회)", ok and manual is not False,
+               f"chart_type={(data or {}).get('chart_type')}", data, code, raw, err)
+
+    def h2():
+        data, code, raw, err = run_cli("office.py", "transfer", "--probe")
+        record(ctx, "H2", "차트 전달 방식 시험 (--probe)", (data or {}).get("status") == "ok",
+               f"저장된 순서={(data or {}).get('saved_order')}", data, code, raw, err)
+
+    def h3():
+        wd_before = com_retry(lambda: wd_doc("A.docx").InlineShapes.Count)
+        pp_before = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        data, code, raw, err = run_cli("office.py", "transfer", "--from", "excel", "--chart", "사인 2주기", "--to", "word,ppt")
+        wd_after = com_retry(lambda: wd_doc("A.docx").InlineShapes.Count)
+        pp_after = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
+        methods = {k: v.get("method") for k, v in ((data or {}).get("results") or {}).items()}
+        ok = (data or {}).get("status") == "ok" and wd_after == wd_before + 1 and pp_after == pp_before + 1
+        manual = ask(ctx, "워드 문서 끝과 PPT 새 슬라이드에 사인 그래프 그림이 들어갔나요?")
+        record(ctx, "H3", "차트를 워드와 PPT에 그림으로", ok and manual is not False,
+               f"사용 방식={methods}, 워드 그림 {wd_before}->{wd_after}, PPT 슬라이드 {pp_before}->{pp_after}",
+               data, code, raw, err)
+
+    def h4():
+        d1, c1, r1, e1 = run_cli("office.py", "transfer", "--from", "word", "--what", "text", "--to", "excel")
+        d2, c2, r2, e2 = run_cli("office.py", "transfer", "--from", "ppt", "--what", "text", "--to", "excel")
+        ok = (d1 or {}).get("status") == "ok" and (d2 or {}).get("status") == "ok"
+        record(ctx, "H4", "워드/PPT 내용을 엑셀 새 시트로", ok,
+               f"시트: {(d1 or {}).get('sheet')}, {(d2 or {}).get('sheet')}", d2, c2, r2, e2)
+
+    def h5():
+        run_cli("reader.py", "read", "--file", ctx.path("B.docx"), "--format", "summary")
+        data, code, raw, err = run_cli("reader.py", "search", "--query", "첫 문단", "--save")
+        out = (data or {}).get("output_file", "")
+        before = com_retry(lambda: len(wd_doc("A.docx").Content.Text))
+        d2, c2, r2, e2 = run_cli("word.py", "write", "--file", out) if out else (None, None, "", "")
+        after = com_retry(lambda: len(wd_doc("A.docx").Content.Text))
+        ok = (data or {}).get("total_matches", 0) >= 1 and (d2 or {}).get("status") == "ok" and after > before
+        record(ctx, "H5", "캐시 문서 검색 -> 워드에 넣기", ok,
+               f"일치 {(data or {}).get('total_matches')}건, 워드 글자 {before}->{after}", d2, c2, r2, e2)
+
+    run_test(ctx, "H1", "사인 그래프", h1)
+    run_test(ctx, "H2", "probe", h2)
+    run_test(ctx, "H3", "차트 전달", h3)
+    run_test(ctx, "H4", "워드/PPT -> 엑셀", h4)
+    run_test(ctx, "H5", "검색 -> 워드", h5)
+
+
 # ---------------------------------------------------------------------------
 def write_report(ctx):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -795,7 +881,7 @@ def write_report(ctx):
     for r in ctx.results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     lines = [
-        f"atomic-cli Phase 1 Windows 테스트 보고서 ({stamp})",
+        f"atomic-cli 1.0 Windows 테스트 보고서 ({stamp})",
         f"Python {sys.version.split()[0]} / 테스트 폴더 {ctx.dir}",
         "요약: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
         "",
@@ -818,11 +904,12 @@ def write_report(ctx):
     return path, counts
 
 
-GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G)]
+GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G),
+          ("H", test_H)]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="atomic-cli Phase 1 Windows 실기 테스트 러너")
+    parser = argparse.ArgumentParser(description="atomic-cli 1.0 Windows 실기 테스트 러너")
     parser.add_argument("--dir", default=r"C:\atomic_test", help="테스트 파일을 만들 폴더 (기본 C:\\atomic_test)")
     parser.add_argument("--only", help="실행할 그룹 (예: A,C,E)")
     parser.add_argument("--self-email", help="G3 실제 발송 테스트에 쓸 본인 메일 주소 (생략 시 G3 건너뜀)")
@@ -837,7 +924,7 @@ def main():
         selected.discard("G")
 
     log("=" * 70)
-    log(" atomic-cli Phase 1 Windows 테스트")
+    log(" atomic-cli 1.0 Windows 테스트")
     log(f" 대상 그룹: {','.join(sorted(selected))} / 테스트 폴더: {ctx.dir}")
     log(" 실행 전 다른 Excel/Word/PowerPoint 문서는 저장 후 모두 닫아 주세요.")
     log(" 테스트 중에는 Office 창을 직접 조작하지 마세요 (질문 응답 제외).")

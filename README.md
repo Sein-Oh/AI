@@ -19,28 +19,34 @@ AI_WORK/
 │   └── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 └── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
-    └── ml-kit/                # 회귀·분류 ML 툴킷 (2.1.0)
-        ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
+    ├── ml-kit/                # 회귀·분류 ML 툴킷 (2.1.0)
+    │   ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
+    │   ├── README.md          # 상세 설명서
+    │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
+    │   ├── requirements.txt
+    │   ├── ml_train.py        # 1단계: 학습
+    │   ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
+    │   ├── ml_report.py       # 3단계: Word 보고서
+    │   └── tests/             # CLI 계약 + 회귀 테스트
+    └── atomic-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.0.0)
+        ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
-        ├── CHANGELOG.md       # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
+        ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
+        ├── WORK_PLAN.md       # 1.0 설계 기록
         ├── requirements.txt
-        ├── ml_train.py        # 1단계: 학습
-        ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
-        ├── ml_report.py       # 3단계: Word 보고서
-        └── tests/             # CLI 계약 + 회귀 테스트
-    └── atomic-cli/            # Office(Excel/Word/PPT/Outlook) COM 자동화 마이크로 CLI 모음 (Phase 1 정비 중)
-        ├── README.md          # 상세 설명서 (구버전, 재작성 예정)
-        ├── WORK_PLAN.md       # 오류 수정/최적화/고도화 작업계획 + 진행 현황
-        ├── TEST_CHECKLIST.md  # Windows 실기 테스트 체크리스트
-        ├── *.py               # 도구 진입점(excel_*, word_*, ppt_*, outlook_*, ...) + 공통 모듈(_*.py)
+        ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
+        ├── reader.py          # PDF/HWP/EML/Office 파일 읽기와 검색 (Office 불필요)
+        ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
+        ├── _runtime.py / _office.py   # 공통 모듈
         ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
-        └── tests/             # 가짜 COM 기반 오프라인 테스트
+        └── tests/             # 오프라인 테스트 (가짜 COM + 실제 샘플 파일)
 ```
 
 ## 빠른 시작
 
 ```bash
 python -m pip install -r CLI/ml-kit/requirements.txt -c constraints.txt
+python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.

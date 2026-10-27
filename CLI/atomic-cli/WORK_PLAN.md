@@ -36,7 +36,7 @@ CLI/atomic-cli/
 ├── office.py        # 창 목록/전환, 앱 간 전달, 되돌리기
 ├── _runtime.py      # 공통: 응답 계약(run_cli, JsonArgumentParser), 경로, 텍스트/CSV 입출력, 작업 폴더, 설정
 ├── _office.py       # 공통: COM 세션(active/파일), 스냅샷, 화면 이동 규칙
-├── tools/run_win_tests.py  # Windows 실기 테스트 러너 (1.0 명령 체계로 갱신 예정)
+├── tools/run_win_tests.py  # Windows 실기 테스트 러너
 └── tests/           # 계약 테스트 + 라이브러리 기반 실제 파일 테스트 + 가짜 COM 테스트
 ```
 - `reader.py`와 `_runtime.py`는 pywin32 없이도 import·실행되어야 합니다.
@@ -119,7 +119,7 @@ python word.py write --file "<output_file>"
 | 4 | `_office.py` (COM 세션, 스냅샷, 화면 이동 규칙) | 완료 (`tests/test_office_core.py`, 가짜 COM) |
 | 5 | `excel.py` → `word.py` → `ppt.py` (부록 A의 버그 함께 수정) | 완료 (`tests/test_excel.py`, `test_word.py`, `test_ppt.py`) |
 | 6 | `outlook.py`, `office.py` (transfer 3방식 + probe, undo) | 완료 (`tests/test_outlook.py`, `test_office_cmd.py`) |
-| 7 | SKILL.md, README, CHANGELOG 1.0.0, requirements.txt, run_win_tests 갱신, 기존 파일 삭제 | 대기 |
+| 7 | SKILL.md, README, CHANGELOG 1.0.0, requirements.txt, run_win_tests 갱신, 기존 파일 삭제 | 완료. Windows 실기 검증 대기 |
 
 ---
 
