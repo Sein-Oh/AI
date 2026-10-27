@@ -9,7 +9,9 @@ AI 에이전트가 CLI 도구로 호출하는 **Agent-Computer Interface(ACI)** 
 ```text
 AI_WORK/
 ├── README.md                  # 저장소 안내 (본 문서)
-├── CLAUDE.md                  # 이 저장소를 수정하는 AI 코딩 에이전트용 작업 규칙
+├── AGENTS.md                  # 에이전트 공통 규칙 + 사용자 환경 (단일 원본, OpenCode가 자동으로 읽음)
+├── CLAUDE.md                  # @AGENTS.md 한 줄 (Claude Code용)
+├── opencode.json              # OpenCode가 docs/ENVIRONMENT.md도 함께 읽도록 설정
 ├── pytest.ini                 # python -m pytest -> CLI/ 아래 모든 도구 테스트
 ├── constraints.txt            # 표준 사용자 환경 라이브러리 버전 고정
 ├── docs/

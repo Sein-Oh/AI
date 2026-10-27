@@ -3,6 +3,8 @@
 `CLI/` 아래 모든 도구는 이 환경에서 **추가 설치 없이** 동작하는 것을 기본 목표로 합니다.
 버전 고정 목록: 루트 [`constraints.txt`](../constraints.txt)
 
+이 저장소에서 작업하는 에이전트는 루트 `AGENTS.md`의 "사용자 환경" 요약을 자동으로 읽고, OpenCode는 `opencode.json`의 `instructions` 설정으로 이 문서도 함께 읽습니다.
+
 | 항목 | 값 |
 |---|---|
 | OS | Windows 11 (폐쇄망) |
