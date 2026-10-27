@@ -1,4 +1,4 @@
-# ml-kit 2.0: 경량 AI 에이전트를 위한 자율 회귀·분류 머신러닝 툴킷 (Autonomous Regression / Classification ML Toolkit)
+# ml-kit 2.1: 경량 AI 에이전트를 위한 자율 회귀·분류 머신러닝 툴킷 (Autonomous Regression / Classification ML Toolkit)
 
 > **26B~30B 경량화 LLM(Glimmer-30B, OpenCode 등)에 최적화된 1-Turn 완결형 머신러닝 학습, 추론 및 기술 감사 엔진**  
 > 복잡한 다단계 판단이나 인간의 개입 없이, 단 1회의 선언적 CLI 명령으로 데이터 자동 정제, 방탄 파생변수 생성, 5대 회귀/분류 모델 경쟁 학습, 단일 진실 공급원(SSOT) 원장 누적, 초고속 서빙 추론, 그리고 공식 엔지니어링 Word(.docx) 감사 보고서 생성을 100% 자율 완결합니다.
@@ -72,11 +72,14 @@ OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이
 ├── history.jsonl              # [SSOT 스트리밍] 회차별 실험 메타데이터 누적 원장 (JSON Lines)
 ├── history.json               # [SSOT 표준배열] 가독성 및 LLM 일괄 조회를 위한 동기화 원장 (JSON Array)
 ├── report_<타겟>.docx          # [공식 기술 보고서] Style B 모던 클린 슬레이트 Word 감사 보고서 (기본 저장 위치)
+├── .train.lock                # [동시 실행 잠금] 학습 중에만 OS 잠금 (비정상 종료 시 자동 해제)
 ├── .tmp_vX/                   # [임시 트랜잭션] 원자적 스테이징 폴더 (작업 성공 시 vX로 치환, 실패 시 자동 GC)
 └── vX/                        # [버전 체크포인트 디렉토리] (v1, v2, v3, ...)
-    ├── model_<타겟>.joblib     # 1위 챔피언 파이프라인 가중치 (전체 데이터 적합, Imputer+Scaler+Model 일체형)
-    ├── model_<타겟>.json       # 타겟별 추론 메타데이터 (설명, 지표, 외삽 경계선, 피처 통계, 파생변수 수식)
-    ├── leaderboard.json       # 5대 회귀 알고리즘 5-Fold K-Fold 벤치마크 및 검증 지표 종합 대조표
+    ├── model_<타겟>.joblib     # 1위 챔피언 파이프라인 (전처리[수치 대치+스케일, 범주 원-핫] + 모델 일체형)
+    ├── model_<타겟>.json       # 타겟별 추론 메타데이터 (feature_schema, 지표, 외삽 경계, 예측 범위, 판정 기준, 파생 수식)
+    ├── leaderboard.json       # 5대 알고리즘 교차검증 대조표 (튜닝된 params 포함)
+    ├── correlation.csv        # 전체 상관행렬 (원장에는 피처 30개 이하로 축약 저장)
+    ├── next_features_*.txt    # next_commands용 피처 목록 (피처 15개 초과 시)
     └── model_dataset.csv      # 학습 당시 헤더 정제, 결측치 대치, 파생변수가 완료된 스냅샷 (CP949/UTF-8 호환)
 ```
 
@@ -116,19 +119,38 @@ flowchart TD
 
 단 1회의 명령으로 [데이터 로드 -> 비표준 헤더 스니핑 -> 결측치 대치 -> 방탄 파생변수 -> 5대 모델 5-Fold 경쟁 -> 리더보드 -> 챔피언 가중치 패키징 -> SSOT 원장 갱신]을 완전 무인으로 완결합니다.
 
+### 0) 피처 유형 자동 판별 (2.1.0)
+`-x`에 넣은 컬럼마다 도구가 유형을 정합니다. 판별 결과는 결과 JSON `feature_types`에 나옵니다.
+
+| 유형 | 판별 기준 | 모델 입력 |
+|---|---|---|
+| 수치 | 값의 90% 이상이 숫자 (`1,234` 허용) | 중앙값 대치 + 표준화 |
+| 날짜 | Excel 날짜 셀, 또는 90% 이상이 `YYYY-MM-DD[ HH:MM]` (`/` `.` 구분 허용) | `<컬럼>_year/month/day/dayofweek/hour` (값이 변하는 것만) |
+| 범주 | 그 외 문자 컬럼 | 결측은 `__missing__`, 원-핫 인코딩 (처음 보는 값은 무시 + 예측 시 경고) |
+
+- 종류가 200개를 넘거나, 50개를 넘으면서 행의 절반 이상이 서로 다른 문자 컬럼은 ID로 보고 `STOP_RETRY`.
+- `--dtypes "설비코드:str,측정일:datetime,값:float"`로 유형을 강제할 수 있습니다.
+- 날짜 분해는 파이프라인 밖(`ml_predict.py` PART C)에서 하므로 모델 파일에 사용자 코드가 저장되지 않고, `ml_predict.py` 단독 배포가 유지됩니다.
+
 ### 1) 5대 다중 회귀 모델 경쟁 풀 (Champion Selection)
-수학적 성격이 완전히 상이한 5대 핵심 알고리즘을 누수 방지 파이프라인(`Pipeline(SimpleImputer(median) -> StandardScaler() -> Regressor)`)에 탑재하여 동시 5-Fold 교차검증을 수행하고, 검증 결정계수($Val\ R^2$) 최상위 1개 모델을 타겟별 공식 챔피언으로 선정합니다:
+수학적 성격이 완전히 상이한 5대 핵심 알고리즘을 누수 방지 파이프라인(`Pipeline(ColumnTransformer[수치: SimpleImputer(median) -> StandardScaler(), 범주: OneHotEncoder] -> Regressor)`)에 탑재하여 동시 5-Fold 교차검증을 수행하고, 검증 결정계수($Val\ R^2$) 최상위 1개 모델을 타겟별 공식 챔피언으로 선정합니다:
 
 1. **HistGradientBoostingRegressor**: 비선형 복합 관계, 대용량 데이터, 결측치 및 이상치에 강건한 고성능 히스토그램 기반 GBDT.
 2. **RandomForestRegressor**: 다수의 결정 트리를 배깅(Bagging)하여 과적합을 방지하고 분산을 최소화하는 전통적 앙상블.
 3. **ExtraTreesRegressor**: 분할 지점을 극단적으로 무작위화하여 노이즈가 많은 연속형 공정 데이터에서 최상의 일반화 성능을 발휘하는 앙상블.
-4. **Ridge**: L2 정규화(릿지 패널티)를 적용하여 독립변수 간 다중공선성을 방어하는 선형 베이스라인.
-5. **ElasticNet**: L1(Lasso)과 L2(Ridge) 패널티를 결합하여 불필요한 노이즈 피처의 계수를 0으로 축소하는 희소 선형 모델.
+4. **Ridge** (`RidgeCV`): L2 정규화 선형 베이스라인. 정규화 강도 alpha를 1e-3~1e3 범위에서 자동 선택.
+5. **ElasticNet** (`ElasticNetCV`): L1+L2 결합 희소 선형 모델. alpha와 l1_ratio(0.1/0.5/0.9)를 내부 3-Fold로 자동 선택.
+
+선택된 값은 `leaderboard.json`의 `params`에 기록됩니다. 대용량 데이터(1만 행 초과)에서는 RF/ET 트리마다 1만 행 표본을 사용하고, 순열 중요도는 최대 5,000행 표본으로 계산합니다.
+
+- **예측 범위 (2.1.0)**: 챔피언 모델의 교차검증 잔차(OOF residual) 5%·95% 분위수를 저장하고, 예측 시 `pred_lo_<타겟>`, `pred_hi_<타겟>`(90% 범위)를 함께 출력합니다. 폭이 일정한 근사 범위입니다.
 
 ### 1-B) 분류 모드 (`--task classification`)
 작업 유형은 사용자가 `--task`로 지정합니다 (기본값 `regression`, 자동 판별 없음). 분류 모드는 같은 누수 방지 파이프라인(`SimpleImputer(median) -> StandardScaler() -> Classifier`)으로 **Stratified K-Fold** 교차검증을 수행하고, **OOF Macro-F1** 최상위 모델을 챔피언으로 선정합니다.
 
-1. **HistGradientBoostingClassifier** 2. **RandomForestClassifier** 3. **ExtraTreesClassifier** 4. **LogisticRegression** 5. **KNeighborsClassifier**
+1. **HistGradientBoostingClassifier** 2. **RandomForestClassifier** 3. **ExtraTreesClassifier** 4. **LogisticRegression** (`LogisticRegressionCV`, C 자동 선택) 5. **KNeighborsClassifier** (5만 행 초과 시 제외)
+
+- **이진 분류 판정 기준 (`--positive-class <라벨>`)**: 양성 클래스(예: 불량)를 지정하면 챔피언의 교차검증 확률로 양성 F1이 최대가 되는 기준 확률(0.05~0.95)을 찾아 `decision_threshold`로 저장하고, 예측 시 그 기준으로 라벨을 정합니다. 지정하지 않으면 기본(최대 확률) 판정입니다.
 
 - **지표**: Macro-F1(선정 기준), Accuracy, Balanced Accuracy, ROC-AUC(이진/다중 ovr), 혼동행렬, 클래스별 Precision·Recall·F1 (`vX/leaderboard.json`)
 - **라벨 정규화**: `1`, `1.0`, `"1"`은 같은 클래스 `"1"`로, 공백·`-`·`N/A`는 결측으로 처리하며 결측 라벨 행은 학습에서 제외
@@ -188,6 +210,7 @@ python ml_train.py -f "공정.xlsx" -x "반응온도,촉매비율,수분함량" 
 | `--version` | `-v` | 선택 | 버전 폴더 수동 지정 (미지정 시 `v1`, `v2`, ... 자동 채번) |
 | `--encoding` | - | 선택 | 산출물 CSV 저장 인코딩 (기본값: Windows Excel 호환 `cp949`) |
 | `--task` | - | 선택 | 학습 유형 `regression`(기본값) / `classification` |
+| `--positive-class` | - | 선택 | 이진 분류 양성 클래스. 지정 시 판정 기준 확률 자동 조정 |
 | `--seed` | - | 선택 | 교차검증 난수 시드 (기본값: 42) |
 | `--history` | - | 선택 | 누적 실험 원장 조회 (요약 표는 stderr, 버전별 요약 JSON은 stdout) |
 
@@ -244,6 +267,9 @@ python ml_predict.py -m v3 -i "반응온도=240,소비전력=65"
 
 ### 1) 핵심 안전장치 및 기능
 - **회귀/분류 자동 분기**: 모델 메타데이터의 `task`로 분기합니다 (`task`가 없는 1.x 모델은 회귀). 분류 모델은 `pred_<타겟>`(라벨), `proba_<타겟>_<클래스>`(클래스별 확률), `conf_<타겟>`(최대 확률) 컬럼을 만들고, 확신도 0.6 미만 예측이 있으면 `low_confidence_warning: true`를 반환합니다.
+- **입력 점검 경고 (2.1.0)**: 빈 값/숫자가 아닌 값이 대치되면 `missing_input_warning`과 컬럼별 `missing_input_counts`, 학습 때 없던 범주가 오면 `unseen_category_warning`, 학습 기간 밖 날짜는 `drift_warnings`에 추가됩니다.
+- **회귀 예측 범위**: `pred_lo_<타겟>`, `pred_hi_<타겟>` 컬럼, 인라인 JSON `intervals`(90%).
+- **2.1.0 이전 모델 호환**: 메타데이터에 `feature_schema`가 없으면 기존 수치 배열 방식으로 예측합니다.
 - **폴더 대상 일괄 추론 (`--model <버전폴더>`)**: 특정 버전 디렉토리(`v1/`, `v2/`)를 지정하면 폴더 내에 저장된 모든 타겟 모델을 자동 스캔하여 다중 타겟 예측 컬럼(`pred_<타겟1>`, `pred_<타겟2>`)을 자동 일괄 생성합니다.
 - **파생변수 수식 자동 재현 (Replay Evaluator)**: 학습 당시 적용되었던 `--eval` 수식이 메타데이터에 보존되어 있으므로, 새로운 추론 데이터가 입력되면 동일한 파생변수를 자동으로 사전 계산하여 모델에 투입합니다.
 - **외삽 및 데이터 드리프트 실시간 진단 (Extrapolation Guard)**: 입력 피처 값이 학습 시점의 동적 경계선(`[min, max]`)을 벗어날 경우, 터미널 로그에 `[WARN] Extrapolation detected`를 출력하고 예측 결과 데이터셋에 경고 플래그(`drift_warning`)를 부착합니다.
@@ -449,6 +475,16 @@ python ml_report.py \
 ### 1) 학습 엔진 (`ml_train.py`) 반환 규격
 
 2.0.0부터 모든 결과에 `task`, `primary_metric`(`val_r2` 또는 `val_f1_macro`), `mean_val_score`, `delta_score`가 포함됩니다. 회귀는 기존 키 `mean_val_r2`, `delta_r2`도 그대로 함께 반환합니다.
+
+2.1.0부터 `feature_types`(피처 유형 판별 결과)와 `next_commands`가 추가됩니다. `next_commands`는 바로 실행 가능한 다음 명령 목록입니다:
+```json
+"next_commands": [
+  {"purpose": "기여도 1% 이하 피처 ['압축압력(bar)'] 제외 후 재학습",
+   "command": "python \"C:\\...\\ml_train.py\" -f \"C:\\data\\sample.xlsx\" -y \"생산효율(%)\" -x \"반응온도(°C),소비전력(kW)\" --tag \"저기여피처_제외\""},
+  {"purpose": "상위 피처 '반응온도(°C)', '소비전력(kW)' 교차항 추가 후 재학습", "command": "python ... --eval \"반응온도x소비전력 = 반응온도(°C) * 소비전력(kW)\" ..."}
+]
+```
+목표 성능(0.90 이상)을 달성하면 예측 명령(`<새데이터.xlsx>` 자리표시자 포함)과 회귀 보고서 명령이 들어갑니다. 같은 데이터에 다른 학습이 진행 중이면 `STOP_RETRY`로 거부합니다.
 
 #### [성공 시 반환 JSON]
 ```json
