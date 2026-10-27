@@ -85,6 +85,25 @@ def test_write_bullets_set_type_explicitly(pp, capsys):
     assert bullet(body, 3).Visible == 0 and "Type" not in vars(bullet(body, 3))
 
 
+def test_info_detail_reports_lists_outside_overlap_and_overflow(pp, capsys):
+    run(capsys, "write", "--slide", "new", "--title", "배치", "--text", "- 가\\n1. 나\\n다")
+    s = pp["prs"].Slides(4)
+    body = live(s)[1]
+    tr = body.TextFrame.TextRange
+    tr.Paragraphs().Count = 3
+    tr.BoundHeight = body.Height + 50                                       # 글자가 상자보다 큼
+    s.Shapes.add(FakeShape("그림 밖", left=900, top=100, width=200, height=100, kind=13))   # 슬라이드 너비 960
+    s.Shapes.add(FakeShape("겹친 상자", left=body.Left, top=body.Top, width=body.Width, height=body.Height, text="겹침"))
+    code, out = run(capsys, "info", "--detail", "--slides", "4")
+    assert code == 0 and [x["no"] for x in out["slides"]] == [4] and out["slides_total"] == 4
+    det = {d["name"]: d for d in out["slides"][0]["shape_detail"]}
+    assert det[body.Name]["lists"] == ["bullet", "numbered", "none"] and det[body.Name]["text_overflow"] is True
+    assert det["그림 밖"]["kind"] == "picture" and det["그림 밖"]["outside"] is True
+    warnings = " | ".join(out["slides"][0]["warnings"])
+    assert "슬라이드 밖" in warnings and "넘칩니다" in warnings and "겹칩니다" in warnings
+    assert out["layout_warnings"] == len(out["slides"][0]["warnings"])
+
+
 def test_markdown_bullets_and_numbered_lists_keep_their_kind():
     sections = ppt._md_sections("## 제목\n\n- 가\n- 나\n\n1. 첫째\n2. 둘째\n")
     assert sections[0]["lines"] == [("가", "bullet"), ("나", "bullet"), ("첫째", "numbered"), ("둘째", "numbered")]
@@ -221,11 +240,21 @@ def test_export_pdf_passes_print_range_none(pp, capsys):
     assert calls[0][1] == 2 and calls[0][2] == {"PrintRange": None}
 
 
-def test_export_pdf_ppt2007_without_addin_is_input_error(pp, capsys):
-    _pdf_export(pp, com_error(*E_FAIL), version="12.0")
+def test_export_pdf_ppt2007_without_addin_is_input_error(pp, capsys, monkeypatch):
+    # 추가 기능이 없는 Office 2007은 내보내기를 시도하지 않고 바로 안내
+    monkeypatch.setattr(off, "_office12_pdf_addin", lambda: False)
+    calls = _pdf_export(pp, com_error(*E_FAIL), version="12.0")
     code, out = run(capsys, "export", "--save", "deck.pdf")
-    assert code == 1 and out["error_type"] == "input"
+    assert code == 1 and out["error_type"] == "input" and calls == []
     assert out["agent_directive"].startswith("STOP_RETRY:") and ".pptx" in out["message"]
+
+
+def test_export_pdf_ppt2007_e_fail_with_addin_still_input_error(pp, capsys, monkeypatch):
+    # 추가 기능 파일이 있는데도 E_FAIL이면 시도 후 같은 안내 (설치가 깨진 경우)
+    monkeypatch.setattr(off, "_office12_pdf_addin", lambda: True)
+    calls = _pdf_export(pp, com_error(*E_FAIL), version="12.0")
+    code, out = run(capsys, "export", "--save", "deck.pdf")
+    assert code == 1 and out["error_type"] == "input" and len(calls) == 1
 
 
 def test_export_pdf_e_fail_on_newer_office_is_not_relabelled(pp, capsys):

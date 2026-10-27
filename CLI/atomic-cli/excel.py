@@ -309,11 +309,34 @@ def cmd_read(args) -> Dict[str, Any]:
                  if truncated else "", **result)
 
 
-def _sheet_summary(ws: Any) -> Dict[str, Any]:
+XL_CHART_NAMES = {51: "column", 57: "bar", 4: "line", 65: "line_markers", 5: "pie", 1: "area",
+                  -4169: "scatter", 75: "scatter_lines", 74: "scatter_lines_markers"}
+
+
+def _chart_detail(obj: Any, used_box: Optional[Dict[str, float]], warnings: List[str]) -> Dict[str, Any]:
+    """차트 종류·계열 수·범례·위치와, 데이터 셀을 가리는지."""
+    ch = obj.Chart
+    code = int(ch.ChartType)
+    d: Dict[str, Any] = {"chart_type": XL_CHART_NAMES.get(code, str(code)), "chart_type_code": code,
+                         "series": int(ch.SeriesCollection().Count), "legend": bool(ch.HasLegend), **off.shape_box(obj)}
+    if used_box is not None and off.overlap_ratio(d, used_box) > 0:
+        d["covers_data"] = True
+        warnings.append(f"차트 '{obj.Name}'이(가) 데이터 셀을 가립니다")
+    return d
+
+
+def _sheet_summary(ws: Any, detail: bool = False) -> Dict[str, Any]:
     used = ws.UsedRange
     info: Dict[str, Any] = {"name": str(ws.Name), "used_range": str(used.Address).replace("$", ""),
                             "rows": int(used.Rows.Count), "cols": int(used.Columns.Count)}
     charts = []
+    warnings: List[str] = []
+    used_box = None
+    if detail and int(used.Rows.Count) * int(used.Columns.Count) > 1:
+        try:
+            used_box = off.shape_box(used)
+        except Exception:
+            pass
     try:
         objs = ws.ChartObjects()
         for i in range(1, objs.Count + 1):
@@ -324,10 +347,18 @@ def _sheet_summary(ws: Any) -> Dict[str, Any]:
                     title = str(ch.Chart.ChartTitle.Text)
             except Exception:
                 pass
-            charts.append({"name": str(ch.Name), "title": title})
+            item = {"name": str(ch.Name), "title": title}
+            if detail:
+                try:
+                    item.update(_chart_detail(ch, used_box, warnings))
+                except Exception as e:
+                    rt.debug(f"차트 상세 생략: {e}")
+            charts.append(item)
     except Exception:
         pass
     info["charts"] = charts
+    if detail:
+        info["warnings"] = warnings
     try:
         info["shapes"] = int(ws.Shapes.Count) - len(charts)
     except Exception:
@@ -342,9 +373,11 @@ def cmd_info(args) -> Dict[str, Any]:
         return rt.ok(TOOL, "info", f"열린 통합문서 {len(books)}개", workbooks=books)
     with off.open_target("excel", args.target, readonly=True) as t:
         wb = t.doc
-        sheets = [_sheet_summary(wb.Worksheets(i)) for i in range(1, wb.Worksheets.Count + 1)]
+        sheets = [_sheet_summary(wb.Worksheets(i), args.detail) for i in range(1, wb.Worksheets.Count + 1)]
         result: Dict[str, Any] = {"target_resolved": t.resolved(), "sheets": sheets,
                                   "saved": off.is_saved(wb)}
+        if args.detail:
+            result["layout_warnings"] = sum(len(s["warnings"]) for s in sheets)
         try:
             result["active_sheet"] = str(wb.ActiveSheet.Name)
             if t.source == "active":
@@ -353,6 +386,8 @@ def cmd_info(args) -> Dict[str, Any]:
             pass
     preview = f"{result['target_resolved']['name']}: 시트 {len(sheets)}개 (" + ", ".join(
         f"{s['name']} {s['used_range']}" + (f" 차트{len(s['charts'])}" if s["charts"] else "") for s in sheets[:8]) + ")"
+    if args.detail:
+        preview += f", 배치 경고 {result['layout_warnings']}건" if result["layout_warnings"] else ", 배치 경고 없음"
     return rt.ok(TOOL, "info", preview, **result)
 
 
@@ -742,6 +777,7 @@ def cmd_export(args) -> Dict[str, Any]:
             out = rt.write_csv_rows(out, [[out_value(v) for v in r] for r in matrix], args.encoding)
             detail = f"{len(matrix)}행"
         elif ext == ".pdf":
+            off.require_pdf_export(t.app, ".csv 또는 .xlsx")
             rng.ExportAsFixedFormat(0, os.path.normpath(out))   # xlTypePDF
             detail = "PDF"
         else:
@@ -990,7 +1026,17 @@ def cmd_chart(args) -> Dict[str, Any]:
             first_col = [r[0] for r in values[1:] if r[0] is not None]
             if first_col and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in first_col):
                 chart_type = "scatter_lines"
-        anchor = ws.Range(args.at) if args.at else ws.Cells(int(rng.Row), int(rng.Column) + int(rng.Columns.Count) + 1)
+        if args.at:
+            anchor = ws.Range(args.at)
+        else:
+            # 기본 위치: 데이터 범위 오른쪽, 단 시트의 다른 데이터도 가리지 않도록 사용 범위 오른쪽 끝 다음 열
+            last_col = int(rng.Column) + int(rng.Columns.Count) - 1
+            try:
+                used = ws.UsedRange
+                last_col = max(last_col, int(used.Column) + int(used.Columns.Count) - 1)
+            except Exception:
+                pass
+            anchor = ws.Cells(int(rng.Row), last_col + 2)
         obj = ws.ChartObjects().Add(anchor.Left, anchor.Top, args.width, args.height)
         chart = obj.Chart
         # 종류 -> 데이터 -> 종류: 데이터 앞에 정해야 분산형이 첫 열을 x값으로 쓰고(뒤에만 정하면 x가 계열이 됨),
@@ -1077,6 +1123,7 @@ def build_cli():
     p = sub.add_parser("info", help="통합문서 요약")
     common(p)
     p.add_argument("--all", action="store_true", help="열린 통합문서 전체 목록")
+    p.add_argument("--detail", action="store_true", help="차트 종류/계열 수/위치와 배치 경고(데이터를 가리는 차트)")
 
     p = sub.add_parser("write", help="값/표/수식 쓰기")
     common(p, write=True)

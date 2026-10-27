@@ -110,6 +110,16 @@ class FakeRange:
     def Top(self):
         return (self.Row - 1) * 15.0
 
+    @property
+    def Width(self):
+        r1, c1, r2, c2 = self.areas[0]
+        return (c2 - c1 + 1) * 48.0
+
+    @property
+    def Height(self):
+        r1, c1, r2, c2 = self.areas[0]
+        return (r2 - r1 + 1) * 15.0
+
     def Cells(self, r, c):
         return FakeRange(self.ws, [(self.Row + r - 1, self.Column + c - 1) * 2])
 
@@ -251,6 +261,7 @@ class FakeChartObjects:
 
     def Add(self, left, top, width, height):
         obj = FakeChartObject(self.ws, f"Chart {len(self.ws.charts) + 1}")
+        obj.Left, obj.Top, obj.Width, obj.Height = left, top, width, height
         self.ws.charts.append(obj)
         return obj
 

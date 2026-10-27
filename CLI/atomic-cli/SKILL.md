@@ -34,6 +34,7 @@ stdout 의 **1줄 JSON** 만 읽는다 (stderr 의 `[PROGRESS]` 로그는 무시
 | 읽은 문서에서 검색 | `reader.py search --query "A AND B" [--file 파일또는폴더] [--save]` |
 | 메일 | `outlook.py current`, `search --query 말 [--from 이름]`, `read --id <id>`, `reply --body "내용"`, `new --to 주소 --subject 제목 --body 내용` |
 | 되돌리기 / 창 | `office.py undo` (`--list`, `--pick N`), `office.py windows`, `office.py focus --app excel` |
+| 결과 배치 확인 | `ppt.py info --detail --slides N`, `excel.py info --detail`, `word.py info --detail` (`layout_warnings`가 0이 아니면 `warnings`를 사용자에게 알림) |
 
 모든 명령은 `python "<SKILL_DIR>\<파일>.py" <명령> ...` 형식이다.
 

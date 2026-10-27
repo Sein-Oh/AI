@@ -181,9 +181,40 @@ def cmd_info(args) -> Dict[str, Any]:
         result = {"target_resolved": t.resolved(), "stats": stats, "tables": tables,
                   "pictures": int(doc.InlineShapes.Count), "floating_shapes": int(doc.Shapes.Count),
                   "headings": headings, "saved": off.is_saved(doc)}
+        if args.detail:
+            result.update(_layout_detail(doc))
     preview = (f"{result['target_resolved']['name']}: {stats.get('pages', '?')}쪽, 글자 {stats.get('characters', '?')}, "
                f"표 {len(tables)}개, 그림 {result['pictures']}개, 제목 {len(headings)}개")
+    if args.detail:
+        n = len(result["warnings"])
+        preview += f", 배치 경고 {n}건" if n else ", 배치 경고 없음"
     return rt.ok(TOOL, "info", preview, **result)
+
+
+def _layout_detail(doc: Any) -> Dict[str, Any]:
+    """본문 그림 크기(쪽 너비 대비)와 제목 수준. 쪽 너비를 넘는 그림은 경고."""
+    warnings: List[str] = []
+    try:
+        ps = doc.PageSetup
+        usable = float(ps.PageWidth) - float(ps.LeftMargin) - float(ps.RightMargin)
+    except Exception:
+        usable = None
+    pictures = []
+    for i in range(1, doc.InlineShapes.Count + 1):
+        try:
+            s = doc.InlineShapes(i)
+            w, h = float(s.Width), float(s.Height)
+            item: Dict[str, Any] = {"no": i, "width": round(w, 1), "height": round(h, 1),
+                                    "ratio": round(w / h, 3) if h else None}
+            if usable is not None and w > usable + 0.5:
+                item["wider_than_page"] = True
+                warnings.append(f"그림 {i}이(가) 쪽 너비({usable:.0f}pt)보다 넓습니다 ({w:.0f}pt)")
+            pictures.append(item)
+        except Exception:
+            pictures.append({"no": i})
+    outline = [{"level": u["level"], "text": u["text"][:60]} for u in _com_units(doc) if u.get("level")][:30]
+    return {"usable_width": round(usable, 1) if usable is not None else None, "picture_detail": pictures,
+            "heading_levels": outline, "warnings": warnings, "layout_warnings": len(warnings)}
 
 
 # ==============================================================================
@@ -530,6 +561,8 @@ def cmd_export(args) -> Dict[str, Any]:
         raise rt.InputError(f"--save 확장자는 .pdf 또는 .docx여야 합니다: {args.save}")
     work = tmp = None
     with off.open_target("word", args.target, readonly=True) as t:
+        if ext == ".pdf":
+            off.require_pdf_export(t.app, ".docx")                # 기능이 없으면 사본을 만들기 전에 안내
         out = rt.resolve_output_path(args.save, os.path.splitext(t.name)[0], ext)
         try:
             target_doc = t.doc
@@ -586,6 +619,7 @@ def build_cli():
     p = sub.add_parser("info", help="문서 요약")
     common(p)
     p.add_argument("--all", action="store_true", help="열린 문서 전체 목록")
+    p.add_argument("--detail", action="store_true", help="그림 크기(쪽 너비 대비)와 제목 수준, 배치 경고")
 
     p = sub.add_parser("write", help="내용 넣기")
     common(p, write=True)

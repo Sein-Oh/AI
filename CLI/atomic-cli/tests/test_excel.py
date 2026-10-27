@@ -248,6 +248,45 @@ def test_chart_type_survives_set_source_data(xl, capsys, kind, expected):
     assert chart.type_at_source == expected and chart.Chart.ChartType == expected
 
 
+def test_info_detail_reports_chart_type_series_and_covered_data(xl, capsys):
+    app, wb = xl
+    ws = ws_of(wb)
+    ws.set(1, 1, "x")
+    ws.set(1, 2, "y")
+    for r in range(2, 12):
+        ws.set(r, 1, float(r))
+        ws.set(r, 2, float(r))
+    run(capsys, "chart", "--range", "A1:B11", "--type", "scatter", "--title", "옆 차트")            # 데이터 오른쪽
+    run(capsys, "chart", "--range", "A1:B11", "--type", "column", "--title", "덮는 차트", "--at", "A3")  # 데이터 위
+    code, out = run(capsys, "info", "--detail")
+    assert code == 0
+    sheet = [s for s in out["sheets"] if s["charts"]][0]
+    charts = {c["name"]: c for c in sheet["charts"]}
+    assert charts["옆 차트"]["chart_type"] == "scatter" and charts["옆 차트"]["series"] == 1
+    assert not charts["옆 차트"].get("covers_data") and charts["덮는 차트"]["covers_data"] is True
+    assert out["layout_warnings"] == 1 and "덮는 차트" in sheet["warnings"][0] and "배치 경고 1건" in out["preview"]
+    code, plain = run(capsys, "info")
+    assert "layout_warnings" not in plain and "chart_type" not in plain["sheets"][0].get("charts", [{}])[0]
+
+
+def test_chart_default_position_does_not_cover_other_data(xl, capsys):
+    # 실기 J2: A1:C3 차트를 바로 오른쪽(D열)에 두어 F1:G5의 다른 데이터를 가렸음
+    app, wb = xl
+    ws = ws_of(wb)
+    for r in range(1, 4):
+        for c in range(1, 4):
+            ws.set(r, c, "머리" if r == 1 else float(r * c))
+    for r in range(1, 6):
+        ws.set(r, 6, float(r))
+        ws.set(r, 7, float(r * 2))
+    code, out = run(capsys, "chart", "--range", "A1:C3", "--type", "column", "--title", "막대")
+    assert code == 0
+    chart = ws.charts[-1]
+    assert chart.Left >= 7 * 48.0 and chart.Top == 0           # G열(7) 오른쪽, 범위의 첫 행
+    code, out = run(capsys, "info", "--detail")
+    assert out["layout_warnings"] == 0
+
+
 def test_chart_delete_rules(xl, capsys):
     app, wb = xl
     ws = ws_of(wb)

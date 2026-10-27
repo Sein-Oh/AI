@@ -51,7 +51,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 ### 화면과 안전
 - **읽기는 화면을 움직이지 않습니다.** 활성 시트, 스크롤, PPT 슬라이드가 그대로입니다.
 - **쓰기는 고친 시트/슬라이드로만 이동합니다.** `--no-focus`를 주면 이동하지 않습니다.
-- **쓰기 전 스냅샷을 자동으로 만듭니다**(문서별 5개 보관, 50MB 초과 문서는 생략).
+- **쓰기 전 스냅샷을 자동으로 만듭니다**(문서별 5개 보관, 50MB 초과 문서는 생략). 같은 경로에 다른 문서를 새로 만들면 이전 문서의 스냅샷은 되돌리기 대상에서 빠집니다(파일 속 만든 시각으로 판별).
   - 원본 문서는 저장하거나 경로를 바꾸지 않습니다.
   - `office.py undo`로 되돌립니다.
 - **읽기는 아무것도 만들거나 저장하지 않습니다.** 없는 시트나 파일을 지정하면 `[추천]`과 함께 오류를 냅니다.
@@ -75,7 +75,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 | 명령 | 주요 옵션 |
 |---|---|
 | `read` | `--range`, `--sheet`, `--search 글자`(셀 주소 반환), `--max-rows`, `--save [경로.csv]` |
-| `info` | 시트별 사용 범위와 차트. `--all`: 열린 통합문서 전체 |
+| `info` | 시트별 사용 범위와 차트. `--all`: 열린 통합문서 전체. `--detail`: 차트 종류·계열 수·위치와 데이터를 가리는 차트 경고 |
 | `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(같은 머리글 생략), `--sheet`(없으면 생성) |
 | `replace` | `--find/--replace` 또는 `--map JSON`, `--whole`, `--all-sheets`, 서식 옵션. 수식 셀은 내용 보존 |
 | `style` | `--theme navy\|slate\|teal\|emerald`, `--bg`, `--color`, `--bold`, `--align`, `--number-format`, `--border`, `--highlight ">=100:pink"`(조건부 서식), `--clear` |
@@ -86,12 +86,13 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 
 - 수식이 1개면 범위 전체에 넣고 상대참조가 자동으로 조정됩니다. 여러 개면 열마다 하나씩 넣습니다.
 - 첫 열이 숫자인 `line` 차트는 x축이 숫자 축이 되도록 `scatter_lines`로 그립니다(예: 사인 그래프).
+- `--at`을 생략하면 차트는 시트의 데이터(사용 범위) 오른쪽에 놓여 다른 데이터를 가리지 않습니다.
 
 ### word.py
 | 명령 | 주요 옵션 |
 |---|---|
 | `read` | `--start N`, `--save [경로.md]`. 제목 구조(개요 수준) 포함. 본문 그림은 `[그림]`으로 표시 |
-| `info` | 쪽/단어/글자 수, 표, 그림, 제목 목록. `--all` |
+| `info` | 쪽/단어/글자 수, 표, 그림, 제목 목록. `--all`. `--detail`: 그림 크기(쪽 너비 대비)와 제목 수준, 쪽보다 넓은 그림 경고 |
 | `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--theme` |
 | `replace` | `--find/--replace`(빈 문자열은 삭제) 또는 `--map`, `--match-case`, `--whole-word`, `--bold`, `--color`, `--highlight`. 머리글/바닥글/글상자 포함 |
 | `export` | `--save 경로.pdf\|.docx`, `--page-number`(사본에만) |
@@ -100,7 +101,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 | 명령 | 주요 옵션 |
 |---|---|
 | `read` | `--slides 1-3`, `--save` |
-| `info` | 슬라이드별 제목, 도형/표/그림 수. `--all` |
+| `info` | 슬라이드별 제목, 도형/표/그림 수. `--all`. `--detail [--slides 2-4]`: 도형별 위치·크기·글자 크기·목록 종류와 배치 경고(슬라이드 밖, 글자 넘침, 겹침) |
 | `write` | `--slide N\|new`, `--title`, `--text`(`-` 줄은 글머리표, `1.` 줄은 번호), `--file (.md: 제목마다 새 슬라이드, .csv: 표)`, `--image`, `--cards "제목:내용\|..."`, `--theme` |
 | `replace` | `--find/--replace` 또는 `--map`, `--slide`, 서식 옵션. 표와 그룹 도형 포함 |
 | `export` | `--save 경로.pdf\|.pptx`. PDF 기능이 없는 Office(2007 기본 설치 등)는 `.pptx`로 저장하라는 STOP_RETRY를 돌려줍니다 |
@@ -119,7 +120,7 @@ python -m pip install -r CLI/atomic-cli/requirements.txt -c constraints.txt
 - DRM으로 암호화된 Office 파일은 라이브러리로 열 수 없으므로, `excel.py`/`word.py`/`ppt.py read --target 경로`로 Office에서 읽으라고 안내합니다.
 
 ### office.py
-- `windows`: 열린 Office 문서 목록
+- `windows`: 열린 Office 문서 목록과 실행 중인 Office 버전, PDF 내보내기 가능 여부(`office`). PDF 기능이 없는 Office에서는 `export --save *.pdf`가 시도 없이 바로 안내합니다
 - `focus --app excel|word|ppt [--name]`: 창을 앞으로 가져옵니다. 최대화 상태는 유지합니다.
 - `transfer`: 아래 4절 참고
 - `undo [--app] [--list] [--pick N]`

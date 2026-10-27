@@ -164,5 +164,16 @@ def test_undo_pick_out_of_range(tmp_path, monkeypatch, capsys):
 def test_windows_lists_documents(monkeypatch, capsys):
     monkeypatch.setattr(off, "open_documents_summary",
                         lambda: [{"app": "Excel", "name": "a.xlsx", "path": "", "saved": True, "active": True}])
+    monkeypatch.setattr(off, "running_office_caps", lambda: {})
     code, out = run(capsys, "windows")
-    assert code == 0 and out["preview"] == "Excel 1개"
+    assert code == 0 and out["preview"] == "Excel 1개" and out["office"] == {}
+
+
+def test_windows_reports_office_version_and_missing_pdf(monkeypatch, capsys):
+    monkeypatch.setattr(off, "open_documents_summary",
+                        lambda: [{"app": "Word", "name": "a.docx", "path": "", "saved": True, "active": True}])
+    monkeypatch.setattr(off, "running_office_caps",
+                        lambda: {"Word": {"version": "12.0", "major": 12, "pdf_export": False}})
+    code, out = run(capsys, "windows")
+    assert code == 0 and out["office"]["Word"]["pdf_export"] is False
+    assert "Office 12.0" in out["preview"] and "PDF 내보내기 불가: Word" in out["preview"]

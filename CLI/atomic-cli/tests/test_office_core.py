@@ -69,6 +69,24 @@ def test_word_save_as_falls_back_to_saveas_on_word2007():
     assert new.calls == [("SaveAs2", "C:/x/a.docx", {"FileFormat": 16}), ("SaveAs2", "C:/x/b.docx", {})]
 
 
+@pytest.mark.parametrize("version,addin,expected", [
+    ("16.0", False, True), ("14.0", False, True), ("12.0", False, False), ("12.0", True, True), ("11.0", True, False)])
+def test_office_caps_pdf_export(monkeypatch, version, addin, expected):
+    monkeypatch.setattr(off, "_office12_pdf_addin", lambda: addin)
+    app = type("App", (), {"Version": version})()
+    caps = off.office_caps(app)
+    assert caps["version"] == version and caps["major"] == int(float(version)) and caps["pdf_export"] is expected
+
+
+def test_require_pdf_export(monkeypatch):
+    monkeypatch.setattr(off, "_office12_pdf_addin", lambda: False)
+    with pytest.raises(rt.InputError) as ei:
+        off.require_pdf_export(type("App", (), {"Version": "12.0"})(), ".docx")
+    assert "PDF 내보내기 기능이 없습니다" in str(ei.value) and ".docx" in str(ei.value) and "2007" in str(ei.value)
+    off.require_pdf_export(type("App", (), {"Version": "16.0"})(), ".docx")      # 가능: 예외 없음
+    off.require_pdf_export(object(), ".docx")                                    # 버전 모름: 시도하도록 통과
+
+
 def test_missing_file_readonly_suggests_open_documents(fake_com):
     fake_com["open"]["excel"] = [{"name": "10월보고.xlsx", "path": "C:/x/10월보고.xlsx", "app": None, "doc": None}]
     with pytest.raises(rt.InputError) as ei:
@@ -174,6 +192,42 @@ def test_word_snapshot_unsaved_uses_flat_xml_without_touching_original(tmp_path)
     assert snap["snapshot_format"] == "flat_xml" and snap["snapshot_file"].endswith(".xml")
     off.save_snapshot("word", FakeWordDoc(str(orig), saved=True))
     assert off.list_snapshots("word")[0]["snapshot_file"].endswith(".docx")
+
+
+def _xlsx(path, created):
+    import datetime as dt
+    import openpyxl
+    wb = openpyxl.Workbook()
+    wb.properties.created = dt.datetime(*created)
+    wb.save(path)
+
+
+def test_snapshots_of_a_replaced_document_are_dropped(tmp_path):
+    # 실기 C7: 같은 경로에 파일을 새로 만들어도 이전 파일의 스냅샷이 undo 대상에 남았음
+    path = str(tmp_path / "A.xlsx")
+    _xlsx(path, (2026, 1, 1, 9, 0, 0))
+    off.save_snapshot("excel", FakeWorkbook(path))
+    snaps = off.list_snapshots("excel")
+    assert len(snaps) == 1 and snaps[0]["doc_created"] == off.doc_identity(path) and "2026-01-01" in snaps[0]["doc_created"]
+
+    import openpyxl                                         # 같은 문서를 다시 저장: 만든 시각 유지 -> 스냅샷 유지
+    wb = openpyxl.load_workbook(path)
+    wb.active["A1"] = "수정"
+    wb.save(path)
+    assert len(off.list_snapshots("excel")) == 1
+
+    _xlsx(path, (2026, 5, 5, 10, 0, 0))                     # 같은 경로에 새 문서 -> 옛 스냅샷 정리
+    assert off.list_snapshots("excel") == []
+    assert not [f for f in os.listdir(off._snapshot_dir()) if f.startswith("excel_")]
+
+
+def test_snapshot_identity_unknown_keeps_snapshot(tmp_path):
+    path = str(tmp_path / "old.xls")                        # OOXML이 아니면 비교하지 않음
+    with open(path, "wb") as f:
+        f.write(b"x")
+    off.save_snapshot("excel", FakeWorkbook(path))
+    snaps = off.list_snapshots("excel")
+    assert len(snaps) == 1 and snaps[0]["doc_created"] is None
 
 
 def test_snapshot_rotation_and_size_limit(tmp_path, monkeypatch):

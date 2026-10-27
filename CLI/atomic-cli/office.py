@@ -49,7 +49,14 @@ def cmd_windows(args) -> Dict[str, Any]:
     for d in docs:
         by_app[d["app"]] = by_app.get(d["app"], 0) + 1
     preview = ", ".join(f"{k} {v}개" for k, v in by_app.items()) or "열린 Office 문서가 없습니다"
-    return rt.ok(TOOL, "windows", preview, documents=docs)
+    caps = off.running_office_caps()
+    versions = sorted({c["version"] for c in caps.values() if c["version"]})
+    if versions:
+        preview += f" / Office {', '.join(versions)}"
+        no_pdf = [k for k, c in caps.items() if c["pdf_export"] is False]
+        if no_pdf:
+            preview += f" (PDF 내보내기 불가: {', '.join(no_pdf)})"
+    return rt.ok(TOOL, "windows", preview, documents=docs, office=caps)
 
 
 def bring_to_front(hwnd: int) -> bool:

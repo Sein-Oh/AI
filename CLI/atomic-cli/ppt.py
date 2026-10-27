@@ -202,6 +202,87 @@ def cmd_read(args) -> Dict[str, Any]:
                  "VERIFIED: 읽기 완료. 일부만 표시되었으면 next_commands로 이어서 읽으세요." if truncated else "", **result)
 
 
+def _shape_kind(sh: Any) -> str:
+    if _has(sh, "HasTable"):
+        return "table"
+    if _has(sh, "HasChart"):
+        return "chart"
+    try:
+        t = int(sh.Type)
+        if t in (13, 11):
+            return "picture"
+        if t == MSO_GROUP:
+            return "group"
+        if t == MSO_PLACEHOLDER:
+            ph = sh.PlaceholderFormat
+            if ph.Type in (1, 3):
+                return "title"
+            if getattr(ph, "ContainedType", None) == 13:
+                return "picture"
+            return "text"
+        if t == 17:
+            return "text"
+        if t == 1:
+            return "shape"
+    except Exception:
+        pass
+    return "other"
+
+
+def _list_kinds(tr: Any) -> List[str]:
+    """단락별 목록 종류: none | bullet | numbered."""
+    kinds = []
+    try:
+        n = int(tr.Paragraphs().Count)
+    except Exception:
+        return kinds
+    for i in range(1, n + 1):
+        try:
+            b = tr.Paragraphs(i).ParagraphFormat.Bullet
+            kinds.append("none" if not int(b.Visible) else ("numbered" if int(b.Type) == PP_BULLET_NUMBERED else "bullet"))
+        except Exception:
+            kinds.append("none")
+    return kinds
+
+
+def slide_detail(slide: Any, width: float, height: float) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """도형별 종류·위치·크기·글자·목록 종류와, 배치 문제 경고(슬라이드 밖, 글자 넘침, 겹침)."""
+    shapes: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    for k in range(1, slide.Shapes.Count + 1):
+        sh = slide.Shapes(k)
+        kind = _shape_kind(sh)
+        item: Dict[str, Any] = {"name": str(sh.Name), "kind": kind, **off.shape_box(sh)}
+        if _has(sh, "HasTextFrame") and _has(sh.TextFrame, "HasText"):
+            tr = sh.TextFrame.TextRange
+            item["text"] = str(tr.Text).replace("\r", " / ")[:60]
+            try:
+                item["font_size"] = float(tr.Font.Size)
+            except Exception:
+                pass
+            kinds = _list_kinds(tr)
+            if any(x != "none" for x in kinds):
+                item["lists"] = kinds
+            try:
+                if float(tr.BoundHeight) > float(sh.Height) + 2:
+                    item["text_overflow"] = True
+                    warnings.append(f"'{sh.Name}' 글자가 도형 높이를 넘칩니다")
+            except Exception:
+                pass
+        elif kind in ("title", "text"):
+            continue                                        # 빈 자리표시자는 화면에 보이지 않음
+        if off.outside_area(item, width, height):
+            item["outside"] = True
+            warnings.append(f"'{sh.Name}'이(가) 슬라이드 밖으로 나갑니다")
+        shapes.append(item)
+    for i, a in enumerate(shapes):
+        for b in shapes[i + 1:]:
+            r = off.overlap_ratio(a, b)
+            if r >= 0.1:
+                warnings.append(f"'{a['name']}'와(과) '{b['name']}'이(가) 겹칩니다 ({int(r * 100)}%)")
+    return shapes, warnings
+
+
 def cmd_info(args) -> Dict[str, Any]:
     if args.all:
         items = [{"name": d["name"], "path": d["path"], "saved": d["saved"], "active": d["active"]}
@@ -210,7 +291,13 @@ def cmd_info(args) -> Dict[str, Any]:
     with off.open_target("ppt", args.target, readonly=True) as t:
         prs = t.doc
         slides = []
+        width, height = float(prs.PageSetup.SlideWidth), float(prs.PageSetup.SlideHeight)
+        import reader
+        wanted = set(reader.parse_pages(args.slides, prs.Slides.Count)) if args.slides and prs.Slides.Count else None
+        warnings_total = 0
         for i in range(1, prs.Slides.Count + 1):
+            if wanted is not None and i not in wanted:
+                continue
             s = prs.Slides(i)
             tables = pictures = 0
             for k in range(1, s.Shapes.Count + 1):
@@ -223,12 +310,20 @@ def cmd_info(args) -> Dict[str, Any]:
                 except Exception:
                     pass
             u = slide_units(s, i)
-            slides.append({"no": i, "title": u["title"][:60], "shapes": int(s.Shapes.Count), "tables": tables,
-                           "pictures": pictures, "chars": len(u["text"]) + len(u["title"])})
-        size = {"width": float(prs.PageSetup.SlideWidth), "height": float(prs.PageSetup.SlideHeight)}
-        result = {"target_resolved": t.resolved(), "slides_total": len(slides), "slides": slides,
+            entry = {"no": i, "title": u["title"][:60], "shapes": int(s.Shapes.Count), "tables": tables,
+                     "pictures": pictures, "chars": len(u["text"]) + len(u["title"])}
+            if args.detail:
+                entry["shape_detail"], entry["warnings"] = slide_detail(s, width, height)
+                warnings_total += len(entry["warnings"])
+            slides.append(entry)
+        size = {"width": width, "height": height}
+        result = {"target_resolved": t.resolved(), "slides_total": int(prs.Slides.Count), "slides": slides,
                   "slide_size": size, "saved": off.is_saved(prs)}
-    return rt.ok(TOOL, "info", f"{result['target_resolved']['name']}: 슬라이드 {len(slides)}장", **result)
+    preview = f"{result['target_resolved']['name']}: 슬라이드 {result['slides_total']}장"
+    if args.detail:
+        result["layout_warnings"] = warnings_total
+        preview += f", 배치 경고 {warnings_total}건" if warnings_total else ", 배치 경고 없음"
+    return rt.ok(TOOL, "info", preview, **result)
 
 
 # ==============================================================================
@@ -639,6 +734,7 @@ def cmd_export(args) -> Dict[str, Any]:
     with off.open_target("ppt", args.target, readonly=True) as t:
         prs = t.doc
         if ext == ".pdf":
+            off.require_pdf_export(t.app, ".pptx")
             out = rt.resolve_output_path(args.save, os.path.splitext(t.name)[0], ".pdf")
             try:
                 # PrintRange(개체 인자)를 생략하면 pywin32가 인자 변환에서 TypeError를 냅니다. None을 명시합니다.
@@ -736,6 +832,9 @@ def build_cli():
     p = sub.add_parser("info", help="프레젠테이션 요약")
     common(p)
     p.add_argument("--all", action="store_true", help="열린 프레젠테이션 전체 목록")
+    p.add_argument("--detail", action="store_true",
+                   help="도형별 위치/크기/글자 크기/목록 종류와 배치 경고(슬라이드 밖, 글자 넘침, 겹침)")
+    p.add_argument("--slides", help="--detail 대상 슬라이드 (예: 3, 2-4). 생략 시 전체")
 
     p = sub.add_parser("write", help="내용 넣기")
     common(p, write=True)

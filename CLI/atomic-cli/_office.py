@@ -10,6 +10,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 from contextlib import contextmanager
 from datetime import datetime
@@ -220,6 +221,27 @@ def match_open(kind: str, target: str, docs: Optional[List[Dict[str, Any]]] = No
     return None
 
 
+def shape_box(obj: Any) -> Dict[str, float]:
+    """COM 도형/차트/그림의 위치와 크기(pt)."""
+    return {k.lower(): round(float(getattr(obj, k)), 1) for k in ("Left", "Top", "Width", "Height")}
+
+
+def outside_area(box: Dict[str, float], width: float, height: float, tol: float = 0.5) -> bool:
+    """box가 (0, 0, width, height) 영역 밖으로 나가는지."""
+    return (box["left"] < -tol or box["top"] < -tol or box["left"] + box["width"] > width + tol
+            or box["top"] + box["height"] > height + tol)
+
+
+def overlap_ratio(a: Dict[str, float], b: Dict[str, float]) -> float:
+    """두 상자가 겹친 넓이 / 작은 상자 넓이 (0~1)."""
+    w = min(a["left"] + a["width"], b["left"] + b["width"]) - max(a["left"], b["left"])
+    h = min(a["top"] + a["height"], b["top"] + b["height"]) - max(a["top"], b["top"])
+    if w <= 0 or h <= 0:
+        return 0.0
+    smaller = min(a["width"] * a["height"], b["width"] * b["height"])
+    return round(w * h / smaller, 2) if smaller > 0 else 0.0
+
+
 # ==============================================================================
 # 2. 스냅샷 (되돌리기)
 # ==============================================================================
@@ -228,6 +250,23 @@ def _snapshot_dir() -> str:
     path = os.path.join(rt.get_cache_dir(), "snapshots")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+_CREATED_RE = re.compile(r"<dcterms:created[^>]*>([^<]+)</dcterms:created>")
+
+
+def doc_identity(path: str) -> Optional[str]:
+    """디스크 파일의 문서 식별값: OOXML docProps/core.xml의 만든 시각.
+    Office가 저장해도 유지되고, 같은 경로에 새로 만든 파일은 달라집니다. 알 수 없으면 None(비교 생략)."""
+    if not path or os.path.splitext(path)[1].lower() not in (".xlsx", ".xlsm", ".docx", ".docm", ".pptx", ".pptm"):
+        return None
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            m = _CREATED_RE.search(z.read("docProps/core.xml").decode("utf-8", errors="replace"))
+        return m.group(1).strip() if m else None
+    except Exception:
+        return None
 
 
 def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Optional[str]:
@@ -257,7 +296,8 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
         if not os.path.exists(data_file):
             return None
         meta = {"app": kind, "name": name, "original_path": path, "snapshot_file": data_file,
-                "snapshot_format": fmt, "created_at": stamp, "by": f"{tool} {command}".strip()}
+                "snapshot_format": fmt, "created_at": stamp, "by": f"{tool} {command}".strip(),
+                "doc_created": doc_identity(path)}
         rt.atomic_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
         _rotate_snapshots(kind, key)
         rt.debug(f"스냅샷 저장: {os.path.basename(data_file)}")
@@ -283,18 +323,32 @@ def _rotate_snapshots(kind: str, key: str) -> None:
 
 
 def list_snapshots(kind: Optional[str] = None) -> List[Dict[str, Any]]:
-    """최신순 스냅샷 목록. 각 항목에 meta_file 포함."""
+    """최신순 스냅샷 목록. 각 항목에 meta_file 포함.
+    같은 경로에 다른 문서가 새로 만들어졌으면(문서 식별값이 다름) 그 경로의 옛 스냅샷은 지우고 빼 줍니다."""
     pattern = f"{kind}_*.json" if kind else "*.json"
     result = []
+    current: Dict[str, Optional[str]] = {}
+    stale = 0
     files = glob.glob(os.path.join(_snapshot_dir(), pattern))
     for mf in sorted(files, key=lambda f: os.path.basename(f).split("_", 2)[-1], reverse=True):  # 문서 무관 시각 순
         try:
             meta = json.loads(rt.read_text_file(mf))
-            if os.path.exists(meta.get("snapshot_file", "")):
-                meta["meta_file"] = mf
-                result.append(meta)
+            if not os.path.exists(meta.get("snapshot_file", "")):
+                continue
+            orig, recorded = meta.get("original_path", ""), meta.get("doc_created")
+            if orig and recorded:
+                if orig not in current:
+                    current[orig] = doc_identity(orig)
+                if current[orig] is not None and current[orig] != recorded:
+                    delete_snapshot(mf)
+                    stale += 1
+                    continue
+            meta["meta_file"] = mf
+            result.append(meta)
         except Exception:
             continue
+    if stale:
+        rt.log("INFO", f"같은 경로에 새로 만든 문서가 있어 이전 문서의 되돌리기 지점 {stale}개를 정리했습니다.")
     return result
 
 
@@ -560,6 +614,48 @@ def range_to_matrix(values: Any) -> List[List[Any]]:
     if not isinstance(values, (tuple, list)):
         return [[values]]
     return [list(row) if isinstance(row, (tuple, list)) else [row] for row in values]
+
+
+def _office12_pdf_addin() -> bool:
+    """Office 2007은 'PDF/XPS로 저장' 추가 기능(EXP_PDF.DLL)이 있어야 PDF로 내보낼 수 있습니다 (SP2 이상은 기본 포함)."""
+    for env in ("CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432"):
+        base = os.environ.get(env)
+        if base and os.path.exists(os.path.join(base, "Microsoft Shared", "OFFICE12", "EXP_PDF.DLL")):
+            return True
+    return False
+
+
+def office_caps(app: Any) -> Dict[str, Any]:
+    """Office 버전과 PDF 내보내기 가능 여부. pdf_export: True | False | None(알 수 없음)."""
+    try:
+        version = str(app.Version)
+        major = int(float(version))
+    except Exception:
+        return {"version": None, "major": None, "pdf_export": None}
+    pdf = True if major >= 14 else (_office12_pdf_addin() if major == 12 else False)
+    return {"version": version, "major": major, "pdf_export": pdf}
+
+
+def require_pdf_export(app: Any, alt_ext: str) -> None:
+    """PDF 내보내기 기능이 없는 Office면 시도하지 않고 입력 오류로 안내합니다 (버전을 모르면 시도)."""
+    caps = office_caps(app)
+    if caps["pdf_export"] is False:
+        hint = " (Office 2007은 'PDF/XPS로 저장' 추가 기능 필요)" if caps["major"] == 12 else ""
+        raise rt.InputError(f"이 PC의 Office {caps['version']}에는 PDF 내보내기 기능이 없습니다{hint}. "
+                            f"--save에 {alt_ext}를 쓰세요.")
+
+
+def running_office_caps() -> Dict[str, Dict[str, Any]]:
+    """실행 중인 Office 앱별 버전과 PDF 내보내기 가능 여부 (앱을 새로 띄우지 않음)."""
+    caps: Dict[str, Dict[str, Any]] = {}
+    for kind in KINDS:
+        try:
+            apps = find_apps(kind)
+            if apps:
+                caps[APP_LABEL[kind]] = office_caps(apps[0])
+        except Exception as e:
+            rt.debug(f"{APP_LABEL[kind]} 버전 확인 실패: {e}")
+    return caps
 
 
 def open_documents_summary() -> List[Dict[str, Any]]:
