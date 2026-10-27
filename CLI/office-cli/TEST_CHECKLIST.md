@@ -7,10 +7,14 @@ python tools/run_win_tests.py
 python tools/run_win_tests.py --self-email 본인주소     :: G3 실제 발송 테스트 포함
 python tools/run_win_tests.py --only H                  :: 일부 그룹만
 python tools/run_win_tests.py --skip-outlook --auto     :: Outlook 제외, 질문 없이 자동 판정 항목만
+python tools/run_win_tests.py --agent --skip-outlook    :: 에이전트용: --auto + 로그는 stderr, stdout은 결과 JSON 1줄
 ```
 - 테스트 파일(A/B .xlsx .docx .pptx)은 `C:\office_test`에 자동으로 만듭니다(`--dir`로 변경 가능).
 - 실행 전에 다른 Office 문서는 저장하고 닫아 주세요. 실행 중에는 Office 창을 직접 만지지 마세요.
-- 결과는 `report_*.txt`로 저장됩니다. 이 파일 내용을 그대로 공유해 주세요.
+- 결과는 테스트 폴더에 두 파일로 저장됩니다.
+  - `report_*.txt`: 항목별 판정 요약.
+  - `errors_*.txt`: 분석용 상세 로그. 환경(Windows, Python, 라이브러리, Office 버전, `config.json`), 실패/오류 항목마다 실행한 명령 전체와 종료 코드, 걸린 시간, stdout JSON 전체, stderr 전체, traceback, 그 항목의 진행 로그를 담습니다. 준비 단계에서 멈추거나 Ctrl+C로 중단해도 그 시점까지 기록합니다. **문제가 있으면 이 파일을 편집하지 말고 그대로 Claude에게 전달해 주세요.**
+- OpenCode 에이전트에게 맡기기: `tools/office-cli-test` 폴더를 스킬 폴더의 `office-cli` 옆에 복사한 뒤 "office-cli 실기 테스트 돌려줘"라고 요청합니다. 에이전트는 Office 문서를 닫았는지 먼저 묻고, `--agent --skip-outlook`으로 실행해 결과와 `errors_*.txt` 경로를 알려 줍니다. `--agent`에서는 눈 확인 항목이 `MANUAL-SKIP`이 됩니다.
 - 도구의 캐시(스냅샷, 색인)와 data 폴더는 테스트 폴더의 `_cache`, `_data`를 쓰고, 캐시는 실행마다 비웁니다. 그래서 여러 번 실행해도 undo 결과가 이전 실행에 섞이지 않고, 도구 폴더의 `cache`/`data`도 건드리지 않습니다. (`config.json`의 `--probe` 결과는 도구 폴더에 그대로 저장됩니다.)
 - 끝나면 확인용 그림(A.pptx 슬라이드, A.xlsx 차트)을 테스트 폴더의 `shots\`에 저장하고, 테스트 문서는 저장하지 않고 닫습니다. 열어 두려면 `--keep-open`.
 - 판정: `PASS` / `FAIL` / `MANUAL-SKIP`(`--auto`라 눈 확인 생략) / `ENV-SKIP`(이 PC에 기능이 없음. 예: PDF 추가 기능이 없는 Office 2007의 D1, D4).
