@@ -2,6 +2,13 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.1.1] - 2026-10-27
+
+### 기능 (추가만, 기존 키 유지)
+- `next_commands`의 각 명령에 `needs_input`(bool)을 붙입니다. 자리표시자(`<새데이터.xlsx>`)가 있는 명령은 `needs_input: true`와 `placeholder`를 갖고, 바로 실행 가능한 명령 뒤에 둡니다.
+  목표 성능 달성(회귀) 시 `next_commands[0]`은 이제 보고서 명령입니다. 실기 테스트에서 SKILL대로 `next_commands[0]`을 그대로 실행하면 자리표시자 때문에 실패하던 문제를 막습니다.
+- `agent_directive`와 SKILL.md에 `needs_input` 처리 규칙(사용자가 준 경로로 바꾸거나 먼저 묻기)을 넣었습니다.
+
 ## [2.1.0] - 2026-10-27
 
 train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추가만).
@@ -70,4 +77,11 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] 회귀 Word 보고서 점검: 범주형/날짜 피처, 예측 범위, 잘린 상관행렬 반영
 - [ ] `-x` 생략 시 피처 자동 선택 (ID/일련번호 배제 규칙)
 - [ ] 무거운 import 지연 로딩 (`--history` 응답 속도)
-- [ ] Windows 실기 테스트 (파일 잠금, 긴 경로, cmd/PowerShell 인자 전달, msvcrt 잠금)
+- [x] Windows 실기 테스트 러너 `tools/run_win_tests.py` (M1~M14). 집 PC(Windows 11, Python 3.13.13, scikit-learn 1.9.0, Office 2007) 14개 모두 통과:
+  Excel이 만든 보고서형 xlsx(제목/단위 행, 날짜 셀, 범주, 한글+공백 경로), Excel 저장 CP949 CSV, 입력 xlsx가 Excel에 열린 상태,
+  결과 CSV를 Excel로 열 때 한글, 결과 CSV/보고서가 열려 잠긴 상태(새 이름 저장), 보고서를 Word로 열기,
+  `next_commands`를 cmd.exe/PowerShell에 그대로 실행, 단독 배포 폴더, 2만 행(학습 10.6초, 예측 3.6초),
+  동시 학습 잠금, 학습 강제 종료 뒤 복구, 오류/출력 계약.
+- [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
+- [ ] 260자 넘는 긴 경로
+- [ ] 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙음 (`_pred_<시각>_<시각>.csv`)

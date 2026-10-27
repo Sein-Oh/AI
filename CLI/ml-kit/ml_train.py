@@ -1043,11 +1043,13 @@ def build_next_commands(
     feature_names: List[str], created_features: List[str], applied_evals: List[str],
     target_names: List[str], champion: Dict[str, Any], schema: Dict[str, Any],
     mean_score: float, staging_dir: str, final_dir: str, data_root: str,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """
     Ready-to-run follow-up commands so a small LLM does not have to compose arguments:
     deployment/prediction when the goal is met, otherwise feature pruning and an interaction feature.
     Long feature lists are written to <version>/next_features_*.txt and passed by path.
+    Every command has needs_input: commands with a placeholder (e.g. <새데이터.xlsx>) are True,
+    carry the placeholder name, and are listed after the commands that can run as-is.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     train_py = _q(os.path.join(here, "ml_train.py"))
@@ -1071,18 +1073,21 @@ def build_next_commands(
         return _q(os.path.join(final_dir, fname))
 
     base_features = [f for f in feature_names if f not in created_features]
-    cmds: List[Dict[str, str]] = []
+    cmds: List[Dict[str, Any]] = []
 
     if mean_score >= 0.90:
-        cmds.append({
-            "purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 실제 파일 경로로 바꿀 것)",
-            "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
-        })
         if task == TASK_REGRESSION:
             cmds.append({
                 "purpose": "Word 감사 보고서 생성",
                 "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -d {_q(data_root)}",
+                "needs_input": False,
             })
+        cmds.append({
+            "purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
+            "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
+            "needs_input": True,
+            "placeholder": "<새데이터.xlsx>",
+        })
         return cmds
 
     weak = [w for w in champion.get("weak_features", []) if w in feature_names]
@@ -1093,7 +1098,8 @@ def build_next_commands(
         if keep_evals:
             parts += ["--eval", _q("; ".join(keep_evals))]
         parts += ["--tag", _q("저기여피처_제외")]
-        cmds.append({"purpose": f"기여도 1% 이하 피처 {weak[:5]} 제외 후 재학습", "command": " ".join(parts)})
+        cmds.append({"purpose": f"기여도 1% 이하 피처 {weak[:5]} 제외 후 재학습", "command": " ".join(parts),
+                     "needs_input": False})
 
     numeric_top = [r["feature"] for r in champion.get("top_features", []) if r["feature"] in schema["numeric"]]
     if len(numeric_top) >= 2:
@@ -1104,7 +1110,8 @@ def build_next_commands(
             evals = applied_evals + [f"{new_name} = {a} * {b}"]
             parts = base + ["-x", features_arg(base_features, "all"), "--eval", _q("; ".join(evals)),
                             "--tag", _q("교차항_추가")]
-            cmds.append({"purpose": f"상위 피처 '{a}', '{b}' 교차항 추가 후 재학습", "command": " ".join(parts)})
+            cmds.append({"purpose": f"상위 피처 '{a}', '{b}' 교차항 추가 후 재학습", "command": " ".join(parts),
+                         "needs_input": False})
     return cmds
 
 
@@ -1485,7 +1492,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             f"VERIFIED: {current_version} competitive training completed. "
             f"Champion models and leaderboard packaged into '{os.path.basename(final_version_dir)}'. "
             f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. "
-            f"Next step: run next_commands[0] if the user wants to continue, or proceed to inference."
+            f"Next step: run next_commands[0] if the user wants to continue, or proceed to inference. "
+            f"A command with needs_input=true has a placeholder: replace it with a path the user gave, or ask the user first."
         )
 
         result = {

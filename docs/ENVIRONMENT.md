@@ -25,7 +25,7 @@
 |---|---|
 | 데이터/ML | pandas 3.0.5, scikit-learn 1.9.0, scipy 1.18.1 (numpy, joblib은 의존성으로 포함) |
 | 시각화 | matplotlib 3.11.1, seaborn 0.13.2 |
-| 문서 | openpyxl 3.1.5 (xlsx), python-docx 1.2.0 (docx), python-pptx 1.0.2 (pptx), pymupdf 1.28.2 / pymupdf4llm 1.28.2 (PDF) |
+| 문서 | openpyxl 3.1.5 (xlsx), python-docx 1.2.0 (docx), python-pptx 1.0.2 (pptx), pymupdf 1.28.2 / pymupdf4llm 1.28.2 (PDF), olefile 0.47 (HWP 5.0 읽기, atomic-cli용으로 추가) |
 | 유틸 | PyYAML 6.0.3, python-dateutil 2.9.0.post0 |
 | 영상 | opencv-python 5.0.0.93 |
 | 에이전트/서버 | fastapi 0.141.1, fastmcp 3.4.7, mcp 1.28.1, langgraph 1.2.11, openai 2.54.0 |
@@ -40,7 +40,8 @@
 | 도구 | 상태 | 비고 |
 |---|---|---|
 | `ml-kit` 학습/예측/보고서 | 추가 설치 없이 동작 | 동일 버전(pandas 3.0.5, scikit-learn 1.9.0, openpyxl 3.1.5, python-docx 1.2.0)으로 전체 테스트 통과 |
-| `atomic-cli` Office 자동화 | 정비 중 (Windows 실기 검증 대기) | pywin32 312 + Office 16.0 필요. 오프라인 테스트는 가짜 COM으로 통과. `hwp_read`는 olefile, `pdf_read`는 pymupdf(없으면 pypdf) 사용 |
+| `atomic-cli` Office 자동화/문서 읽기 | 1.0.1, 집 PC(Office 2007) 실기 검증 완료, 회사 PC(Office 16) 대기 | 열린 문서 작업은 pywin32 312 + Office 16.0. 닫힌 파일 읽기는 openpyxl / python-docx / python-pptx / pymupdf, HWP는 olefile 0.47, 차트 다시 그리기는 matplotlib. 오프라인 테스트는 이 버전으로 통과 |
+| `doc-classifier` 파일 목록화/분류 | 0.1.0 목록화(scan) 구현, 집 PC 실기 통과. 분류/확인은 예정 | 표준 환경 라이브러리만 사용 예정 (sqlite3, pywin32, pymupdf, olefile, openpyxl, python-docx, python-pptx). 분류 규칙은 JSON |
 
 ## 새 도구를 만들 때 규칙
 

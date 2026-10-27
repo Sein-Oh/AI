@@ -38,6 +38,7 @@ ml-kit/
 ├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
 ├── requirements.txt        # 런타임 의존성
+├── tools/run_win_tests.py  # Windows 실기 테스트 (실제 Excel/Word, 파일 잠금, cmd/PowerShell, 배포 폴더). 결과 report_*.txt
 │
 ├── [1단계: 학습 엔진]
 │   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀/분류 경쟁, 리더보드, SSOT 패키징
@@ -484,7 +485,7 @@ python ml_report.py \
   {"purpose": "상위 피처 '반응온도(°C)', '소비전력(kW)' 교차항 추가 후 재학습", "command": "python ... --eval \"반응온도x소비전력 = 반응온도(°C) * 소비전력(kW)\" ..."}
 ]
 ```
-목표 성능(0.90 이상)을 달성하면 예측 명령(`<새데이터.xlsx>` 자리표시자 포함)과 회귀 보고서 명령이 들어갑니다. 같은 데이터에 다른 학습이 진행 중이면 `STOP_RETRY`로 거부합니다.
+목표 성능(0.90 이상)을 달성하면 회귀 보고서 명령과 예측 명령이 들어갑니다. 각 명령에는 `needs_input`(bool)이 있고, 자리표시자(`<새데이터.xlsx>`)가 있는 예측 명령은 `needs_input: true`, `placeholder`를 가지며 바로 실행 가능한 명령 뒤에 놓입니다 (2.1.1). 같은 데이터에 다른 학습이 진행 중이면 `STOP_RETRY`로 거부합니다.
 
 #### [성공 시 반환 JSON]
 ```json

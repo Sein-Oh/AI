@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.1.0"
+  version: "2.1.1"
   platform: windows
 ---
 
@@ -34,6 +34,7 @@ python "<SKILL_DIR>\ml_train.py" -f "<데이터.xlsx>" -x "<피처1>,<피처2>" 
 
 결과 JSON에서 볼 것: `version`, `task`, `mean_val_score`(회귀=R2, 분류=Macro-F1), `delta_score`, `is_best`, `recommendations`, `version_dir`.
 `next_commands` 에 다음에 실행할 명령이 완성된 형태로 들어 있다. 성능 개선을 이어갈 때는 명령을 직접 만들지 말고 `next_commands[0].command` 를 그대로 실행한다.
+`needs_input: true` 인 명령에는 자리표시자(`placeholder`, 예: `<새데이터.xlsx>`)가 있다. 사용자가 준 실제 경로로 바꿔 실행하고, 경로가 없으면 사용자에게 먼저 묻는다.
 
 ## 2. 예측
 

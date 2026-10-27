@@ -1,0 +1,9 @@
+# doc-classifier 런타임 의존성 (버전은 루트 constraints.txt 기준, 모두 표준 WinPython 환경에 포함)
+# 설치: python -m pip install -r CLI/doc-classifier/requirements.txt -c constraints.txt
+# 0.1.0(scan)은 표준 라이브러리만 사용. 아래는 다음 단계(peek, 엑셀 보고서)용
+pymupdf        # PDF 앞부분 읽기 (peek)
+olefile        # HWP 5.0 미리보기 텍스트 (peek)
+openpyxl       # xlsx 앞부분 읽기 (peek), 엑셀 보고서 (summary)
+python-docx    # docx 앞부분 읽기 (peek)
+python-pptx    # pptx 앞부분 읽기 (peek)
+pywin32        # 실기 테스트 러너 (잠긴 파일 시험)
