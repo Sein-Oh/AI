@@ -2,8 +2,8 @@
 
 - summary: 형식별·분류별 개수와 용량, 상위 폴더 분포, 수정 시기, 확인(peek) 결과, 중복 후보, 미분류 단어.
   JSON은 LLM 컨텍스트에 맞게 상위 N개로 자르고(truncated), 전체는 엑셀 보고서로.
-- 엑셀: openpyxl 쓰기 전용 모드(메모리 일정). 파일 목록이 시트 한도(1,048,576행)를 넘으면 시트를 나누고,
-  너무 크면(기본 300만 행 초과) 목록만 CSV로 따로 저장합니다.
+- 엑셀: openpyxl 쓰기 전용 모드(메모리 일정). 파일 목록이 10만 행 이하면 엑셀 시트에 넣고, 넘으면 엑셀에는 요약 시트만 두고
+  목록은 CSV로 따로 저장합니다(엑셀 쓰기는 CSV보다 6~8배 느림). CSV는 엑셀에서 그대로 열리도록 1,048,575행마다 파일을 나눕니다.
 - list: 조건(분류, 확장자, 형식, 기간, 폴더, 이름) 조회, 페이지 단위.
 """
 import csv
@@ -21,7 +21,8 @@ import _dc_runtime as rt
 import _dc_store as st
 
 SHEET_ROWS = 1048575            # 머리글 1행을 뺀 시트당 최대 행
-CSV_THRESHOLD = 3000000          # 이보다 많으면 파일 목록은 CSV로
+CSV_THRESHOLD = 100000           # 파일 목록이 이보다 많으면 엑셀 시트 대신 CSV로 (보고서는 요약 위주로 빨리 열림)
+CSV_ROWS = SHEET_ROWS            # CSV 한 파일의 최대 행: 엑셀에서 잘리지 않고 열리는 한도
 AGE_BUCKETS = [("1년 이내", 1), ("1~3년", 3), ("3~5년", 5), ("5~10년", 10), ("10년 이상", None)]
 
 
@@ -257,6 +258,11 @@ def write_report(con: Any, job: str, meta: Dict[str, Any], summary: Dict[str, An
     rules = rules_from_meta(meta)
     out: Dict[str, Any] = {"file_list": mode}
     t0 = time.time()
+    csv_base = os.path.splitext(os.path.abspath(path))[0]
+    csv_paths = csv_file_paths(csv_base, total) if mode == "csv" else []
+    if csv_paths:
+        summary = dict(summary, file_list_note=f"파일 목록 {total:,}행은 CSV {len(csv_paths)}개로 따로 저장: "
+                       + ", ".join(os.path.basename(p) for p in csv_paths))
 
     def write(tmp: str) -> None:
         b = Book()
@@ -272,11 +278,34 @@ def write_report(con: Any, job: str, meta: Dict[str, Any], summary: Dict[str, An
 
     rt.log("INFO", f"엑셀 보고서 작성 중 (파일 {total:,}개, 목록 {mode})")
     out["report_file"] = rt.save_with_lock_fallback(path, write)
-    if mode == "csv":
-        csv_path = os.path.splitext(out["report_file"])[0] + "_파일목록.csv"
-        out["file_list_csv"] = rt.save_with_lock_fallback(csv_path, lambda tmp: _write_csv(con, tmp, total))
+    if csv_paths:
+        out["file_list_files"] = _write_csv_files(con, csv_paths, total)
+        out["file_list_csv"] = out["file_list_files"][0]
+        _remove_stale_csv(csv_base, csv_paths)
     out["seconds"] = round(time.time() - t0, 1)
     return out
+
+
+def csv_file_paths(base: str, total: int) -> List[str]:
+    """CSV 파일 이름: 한 파일이면 '<보고서>_파일목록.csv', 여러 개면 '<보고서>_파일목록_1.csv', '_2.csv' ..."""
+    n = max(1, -(-total // CSV_ROWS))
+    if n == 1:
+        return [f"{base}_파일목록.csv"]
+    return [f"{base}_파일목록_{i}.csv" for i in range(1, n + 1)]
+
+
+def _remove_stale_csv(base: str, keep: List[str]) -> None:
+    """같은 보고서 이름으로 전에 만든 목록 CSV 중 이번 실행에 해당하지 않는 것(나눈 개수가 줄어든 경우)을 지웁니다."""
+    folder, stem = os.path.split(base)
+    pat = re.compile(re.escape(stem) + r"_파일목록(_\d+)?\.csv$")
+    keep_names = {os.path.basename(p) for p in keep}
+    for name in os.listdir(folder or "."):
+        if pat.match(name) and name not in keep_names:
+            try:
+                os.remove(os.path.join(folder, name))
+                rt.log("INFO", f"이전 실행의 목록 파일을 지웠습니다: {name}")
+            except OSError:
+                pass
 
 
 def _sheet_summary(b: Book, s: Dict[str, Any]) -> None:
@@ -288,6 +317,7 @@ def _sheet_summary(b: Book, s: Dict[str, Any]) -> None:
             ("건너뛴 폴더", s["scan"]["dirs_skipped"]), ("읽지 못한 폴더", s["scan"]["dirs_error"]),
             ("분류 규칙 파일", s["classify"]["rules_file"]), ("분류 시각", s["classify"]["classified_at"]),
             ("확인(peek) 표본 수", (s.get("peek") or {}).get("files", 0)),
+            ("파일 목록", s.get("file_list_note") or "이 파일의 '파일 목록' 시트"),
             ("중복 후보", f"{s['duplicates'].get('groups', 0):,}묶음, 약 {s['duplicates'].get('wasted_size', '0B')}"),
             ("보고서 작성", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))]
     for k, v in info:
@@ -390,17 +420,43 @@ def _sheet_files(b: Book, con: Any, total: int) -> int:
     return sheets
 
 
-def _write_csv(con: Any, path: str, total: int) -> None:
-    last = time.time()
-    with open(path, "w", encoding="utf-8-sig", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(FILE_COLS)
-        for i, r in enumerate(con.execute(FILE_SQL), 1):
-            vals = _file_values(r)
-            w.writerow(["" if v is None else (v.strftime("%Y-%m-%d %H:%M:%S") if isinstance(v, dt.datetime) else v) for v in vals])
-            if time.time() - last >= 2:
-                last = time.time()
-                rt.log("PROGRESS", f"CSV 파일 목록 {i:,}/{total:,}행")
+def _csv_values(r: Tuple[Any, ...]) -> List[Any]:
+    """CSV 한 행. 날짜는 시각 숫자에서 바로 글자로 (datetime 객체를 만들지 않아 빠름)."""
+    v = _file_values(r)
+    for i in (8, 9):                                          # 수정일, 만든 날짜
+        t = r[i]
+        try:
+            v[i] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t)) if t is not None else ""
+        except (OverflowError, OSError, ValueError):
+            v[i] = ""
+    return v
+
+
+def _write_csv_files(con: Any, paths: List[str], total: int) -> List[str]:
+    """파일 목록을 CSV 여러 개에 이어서 씁니다 (UTF-8 BOM: 엑셀에서 바로 열림). 실제 저장한 경로 목록."""
+    rows = con.execute(FILE_SQL)
+    state = {"done": 0, "last": time.time()}
+    saved: List[str] = []
+
+    def write(tmp: str) -> None:
+        with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(FILE_COLS)
+            left = CSV_ROWS
+            while left > 0:
+                batch = rows.fetchmany(min(5000, left))
+                if not batch:
+                    break
+                w.writerows([_csv_values(r) for r in batch])
+                left -= len(batch)
+                state["done"] += len(batch)
+                if time.time() - state["last"] >= 2:
+                    state["last"] = time.time()
+                    rt.log("PROGRESS", f"CSV 파일 목록 {state['done']:,}/{total:,}행 ({len(saved) + 1}/{len(paths)}번째 파일)")
+
+    for p in paths:
+        saved.append(rt.save_with_lock_fallback(p, write))
+    return saved
 
 
 # ==============================================================================

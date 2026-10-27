@@ -361,7 +361,13 @@ def test_all(ctx, only):
         secs = time.time() - t0
         saved = (d or {}).get("report", {}).get("report_file")
         rows = None
-        if saved and os.path.exists(saved):
+        csvs = (d or {}).get("report", {}).get("file_list_files") or []
+        if csvs:                                      # 10만 행 초과: 목록은 CSV (104만 행씩)
+            rows = 0
+            for p in csvs:
+                with open(p, encoding="utf-8-sig") as f:
+                    rows += sum(1 for _ in f) - 1
+        elif saved and os.path.exists(saved):
             import openpyxl
             wb = openpyxl.load_workbook(saved, read_only=True)
             rows = sum(wb[s].max_row - 1 for s in wb.sheetnames if s.startswith("파일 목록"))
@@ -375,7 +381,7 @@ def test_all(ctx, only):
         alt = (d2 or {}).get("report", {}).get("report_file")
         ok = ok_(d) and rows == n and ok_(d2) and alt and alt != report and os.path.exists(alt)
         record(ctx, "S13", f"엑셀 보고서 ({n:,}행), 열려 있는 보고서는 다른 이름으로 저장", ok,
-               f"{secs:.1f}초, 파일 목록 {rows}행, 크기 {os.path.getsize(saved) / 1048576 if saved else 0:.1f}MB, "
+               f"{secs:.1f}초, 파일 목록 {rows}행({'CSV %d개' % len(csvs) if csvs else '시트'}), 크기 {os.path.getsize(saved) / 1048576 if saved else 0:.1f}MB, "
                f"잠긴 경우 저장 위치 {alt}{_mem_of(d)}", d2, c2, e2)
 
     def s14():

@@ -93,8 +93,44 @@ def test_file_list_splits_sheets_and_switches_to_csv(job, run, tmp_path, monkeyp
     with open(csv_path, encoding="utf-8-sig") as f:
         lines = f.read().splitlines()
     assert lines[0].startswith("경로,파일명") and len(lines) == 15
+    assert out["report"]["file_list_files"] == [csv_path]
+    import openpyxl
+    wb = openpyxl.load_workbook(str(tmp_path / "b.xlsx"), read_only=True)
+    assert "파일 목록" not in wb.sheetnames                                    # 엑셀은 요약 시트만
+    note = [r for r in wb["요약"].iter_rows(values_only=True) if r and r[0] == "파일 목록"][0][1]
+    assert "b_파일목록.csv" in note
+    wb.close()
     code, out = run("summary", "--job", "r", "--save", str(tmp_path / "c.xlsx"), "--file-list", "none")
     assert out["report"]["file_list"] == "none" and "file_list_csv" not in out["report"]
+
+
+def test_csv_file_list_is_split_for_excel_and_stale_parts_removed(job, run, tmp_path, monkeypatch):
+    monkeypatch.setattr(rp, "CSV_THRESHOLD", 10)
+    monkeypatch.setattr(rp, "CSV_ROWS", 5)
+    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"))
+    files = out["report"]["file_list_files"]
+    assert [os.path.basename(f) for f in files] == ["d_파일목록_1.csv", "d_파일목록_2.csv", "d_파일목록_3.csv"]
+    counts = []
+    paths = set()
+    for f in files:
+        with open(f, encoding="utf-8-sig") as fh:
+            lines = fh.read().splitlines()
+        assert lines[0].startswith("경로,파일명")                              # 파일마다 머리글
+        counts.append(len(lines) - 1)
+        paths.update(ln.split(",")[0] for ln in lines[1:])
+    assert counts == [5, 5, 4] and len(paths) == 14                           # 빠짐·중복 없이 이어짐
+    assert out["report"]["file_list_csv"] == files[0]
+    monkeypatch.setattr(rp, "CSV_ROWS", 10)                                    # 다시 저장해 2개로 줄면 3번째는 지움
+    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"))
+    assert len(out["report"]["file_list_files"]) == 2 and not (tmp_path / "d_파일목록_3.csv").exists()
+    monkeypatch.setattr(rp, "CSV_ROWS", 100)                                   # 1개면 번호 없는 이름
+    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"))
+    assert sorted(p for p in os.listdir(tmp_path) if p.startswith("d_파일목록")) == ["d_파일목록.csv"]
+
+
+def test_default_threshold_moves_large_lists_to_csv():
+    assert rp.CSV_THRESHOLD == 100000 and rp.CSV_ROWS == 1048575
+    assert len(rp.csv_file_paths("x", 2100000)) == 3 and rp.csv_file_paths("x", 5) == ["x_파일목록.csv"]
 
 
 def test_locked_report_is_saved_under_new_name(tmp_path, monkeypatch):

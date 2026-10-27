@@ -366,6 +366,9 @@ def cmd_summary(args) -> Dict[str, Any]:
             preview += f". 표본 확인율 {rp.rate_text(r)}"
         if s.get("report"):
             preview += f". 보고서: {s['report']['report_file']}"
+            if s["report"].get("file_list_files"):
+                preview += f" (파일 목록은 CSV {len(s['report']['file_list_files'])}개: {s['report']['file_list_files'][0]}"
+                preview += " 등)" if len(s["report"]["file_list_files"]) > 1 else ")"
         s["example_category"] = biggest
         s["peak_memory_mb"] = sc.peak_memory_mb()
         s["next_commands"] = nexts
@@ -470,7 +473,7 @@ def build_cli():
     p.add_argument("--job", required=True, help="작업 이름")
     p.add_argument("--save", nargs="?", const="", help="엑셀 보고서 저장 (경로 생략 시 data\\<작업>_보고서.xlsx)")
     p.add_argument("--file-list", choices=["auto", "xlsx", "csv", "none"], default="auto",
-                   help="보고서의 전체 파일 목록 (auto: 300만 개 이하는 시트, 넘으면 CSV)")
+                   help="보고서의 전체 파일 목록 (auto: 10만 개 이하는 엑셀 시트, 넘으면 104만 행씩 나눈 CSV)")
     p.add_argument("--top", type=int, default=10, help="JSON에 넣을 상위 폴더 수 (기본 10)")
 
     p = sub.add_parser("list", help="조건으로 파일 목록 조회 (페이지 단위)")

@@ -4,7 +4,7 @@ description: Windows 폴더(하위 전체)의 파일 목록을 만들고(scan), 
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "0.9.0"
+  version: "0.9.1"
   platform: windows
 ---
 
@@ -20,7 +20,7 @@ stdout 의 **1줄 JSON** 만 읽는다 (stderr 의 `[PROGRESS]` 로그는 무시
 | 1. 목록화 | `<DC> scan --root "D:\자료"` (큰 드라이브: `--time-limit 3600`, 끝나지 않으면 `next_commands[0]`) |
 | 2. 분류 | `<DC> classify --job 작업이름 --rules "규칙.json"` (규칙 파일이 없으면 `--rules` 생략: 예시 규칙) |
 | 3. 확인 | `<DC> peek --job 작업이름` (분류마다 표본 20개만 앞부분을 읽음) |
-| 4. 요약/엑셀 | `<DC> summary --job 작업이름 --save` (보고서 경로는 `report.report_file`) |
+| 4. 요약/엑셀 | `<DC> summary --job 작업이름 --save` (보고서 `report.report_file`, 파일이 10만 개를 넘으면 목록은 CSV `report.file_list_files`) |
 | 목록 조회 | `<DC> list --job 작업이름 --category 계약서 [--ext hwp] [--since 2025-01] [--folder 경로] [--page 2]` |
 | 작업 목록 | `<DC> jobs` |
 
