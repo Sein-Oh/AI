@@ -299,9 +299,45 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
   3. Windows 실기 스모크 스크립트를 사용자가 실행하고 결과 JSON을 공유합니다.
 - **반출**: 수정할 때마다 `tools/merge_code.py`로 `merged_code.md`를 다시 만들어 사내 환경에 반입할 수 있게 합니다.
 
-## 8. 진행 전 확인이 필요한 사항
+## 8. 확정 사항 (2026-10-27 사용자 회신)
 
-1. `atomic_agent.py`, `atomic_agent_tui.py`, `ml_*.py`, `excel_style.py`는 삭제한 건가요, 아니면 하위 폴더에 있어 이번에 빠진 건가요? 에이전트 도구 스키마 작업(Phase 4-3)의 범위가 여기에 달려 있습니다.
-2. 저장소에 개별 `.py` 파일로 복원해서 작업해도 될까요? 아니면 결과물을 계속 `merged_code.md` 한 파일 형태로 유지해야 하나요?
-3. Windows 실기에서 검증할 수 있나요? Office 버전(2016/2019/365)과 pywin32 버전도 알려 주세요. 창 탐색 콜백 문제처럼 버전에 따라 동작이 다른 항목이 있습니다.
-4. `outlook_write --send`를 완전히 막아도 될까요, 아니면 확인 플래그만 두면 될까요?
+1. **범위**: merged_code.md에 없는 파일(`atomic_agent*.py`, `ml_*.py`, `excel_style.py`)은 작업 대상에서 제외합니다. README 재작성(Phase 4) 때 해당 절도 정리합니다.
+2. **작업 방식**: 저장소에 개별 `.py`로 복원해 작업합니다. 반출용 `merged_code.md`는 `python tools/merge_code.py merge`로 다시 생성합니다. 반입할 때는 `split`을 씁니다.
+3. **대상 환경**: pywin32 312, pywin32-ctypes 0.2.3, Office 16.0 (Word/Excel/PowerPoint/Outlook, 2016/2019/2021/365 계열)
+   - `SaveAs2`, `WordOpenXML`, `ExportAsFixedFormat`, `DispatchEx`를 모두 쓸 수 있습니다.
+   - pywin32 312에서 Enum 콜백이 False를 반환하면 예외가 날 수 있으므로, 콜백은 항상 True를 반환하도록 바꿨습니다.
+4. **메일 발송 정책**: 기본은 작성 창만 띄우고 사용자가 [보내기]를 누릅니다. 사용자가 특별히 요청한 경우에만 `--send`(또는 `send=true`)로 발송합니다.
+   - 발송 전에 수신자 주소를 확인합니다. 확인되지 않은 수신자가 있으면 발송하지 않고 작성 창으로 전환합니다(`status=partial`).
+   - `"false"` 같은 문자열은 발송 요청으로 인정하지 않습니다.
+
+## 9. 진행 현황
+
+| 단계 | 상태 | 비고 |
+|---|---|---|
+| Phase 0 | 완료 | `.py` 복원, `tools/merge_code.py`, `pyproject.toml`(ruff, pytest), `tests/`(가짜 COM 기반 30개) |
+| Phase 1 | 완료 (Windows 실기 검증 대기) | 아래 표 참고 |
+| Phase 2 | 일부 선반영 | `word_write` matrix, `word_export` fixed_err_msg, `excel_edit`의 한 행 범위 처리, 창 탐색 콜백, 응답 예약 키 보호 |
+
+Phase 1 처리 내역:
+
+| # | 처리 |
+|---|---|
+| 1 | Excel/Word 파일 모드를 `DispatchEx` 전용 인스턴스로 바꾸고, 종료 시 전용 인스턴스만 Quit합니다. PPT는 사용자 인스턴스의 Visible/WindowState를 바꾸지 않고, DisplayAlerts는 복원합니다 |
+| 2 | Word 스냅샷: 저장된 문서는 파일을 복사하고, 미저장/새 문서는 `WordOpenXML`(.xml)로 남깁니다. 원본 Save/SaveAs를 제거했습니다 |
+| 3 | 활성 PPT도 스냅샷을 생성합니다 |
+| 4, 6 | 세션에 `readonly` 인자를 추가했습니다(기본: `snapshot=False`이면 읽기 전용). 읽기 전용은 시트/파일을 만들지 않고, 저장하지 않으며, 활성 시트·스크롤·슬라이드 위치를 바꾸지 않습니다. 시트명은 대소문자를 구분하지 않습니다 |
+| 5 | PPT는 변경이 있을 때만 저장합니다. 새 파일은 지정 경로로 `SaveAs`합니다 |
+| 7, 8 | `word_export`는 사본 문서에서 페이지 번호와 DOCX 저장을 처리해 원본을 바꾸지 않습니다. 형식과 확장자 불일치를 보정하고, E_FAIL 오진을 제거했습니다(`ppt_export`도 동일) |
+| 9 | `excel_range move`를 `Cut(Destination)`으로 바꾸고, 따옴표 시트명을 해석합니다 |
+| 10 | `excel_edit`는 수식 셀의 내용을 보존하고 서식만 적용합니다 |
+| 11 | `excel_export` XLSX는 try/finally로 임시 통합문서를 정리하고 경고 설정을 복원합니다 |
+| 12 | `clean undo`: 복원 전 상태를 `cache/undo_backup_*`에 백업합니다. 열린 문서는 닫은 뒤 교체하고 다시 엽니다. 실패하면 error를 반환하고, 성공한 스냅샷은 소비합니다. `fix-env`는 실제 동작(COM 응답 점검)대로 보고합니다 |
+| 13 | `outlook_write` 발송 정책 적용(위 8-4). 서명을 유지하고, HTML은 `<body>` 안에 삽입합니다 |
+| 14 | `ppt_slide clear`는 `--slide` 또는 `--all-slides`가 있어야 동작합니다 |
+| 15 | `excel_range merge`는 범위가 필수이고, 경고 대화상자를 잠시 끈 뒤 복원합니다 |
+| 공통 | 읽기 도구 `main()`은 `run_session_tool`로 세션 오류도 JSON 1줄로 내보내고, 종료 코드는 0/1입니다 |
+
+Windows 실기 확인을 부탁드리는 항목은 다음과 같습니다.
+- Excel/Word 창을 띄운 상태에서 `excel_read.py --target <다른 파일>`과 `word_read.py --target <다른 파일>`을 실행해도 사용자 창이 숨겨지지 않는지
+- `clean.py --action undo`가 열린 Excel/Word/PPT 문서를 복원하는지
+- `outlook_write.py --action new`가 작성 창만 띄우는지(서명 포함)

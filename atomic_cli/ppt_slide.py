@@ -117,13 +117,22 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
                     target_slide.Shapes.Item(i).Delete()
                     cleared_shapes += 1
                 msg = f"슬라이드 {s_idx}의 모든 요소({cleared_shapes}개)를 삭제했습니다."
-            else:
+            elif params.get("all_slides") is True:
                 for s in range(1, prs.Slides.Count + 1):
                     target_slide = prs.Slides(s)
                     for i in range(target_slide.Shapes.Count, 0, -1):
                         target_slide.Shapes.Item(i).Delete()
                         cleared_shapes += 1
                 msg = f"모든 슬라이드의 요소({cleared_shapes}개)를 전체 삭제했습니다."
+            else:
+                # 슬라이드 번호 없이 호출하면 전체 슬라이드가 지워지는 사고를 막기 위해 명시적 --all-slides 요구
+                return format_response(
+                    status="error",
+                    module="ppt_slide",
+                    action="clear",
+                    preview="clear 작업에는 --slide 번호가 필요합니다. 전체 슬라이드를 비우려면 --all-slides를 명시하세요.",
+                    agent_directive="STOP_RETRY: 지울 슬라이드 번호를 사용자에게 확인하세요. 전체 삭제는 사용자가 명시적으로 요청한 경우에만 all_slides=true로 호출합니다."
+                )
 
             return format_response(
                 status="ok",
@@ -152,19 +161,24 @@ def main():
     parser.add_argument("--action", default="add", choices=["add", "duplicate", "delete", "move", "count", "list", "clear"])
     parser.add_argument("--slide", type=int, help="대상 슬라이드 번호 (1-based)")
     parser.add_argument("--dest", type=int, help="이동할 목적 위치 번호 (1-based)")
+    parser.add_argument("--all-slides", action="store_true", help="clear 시 모든 슬라이드의 요소를 삭제 (명시적 지정 필요)")
     args = parser.parse_args()
 
     params = {
         "action": args.action,
         "slide": args.slide,
-        "dest": args.dest
+        "dest": args.dest,
+        "all_slides": args.all_slides
     }
 
-    with ppt_session(target=args.target, snapshot=True) as (app, prs):
-        res = execute(app, prs, params)
-        emit_response(res)
-    sys.stdout.flush()
-    os._exit(0)
+    try:
+        with ppt_session(target=args.target, snapshot=True) as (app, prs):
+            res = execute(app, prs, params)
+    except Exception as e:
+        res = format_response("error", "ppt_slide", args.action, preview=f"PowerPoint 세션 오류: {e}",
+                              agent_directive="STOP_RETRY: PowerPoint 프레젠테이션에 연결하지 못했습니다. 사용자에게 보고하세요.")
+    emit_response(res)
+    sys.exit(0 if res.get("status") == "ok" else 1)
 
 if __name__ == "__main__":
     main()

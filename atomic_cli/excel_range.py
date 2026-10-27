@@ -33,6 +33,16 @@ def apply_borders(rng, weight: str = "thin", box_only: bool = False) -> None:
             except Exception:
                 pass
 
+def resolve_sheet_range(wb, ws, address: str):
+    """'A1:C10', 'Sheet1!A1', "'My Sheet'!A1" 형태의 주소를 Range 객체로 해석합니다."""
+    if "!" in address:
+        sheet_part, cell_part = address.rsplit("!", 1)
+        sheet_part = sheet_part.strip()
+        if len(sheet_part) >= 2 and sheet_part[0] == "'" and sheet_part[-1] == "'":
+            sheet_part = sheet_part[1:-1].replace("''", "'")
+        return wb.Worksheets(sheet_part).Range(cell_part)
+    return ws.Range(address)
+
 def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
     """run.py에서 주입받은 COM 객체로 셀 범위 조작(AutoFit, 테두리, 너비/높이, 병합, 틀고정, 숨김)을 수행합니다."""
     action = (params.get("action") or "autofit").lower()
@@ -41,11 +51,7 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         # 대상 범위 지정 (생략 시 UsedRange, 시트명 포함 시 'Sheet1!A1:C10' 자동 해석)
-        if rng_address and "!" in rng_address:
-            src_sheet, src_cell = rng_address.split("!", 1)
-            target_rng = wb.Worksheets(src_sheet).Range(src_cell)
-        else:
-            target_rng = ws.Range(rng_address) if rng_address else ws.UsedRange
+        target_rng = resolve_sheet_range(wb, ws, rng_address) if rng_address else ws.UsedRange
 
         if action == "autofit":
             target_rng.Columns.AutoFit()
@@ -98,7 +104,17 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
             )
 
         elif action == "merge":
-            target_rng.Merge()
+            # 범위 생략 시 UsedRange 전체가 병합되는 사고 방지
+            if not rng_address:
+                raise ValueError("'merge' 작업에는 병합할 범위(range)를 반드시 지정해야 합니다.")
+            # 여러 셀에 값이 있으면 '왼쪽 위 값만 유지' 확인 대화상자가 COM 호출을 멈추게 하므로 일시적으로 끔
+            xl_app = ws.Application
+            prev_alerts = xl_app.DisplayAlerts
+            xl_app.DisplayAlerts = False
+            try:
+                target_rng.Merge()
+            finally:
+                xl_app.DisplayAlerts = prev_alerts
             return format_response(
                 status="ok",
                 module="excel_range",
@@ -206,18 +222,13 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
             if not dest_address:
                 raise ValueError(f"'{action}' 작업에는 'dest' 대상 셀 주소가 필요합니다.")
             
-            if "!" in dest_address:
-                dest_sheet, dest_cell = dest_address.split("!", 1)
-                dest_rng = wb.Worksheets(dest_sheet).Range(dest_cell)
-            else:
-                dest_rng = ws.Range(dest_address)
+            dest_rng = resolve_sheet_range(wb, ws, dest_address)
 
             if action == "copy":
                 target_rng.Copy(Destination=dest_rng)
             else:
-                # move: 복사 후 원본 지우기
-                target_rng.Copy(Destination=dest_rng)
-                target_rng.Clear()
+                # move: Excel 네이티브 잘라내기 이동 (원본/대상 범위가 겹쳐도 데이터가 사라지지 않고 수식 참조도 갱신됨)
+                target_rng.Cut(Destination=dest_rng)
 
             return format_response(
                 status="ok",

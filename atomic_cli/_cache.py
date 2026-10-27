@@ -170,18 +170,30 @@ def clean_old_snapshots_for_doc(app_name: str, doc_key: str, max_keep: int = 2) 
     # 최근 max_keep개를 제외한 나머지 오래된 스냅샷(JSON 및 원본 복사본 데이터) 삭제
     for old_json in json_files[max_keep:]:
         try:
-            base_no_ext = os.path.splitext(old_json)[0]
-            for ext in [".xlsx", ".xlsm", ".xls", ".docx", ".doc", ".pptx", ".ppt"]:
-                data_file = base_no_ext + ext
-                if os.path.exists(data_file):
-                    os.remove(data_file)
-            os.remove(old_json)
+            delete_snapshot_files(old_json)
             log_debug(f"오래된 스냅샷 자동 회전 삭제 (최근 {max_keep}개 유지 정책): {os.path.basename(old_json)}")
         except Exception as e:
             log_debug(f"오래된 스냅샷 삭제 실패: {e}")
 
+def delete_snapshot_files(meta_json_path: str) -> None:
+    """스냅샷 메타 JSON과 같은 이름의 데이터 파일(확장자 무관)을 모두 삭제합니다."""
+    base_no_ext = os.path.splitext(meta_json_path)[0]
+    for data_file in glob.glob(glob.escape(base_no_ext) + ".*"):
+        if data_file != meta_json_path and os.path.exists(data_file):
+            os.remove(data_file)
+    if os.path.exists(meta_json_path):
+        os.remove(meta_json_path)
+
+_DEFAULT_SNAPSHOT_EXT = {"excel": ".xlsx", "word": ".docx", "ppt": ".pptx"}
+
 def save_document_snapshot(app_name: str, doc_obj: Any, max_keep: int = 2) -> Optional[str]:
-    """오피스 활성 문서의 현재 상태를 캐시 디렉터리에 스냅샷으로 저장합니다 (최근 2개 유지)."""
+    """오피스 문서의 현재 상태를 캐시 디렉터리에 스냅샷으로 저장합니다 (최근 2개 유지).
+
+    원본 문서는 저장하거나 경로를 바꾸지 않습니다.
+    - Excel/PowerPoint: SaveCopyAs (원본 형식 그대로 사본 저장, 원본 확장자 유지)
+    - Word: 저장 이후 변경이 없으면 디스크 파일 복사, 미저장 변경이 있거나 새 문서이면
+      WordOpenXML(Flat OPC .xml)로 현재 메모리 상태를 그대로 기록합니다.
+    """
     if doc_obj is None:
         return None
 
@@ -189,70 +201,56 @@ def save_document_snapshot(app_name: str, doc_obj: Any, max_keep: int = 2) -> Op
         cache_dir = get_cache_dir()
         os.makedirs(cache_dir, exist_ok=True)
         app_lower = app_name.lower()
-        
-        # 1. 문서 식별자(이름/경로) 및 확장자 추출
-        doc_name = "unknown"
-        doc_path = ""
-        ext = ".xlsx" if app_lower == "excel" else (".docx" if app_lower == "word" else ".pptx")
 
-        if app_lower == "excel":
-            try:
-                doc_name = doc_obj.Name
-                doc_path = doc_obj.FullName if os.path.isabs(doc_obj.FullName) else ""
-            except Exception:
-                doc_name = "Workbook"
-        elif app_lower == "word":
-            try:
-                doc_name = doc_obj.Name
-                doc_path = doc_obj.FullName if os.path.isabs(doc_obj.FullName) else ""
-            except Exception:
-                doc_name = "Document"
-        elif app_lower == "ppt":
-            try:
-                doc_name = doc_obj.Name
-                doc_path = doc_obj.FullName if os.path.isabs(doc_obj.FullName) else ""
-            except Exception:
-                doc_name = "Presentation"
+        # 1. 문서 식별자(이름/경로) 추출
+        doc_name = {"excel": "Workbook", "word": "Document"}.get(app_lower, "Presentation")
+        doc_path = ""
+        try:
+            doc_name = doc_obj.Name
+            full_name = str(doc_obj.FullName)
+            doc_path = full_name if os.path.isabs(full_name) else ""
+        except Exception:
+            pass
+
+        # SaveCopyAs는 원본 형식으로 저장하므로 확장자도 원본을 따름 (.xlsm/.xls 등 불일치 방지)
+        ext = (os.path.splitext(doc_path)[1].lower() if doc_path else "") or _DEFAULT_SNAPSHOT_EXT.get(app_lower, ".bin")
 
         # doc_key는 이름과 경로를 기반으로 한 8자리 안정적 고유 해시
         raw_key = (doc_path or doc_name).lower()
         doc_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:8]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]
         base_name = f"snapshot_{app_lower}_{doc_key}_{timestamp}"
-        snapshot_data_path = os.path.join(cache_dir, f"{base_name}{ext}").replace("\\", "/")
         snapshot_meta_path = os.path.join(cache_dir, f"{base_name}.json").replace("\\", "/")
 
         # 2. 애플리케이션별 스냅샷 생성
-        saved = False
-        if app_lower == "excel":
+        snapshot_data_path = ""
+        snapshot_format = "native"
+        if app_lower in ("excel", "ppt"):
+            snapshot_data_path = os.path.join(cache_dir, f"{base_name}{ext}").replace("\\", "/")
             try:
-                doc_obj.SaveCopyAs(snapshot_data_path)
-                saved = os.path.exists(snapshot_data_path)
+                doc_obj.SaveCopyAs(os.path.normpath(snapshot_data_path))
             except Exception as e:
-                log_debug(f"Excel SaveCopyAs 실패: {e}")
-        elif app_lower == "ppt":
-            try:
-                doc_obj.SaveCopyAs(snapshot_data_path)
-                saved = os.path.exists(snapshot_data_path)
-            except Exception as e:
-                log_debug(f"PPT SaveCopyAs 실패: {e}")
+                log_debug(f"{app_lower} SaveCopyAs 실패: {e}")
         elif app_lower == "word":
-            try:
+            is_saved = bool(getattr(doc_obj, "Saved", False))
+            if doc_path and os.path.exists(doc_path) and is_saved:
                 import shutil
-                if doc_path and os.path.exists(doc_path):
-                    try:
-                        doc_obj.Save()
-                    except Exception:
-                        pass
+                snapshot_data_path = os.path.join(cache_dir, f"{base_name}{ext}").replace("\\", "/")
+                try:
                     shutil.copy2(doc_path, snapshot_data_path)
-                    saved = True
-                else:
-                    doc_obj.SaveAs(snapshot_data_path)
-                    saved = os.path.exists(snapshot_data_path)
-            except Exception as e:
-                log_debug(f"Word 스냅샷 저장 실패: {e}")
+                except Exception as e:
+                    log_debug(f"Word 스냅샷 파일 복사 실패: {e}")
+            else:
+                snapshot_data_path = os.path.join(cache_dir, f"{base_name}.xml").replace("\\", "/")
+                snapshot_format = "flat_xml"
+                try:
+                    xml_text = doc_obj.WordOpenXML
+                    with open(snapshot_data_path, "w", encoding="utf-8") as f:
+                        f.write(xml_text)
+                except Exception as e:
+                    log_debug(f"Word WordOpenXML 스냅샷 실패: {e}")
 
-        if not saved:
+        if not snapshot_data_path or not os.path.exists(snapshot_data_path):
             return None
 
         # 3. 메타데이터 JSON 저장
@@ -261,6 +259,7 @@ def save_document_snapshot(app_name: str, doc_obj: Any, max_keep: int = 2) -> Op
             "name": doc_name,
             "original_path": doc_path,
             "snapshot_file": snapshot_data_path,
+            "snapshot_format": snapshot_format,
             "timestamp": timestamp,
             "created_at": datetime.now().isoformat()
         }
@@ -294,6 +293,7 @@ def get_latest_snapshot(app_filter: str = "") -> Optional[Dict[str, Any]]:
             if app_filter and data.get("app") != app_filter.lower():
                 continue
             if os.path.exists(data.get("snapshot_file", "")):
+                data["meta_file"] = mf
                 return data
         except Exception:
             continue

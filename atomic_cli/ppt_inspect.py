@@ -7,7 +7,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import ppt_session
 
 def inspect_shape_recursive(shape):
@@ -275,9 +275,9 @@ def main():
         emit_response(res)
         return
 
-    with ppt_session(target=args.target) as (app, prs):
-        res = execute(app, prs, {})
-        emit_response(res)
+    run_session_tool("ppt_inspect", "inspect",
+                     lambda: ppt_session(target=args.target),
+                     lambda app, prs: execute(app, prs, {}))
 
 if __name__ == "__main__":
     main()

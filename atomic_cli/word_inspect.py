@@ -7,7 +7,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import word_session
 
 def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -181,9 +181,9 @@ def main():
         emit_response(res)
         return
 
-    with word_session(target=args.target) as (app, doc):
-        res = execute(app, doc, {})
-        emit_response(res)
+    run_session_tool("word_inspect", "inspect",
+                     lambda: word_session(target=args.target),
+                     lambda app, doc: execute(app, doc, {}))
 
 if __name__ == "__main__":
     main()

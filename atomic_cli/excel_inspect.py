@@ -7,7 +7,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _com_guard import excel_session
 
 def inspect_single_worksheet(ws) -> Dict[str, Any]:
@@ -271,9 +271,9 @@ def main():
 
     params = {"sheet": args.sheet}
 
-    with excel_session(target=args.target, sheet_name=args.sheet) as (app, wb, ws):
-        res = execute(wb, ws, params)
-        emit_response(res)
+    run_session_tool("excel_inspect", "inspect",
+                     lambda: excel_session(target=args.target, sheet_name=args.sheet),
+                     lambda app, wb, ws: execute(wb, ws, params))
 
 if __name__ == "__main__":
     main()

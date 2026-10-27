@@ -51,7 +51,16 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out_format = "pdf"
 
-        final_out_path = resolve_output_path(out_arg, default_ext=f".{out_format}")
+        # 형식과 확장자 불일치 방지 (예: --format pdf -o deck.pptx -> deck.pdf)
+        # SaveCopyAs는 원본 형식으로 저장하므로 pptx 사본의 확장자는 원본 확장자(.pptx/.pptm/.ppt)를 따름
+        if out_format == "pdf":
+            wanted_ext = ".pdf"
+        else:
+            src_ext = os.path.splitext(str(getattr(prs, "FullName", "")))[1].lower()
+            wanted_ext = src_ext if src_ext in (".pptx", ".pptm", ".ppt") else ".pptx"
+        if out_ext and out_ext != wanted_ext:
+            out_arg = os.path.splitext(out_arg)[0] + wanted_ext
+        final_out_path = resolve_output_path(out_arg, default_ext=wanted_ext)
         log_debug(f"PowerPoint Export 대상: '{prs.Name}', 포맷='{out_format}', 경로='{final_out_path}'")
 
         if out_format == "pdf":
@@ -64,7 +73,8 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e_fixed:
                 log_debug(f"ExportAsFixedFormat 실패, SaveAs 시도: {e_fixed}")
                 raw_fixed = repr(e_fixed) + " " + str(e_fixed)
-                if "-2147467259" in raw_fixed or "기능이 설치되어 있지 않아" in raw_fixed or "can not be converted" in raw_fixed:
+                # -2147467259(E_FAIL)는 파일 잠금 등 일반 실패에도 쓰이므로 판별 근거로 사용하지 않음
+                if "기능이 설치되어 있지 않아" in raw_fixed or "can not be converted" in raw_fixed:
                     pdf_missing_feature = True
 
             if not saved_pdf:
@@ -73,7 +83,7 @@ def execute(app, prs, params: Dict[str, Any]) -> Dict[str, Any]:
                     saved_pdf = True
                 except Exception as e_saveas:
                     raw_saveas = repr(e_saveas) + " " + str(e_saveas)
-                    if pdf_missing_feature or "-2147467259" in raw_saveas or "기능이 설치되어 있지 않아" in raw_saveas:
+                    if pdf_missing_feature or "기능이 설치되어 있지 않아" in raw_saveas:
                         raise RuntimeError("PowerPoint PDF 내보내기 기능(Office 2007 추가 기능)이 설치되어 있지 않습니다. --format pptx 형식을 사용하세요.")
                     raise e_saveas
             preview_msg = f"Exported PowerPoint presentation to PDF: {os.path.basename(final_out_path)}"
@@ -117,11 +127,14 @@ def main():
         "format": args.format
     }
 
-    with ppt_session(target=args.target) as (app, prs):
-        res = execute(app, prs, params)
-        emit_response(res)
-    sys.stdout.flush()
-    os._exit(0)
+    try:
+        with ppt_session(target=args.target) as (app, prs):
+            res = execute(app, prs, params)
+    except Exception as e:
+        res = format_response("error", "ppt_export", "export", preview=f"PowerPoint 세션 오류: {e}",
+                              agent_directive="STOP_RETRY: PowerPoint 프레젠테이션에 연결하지 못했습니다. 사용자에게 보고하세요.")
+    emit_response(res)
+    sys.exit(0 if res.get("status") == "ok" else 1)
 
 if __name__ == "__main__":
     main()

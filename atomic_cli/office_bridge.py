@@ -2,7 +2,7 @@ import os
 import sys
 import argparse
 import traceback
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -303,7 +303,8 @@ def copy_excel_to_ppt(from_target: str, sheet_name: Optional[str], range_str: Op
 def copy_excel_to_excel(from_target: str, sheet_name: Optional[str], range_str: Optional[str],
                         chart_idx: Optional[int], to_target: str, dest_range: Optional[str] = None) -> Dict[str, Any]:
     """Excel 범위 또는 차트를 이미지로 복사하여 엑셀 시트의 특정 위치에 붙여넣습니다."""
-    with excel_session(target=from_target, sheet_name=sheet_name) as (xl_app, wb, ws):
+    # 같은 시트에 붙여넣는 쓰기 작업이므로 쓰기 세션(스냅샷 포함)으로 엶
+    with excel_session(target=from_target, sheet_name=sheet_name, snapshot=True) as (xl_app, wb, ws):
         item_desc = ""
         if chart_idx is not None:
             if ws.ChartObjects().Count < chart_idx:

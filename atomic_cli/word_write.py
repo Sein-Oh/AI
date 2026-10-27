@@ -208,6 +208,7 @@ def execute(app, doc, params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         is_pure_table = False
+        matrix = None  # 표 분기에서만 할당되므로, 일반 텍스트/제목/글머리 경로의 UnboundLocalError 방지
         if data_file and os.path.exists(data_file):
             matrix = read_csv_table(data_file)
             is_pure_table = True

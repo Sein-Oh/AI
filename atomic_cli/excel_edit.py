@@ -11,7 +11,7 @@ if CURRENT_DIR not in sys.path:
 
 from _office_utils import (
     format_response, emit_response, log_debug, parse_color_to_bgr,
-    parse_replace_rules, normalize_and_expand_rules
+    parse_replace_rules, normalize_and_expand_rules, range_to_matrix
 )
 from _com_guard import excel_session
 from _config import resolve_data_path, get_data_dir
@@ -370,17 +370,12 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
 
         # B. 텍스트/숫자 검색 기반 내용 수정 및 서식 적용
         try:
-            cells = used_range.Cells
             row_count = used_range.Rows.Count
             col_count = used_range.Columns.Count
 
-            values = used_range.Value
-            if row_count == 1 and col_count == 1:
-                values = ((values,),)
-            elif row_count == 1:
-                values = (values,)
-            elif col_count == 1:
-                values = tuple((row,) for row in values)
+            values = range_to_matrix(used_range.Value)
+            # 수식 셀은 계산 결과값으로 매칭되더라도 수식을 상수 텍스트로 덮어쓰지 않도록 수식 문자열을 함께 일괄 조회
+            formulas = range_to_matrix(used_range.Formula)
 
             start_row = used_range.Row
             start_col = used_range.Column
@@ -402,7 +397,14 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
                         cell_obj = ws.Cells(start_row + r_idx, start_col + c_idx)
                         target_style = dict(style)
                         text_val = target_style.get("text") if "text" in target_style else target_style.get("replace")
-                        if text_val is not None and not str(text_val).strip().startswith("="):
+                        formula_str = formulas[r_idx][c_idx]
+                        has_formula = isinstance(formula_str, str) and formula_str.startswith("=")
+                        if has_formula:
+                            # 수식 셀은 서식만 적용하고 내용(수식)은 보존
+                            target_style.pop("text", None)
+                            target_style.pop("replace", None)
+                            log_debug(f"수식 셀 내용 치환 생략 (서식만 적용): 셀({start_row + r_idx}, {start_col + c_idx}) {formula_str}")
+                        elif text_val is not None and not str(text_val).strip().startswith("="):
                             # 부분 문자열 치환 지원 (Word/PPT와 동작 일치: 기존 셀 내용 내 매칭 키워드만 치환)
                             target_style["text"] = val_str.replace(key_str, str(text_val))
                         apply_edit_to_range(cell_obj, target_style)

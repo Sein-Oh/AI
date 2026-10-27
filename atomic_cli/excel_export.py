@@ -8,7 +8,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-from _office_utils import format_response, emit_response, log_debug
+from _office_utils import format_response, emit_response, log_debug, run_session_tool
 from _config import get_data_dir
 from _com_guard import excel_session
 
@@ -178,27 +178,46 @@ def execute(wb, ws, params: Dict[str, Any]) -> Dict[str, Any]:
         # B. XLSX 내보내기 (기존 활성 창 손상 없이 새 독립 워크북으로 저장)
         elif out_format == "xlsx":
             app = wb.Application
-            app.DisplayAlerts = False
-            
-            # 새 백그라운드 워크북 생성
-            new_wb = app.Workbooks.Add()
-            new_ws = new_wb.Worksheets(1)
-            new_ws.Name = target_ws.Name
+            prev_alerts = app.DisplayAlerts
+            new_wb = None
+            try:
+                app.DisplayAlerts = False
+                # 새 워크북 생성 (사용자 화면에 새 창이 뜨지 않도록 즉시 숨김)
+                new_wb = app.Workbooks.Add()
+                try:
+                    new_wb.Windows(1).Visible = False
+                except Exception:
+                    pass
+                new_ws = new_wb.Worksheets(1)
+                new_ws.Name = target_ws.Name
 
-            if is_col_mode:
-                from _office_utils import get_target_range_address
-                target_range_addr = get_target_range_address("A1", row_count, col_count)
-                new_ws.Range(target_range_addr).Value = tuple(tuple(r) for r in matrix)
-            else:
-                target_rng = target_ws.Range(rng_address) if rng_address else target_ws.UsedRange
-                target_rng.Copy(Destination=new_ws.Range("A1"))
+                if is_col_mode:
+                    from _office_utils import get_target_range_address
+                    target_range_addr = get_target_range_address("A1", row_count, col_count)
+                    new_ws.Range(target_range_addr).Value = tuple(tuple(r) for r in matrix)
+                else:
+                    target_rng = target_ws.Range(rng_address) if rng_address else target_ws.UsedRange
+                    target_rng.Copy(Destination=new_ws.Range("A1"))
 
-            new_ws.Columns.AutoFit()
+                new_ws.Columns.AutoFit()
 
-            # 신규 워크북 저장 후 닫기 (원래 창은 100% 유지)
-            new_wb.SaveAs(final_out_path)
-            new_wb.Close()
-            app.DisplayAlerts = True
+                # 숨긴 창 상태가 파일에 저장되어 다음에 열 때 안 보이는 문제 방지
+                try:
+                    new_wb.Windows(1).Visible = True
+                except Exception:
+                    pass
+                new_wb.SaveAs(final_out_path, FileFormat=51)  # xlOpenXMLWorkbook
+            finally:
+                # 실패하더라도 임시 워크북이 사용자 Excel에 남지 않도록 항상 닫고 경고 설정 복원
+                if new_wb is not None:
+                    try:
+                        new_wb.Close(SaveChanges=False)
+                    except Exception:
+                        pass
+                try:
+                    app.DisplayAlerts = prev_alerts
+                except Exception:
+                    pass
 
             preview_msg = f"Exported {source_desc} to new XLSX workbook: {os.path.basename(final_out_path)}"
             return format_response(
@@ -305,9 +324,9 @@ def main():
         ))
         return
 
-    with excel_session(target=args.target, sheet_name=args.sheet) as (app, wb, ws):
-        res = execute(wb, ws, params)
-        emit_response(res)
+    run_session_tool("excel_export", "export",
+                     lambda: excel_session(target=args.target, sheet_name=args.sheet),
+                     lambda app, wb, ws: execute(wb, ws, params))
 
 if __name__ == "__main__":
     main()

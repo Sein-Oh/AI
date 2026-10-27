@@ -128,7 +128,10 @@ def format_response(
         "agent_directive": agent_directive
     }
     if extra:
-        res.update(extra)
+        # 응답 규약의 핵심 키(status/module/action/preview/agent_directive)는 extra로 덮어쓰지 않음
+        for k, v in extra.items():
+            if k not in res:
+                res[k] = v
     return res
 
 def emit_response(response_dict: Dict[str, Any]) -> None:
@@ -158,6 +161,14 @@ def read_csv_table(file_path: str) -> List[List[Any]]:
     if content is None:
         raise ValueError(f"CSV 파일을 읽을 수 없습니다 (인코딩 지원 실패): {file_path}")
     return content
+
+def range_to_matrix(values: Any) -> List[List[Any]]:
+    """Excel Range.Value/Formula 결과를 항상 2차원 리스트로 정규화합니다.
+    pywin32는 단일 셀이면 스칼라, 여러 셀이면 (한 행/한 열이어도) 튜플의 튜플을 반환합니다.
+    """
+    if not isinstance(values, (tuple, list)):
+        return [[values]]
+    return [list(row) if isinstance(row, (tuple, list)) else [row] for row in values]
 
 def col_idx_to_name(col_idx: int) -> str:
     """1-based 열 인덱스를 엑셀 열 문자열(예: 1 -> 'A', 28 -> 'AB')로 변환합니다."""
@@ -259,3 +270,30 @@ def normalize_and_expand_rules(rules: Dict[str, Any]) -> Dict[str, Any]:
 
     return expanded
 
+
+def exit_code_for(response_dict: Dict[str, Any]) -> int:
+    """응답 status에 따른 프로세스 종료 코드 (ok/no_match=0, 그 외=1)."""
+    return 0 if response_dict.get("status") in ("ok", "no_match") else 1
+
+def run_session_tool(module: str, action: str, session_factory, tool_fn) -> None:
+    """Office 세션을 열고 도구를 실행한 뒤, 결과를 단 1줄 JSON으로 출력하고 종료 코드를 반환하며 종료합니다.
+    세션 연결 실패(대상 문서 없음, 시트 없음 등)를 포함한 모든 예외도 JSON 오류 응답으로 변환합니다.
+
+    Args:
+        session_factory: 인자 없이 호출하면 Context Manager를 반환하는 함수 (예: lambda: excel_session(...))
+        tool_fn: 세션이 yield한 COM 객체들을 위치 인자로 받아 응답 dict를 반환하는 함수
+    """
+    try:
+        with session_factory() as handles:
+            res = tool_fn(*handles)
+    except Exception as e:
+        log_debug(f"{module} 세션/실행 오류: {e}")
+        res = format_response(
+            status="error",
+            module=module,
+            action=action,
+            preview=friendly_error_message(e),
+            agent_directive="STOP_RETRY: 대상 문서에 연결하지 못했거나 실행 중 오류가 발생했습니다. 사용자에게 보고하세요."
+        )
+    emit_response(res)
+    sys.exit(exit_code_for(res))
