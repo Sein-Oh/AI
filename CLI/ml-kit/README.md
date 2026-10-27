@@ -38,6 +38,7 @@ ml-kit/
 ├── SKILL.md                # 경량 LLM 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
 ├── requirements.txt        # 런타임 의존성
+├── tools/run_win_tests.py  # Windows 실기 테스트 (실제 Excel/Word, 파일 잠금, cmd/PowerShell, 배포 폴더). 결과 report_*.txt
 │
 ├── [1단계: 학습 엔진]
 │   └── ml_train.py         # 자동 헤더 스니핑, 방탄 AST 파생변수, 5대 회귀/분류 경쟁, 리더보드, SSOT 패키징
