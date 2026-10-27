@@ -234,5 +234,6 @@ def test_jobs_and_contract_errors(tmp_path, run):
 
 def test_default_job_name_from_folder_or_drive():
     assert st.job_name_for(r"D:\자료\2026 계약").startswith("2026_계약_")
-    if sys.platform == "win32":
-        assert st.job_name_for("D:\\").startswith("D드라이브_")
+    assert st.job_name_for("D:\\").startswith("D드라이브_")
+    assert st.job_name_for("D:\\자료\\보고서\\").startswith("보고서_")      # 끝 구분자
+    assert st.job_name_for("D:/자료/보고서").startswith("보고서_")              # 슬래시 구분자

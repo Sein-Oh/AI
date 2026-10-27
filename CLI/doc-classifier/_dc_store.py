@@ -6,6 +6,7 @@
 - classify/peek 단계가 채울 열(kind, category ...)도 미리 만들어 둡니다 (스키마 변경 없이 단계 추가).
 """
 import json
+import ntpath
 import os
 import re
 import sqlite3
@@ -50,10 +51,13 @@ _JOB_RE = re.compile(r'[\\/:*?"<>|\s]+')
 
 
 def job_name_for(root: str) -> str:
-    """기본 작업 이름: 대상 폴더 이름(드라이브면 'D드라이브') + 날짜."""
-    base = os.path.basename(os.path.normpath(root))
+    """기본 작업 이름: 대상 폴더 이름(드라이브면 'D드라이브') + 날짜.
+
+    운영 환경은 Windows이므로 호스트 OS와 무관하게 Windows 경로 규칙(ntpath)으로 자른다.
+    """
+    base = ntpath.basename(ntpath.normpath(root))
     if not base:
-        drive = os.path.splitdrive(root)[0].rstrip(":")
+        drive = ntpath.splitdrive(root)[0].rstrip(":")
         base = f"{drive}드라이브" if drive else "root"
     return f"{safe_job(base)}_{rt.timestamp()[:8]}"
 
