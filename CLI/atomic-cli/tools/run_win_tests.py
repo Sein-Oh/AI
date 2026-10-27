@@ -30,6 +30,7 @@ from datetime import datetime
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 CMD_TIMEOUT = 120
+RUN_ENV = {}   # 도구에 넘길 환경변수 (테스트 폴더 전용 캐시/데이터 폴더). main()에서 채움
 
 try:
     import pythoncom
@@ -61,7 +62,7 @@ def run_cli(module, *cli_args):
     """도구를 별도 프로세스로 실행하고 (JSON dict 또는 None, 종료 코드, stdout, stderr 마지막 부분)을 반환합니다."""
     cmd = [PY, os.path.join(ROOT, module)] + [str(a) for a in cli_args]
     log(f"    $ python {module} {' '.join(str(a) for a in cli_args)}")
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", **RUN_ENV)
     try:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, timeout=CMD_TIMEOUT, env=env)
     except subprocess.TimeoutExpired:
@@ -165,9 +166,20 @@ def short(data, raw_out=""):
 # ---------------------------------------------------------------------------
 # 테스트 실행/기록
 # ---------------------------------------------------------------------------
+ENV_SKIP = "env-skip"   # 이 PC에 기능이 없어 시험할 수 없음 (예: Office 2007에 PDF 추가 기능 없음)
+
+
+def pdf_unavailable(data):
+    """도구가 'PDF 내보내기 기능 없음'을 STOP_RETRY 입력 오류로 정상 보고했는지."""
+    data = data or {}
+    return data.get("error_type") == "input" and "PDF 내보내기 기능이 없습니다" in data.get("message", "")
+
+
 def record(ctx, tid, title, ok, detail="", data=None, code=None, raw="", err=""):
     if ok is None:
         status = "MANUAL-SKIP"
+    elif ok == ENV_SKIP:
+        status = "ENV-SKIP"
     else:
         status = "PASS" if ok else "FAIL"
     entry = {"id": tid, "title": title, "status": status, "detail": detail,
@@ -191,8 +203,20 @@ def run_test(ctx, tid, title, fn):
 # ---------------------------------------------------------------------------
 # Office 객체 조회 (테스트 검증용, atomic-cli 코드와 독립)
 # ---------------------------------------------------------------------------
+def office_app(kind):
+    """사용자가 띄운 Office 앱. 더블클릭으로 연 Excel은 포커스를 잃기 전까지 ROT에 등록되지 않아
+    GetActiveObject가 실패하므로(MS KB 238610), 창 핸들 바인딩(_office.find_apps)을 먼저 씁니다."""
+    if ROOT not in sys.path:
+        sys.path.insert(0, ROOT)
+    import _office
+    apps = _office.find_apps(kind)
+    if apps:
+        return apps[0]
+    return win32com.client.GetActiveObject(_office.PROG_ID[kind])
+
+
 def xl_app():
-    return win32com.client.GetActiveObject("Excel.Application")
+    return office_app("excel")
 
 
 def xl_wb(name):
@@ -200,11 +224,15 @@ def xl_wb(name):
 
 
 def wd_doc(name):
-    return com_retry(lambda: win32com.client.GetActiveObject("Word.Application").Documents(name))
+    return com_retry(lambda: office_app("word").Documents(name))
 
 
 def pp_prs(name):
-    return com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").Presentations(name))
+    return com_retry(lambda: office_app("ppt").Presentations(name))
+
+
+def pp_app():
+    return office_app("ppt")
 
 
 def activate_xl(name, sheet=None):
@@ -242,8 +270,29 @@ def _save_workbook(wb, path):
         wb.SaveAs(path)
 
 
+def _save_document(doc, path):
+    """SaveAs2는 Word 2010+에만 있으므로 Word 2007은 SaveAs로 저장합니다."""
+    try:
+        save = doc.SaveAs2
+    except AttributeError:
+        save = doc.SaveAs
+    save(path, FileFormat=16)  # wdFormatDocumentDefault
+
+
+def isolate_tool_dirs(ctx):
+    """캐시(스냅샷, 색인)와 data 폴더를 테스트 폴더 아래로 분리하고 캐시는 매번 비웁니다.
+    이전 실행의 스냅샷이 남아 있으면 같은 경로로 다시 만든 A 파일에 undo가 이어져 C7이 틀어집니다."""
+    import shutil
+    cache, data = ctx.path("_cache"), ctx.path("_data")
+    shutil.rmtree(cache, ignore_errors=True)
+    os.makedirs(cache, exist_ok=True)
+    os.makedirs(data, exist_ok=True)
+    RUN_ENV.update(ATOMIC_CACHE_DIR=cache, ATOMIC_DATA_DIR=data)
+
+
 def setup_files(ctx):
     step(f"테스트 폴더 생성/쓰기 확인 ({ctx.dir})", lambda: _check_writable(ctx.dir))
+    step("도구 캐시/데이터 폴더 분리", lambda: isolate_tool_dirs(ctx))
     for f in FILES:
         p = ctx.path(f)
         if os.path.exists(p):
@@ -287,7 +336,7 @@ def setup_files(ctx):
             doc = step(f"{name}: 새 문서 만들기", lambda: wd.Documents.Add())
             step(f"{name}: 본문 입력",
                  lambda: setattr(doc.Content, "Text", f"{name} 첫 문단입니다.\r두 번째 문단입니다."))
-            step(f"{name}: 저장 ({ctx.path(name)})", lambda: doc.SaveAs2(ctx.path(name), FileFormat=16))
+            step(f"{name}: 저장 ({ctx.path(name)})", lambda: _save_document(doc, ctx.path(name)))
             step(f"{name}: 닫기", lambda: doc.Close(SaveChanges=0))
     finally:
         try:
@@ -390,7 +439,7 @@ def test_A(ctx):
         b_mtime = mtime(ctx.path("B.pptx"))
         data, code, raw, err = run_cli("ppt.py", "info", "--target", ctx.path("B.pptx"))
         time.sleep(1)
-        state = com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").WindowState)
+        state = com_retry(lambda: pp_app().WindowState)
         unchanged = mtime(ctx.path("B.pptx")) == b_mtime
         ok = (data or {}).get("status") == "ok" and unchanged and state != 2
         manual = ask(ctx, "PowerPoint 창이 최소화되거나 깜빡이지 않았나요?")
@@ -471,9 +520,9 @@ def test_B(ctx):
 
     def b5():
         prs = pp_prs("A.pptx")
-        com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").ActiveWindow.View.GotoSlide(1))
+        com_retry(lambda: pp_app().ActiveWindow.View.GotoSlide(1))
         data, code, raw, err = run_cli("ppt.py", "read", "--target", "active")
-        cur = com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").ActiveWindow.View.Slide.SlideIndex)
+        cur = com_retry(lambda: pp_app().ActiveWindow.View.Slide.SlideIndex)
         ok = (data or {}).get("status") == "ok" and cur == 1
         record(ctx, "B5", "PPT 읽기 시 화면이 마지막 슬라이드로 이동하지 않음", ok, f"읽은 뒤 화면 슬라이드={cur}", data, code, raw, err)
         del prs
@@ -606,6 +655,10 @@ def test_D(ctx):
         footer_after = com_retry(lambda: doc.Sections(1).Footers(1).PageNumbers.Count)
         saved_after = com_retry(lambda: bool(doc.Saved))
         pdf = (data or {}).get("output_file", "")
+        if pdf_unavailable(data) and footer_before == footer_after and saved_before == saved_after:
+            record(ctx, "D1", "PDF 쪽 번호, 원본 바닥글 미변경", ENV_SKIP,
+                   "이 PC의 Word에 PDF 내보내기 기능이 없음 (원본은 그대로)", data, code, raw, err)
+            return
         ok = (data or {}).get("status") == "ok" and os.path.exists(pdf) and footer_before == footer_after and saved_before == saved_after
         manual = None
         if ok and not ctx.auto:
@@ -635,6 +688,9 @@ def test_D(ctx):
     def d4():
         data, code, raw, err = run_cli("ppt.py", "export", "--save", "atomic_test_deck.pdf")
         fp = (data or {}).get("output_file", "")
+        if pdf_unavailable(data):
+            record(ctx, "D4", "PPT PDF 내보내기", ENV_SKIP, "이 PC의 PowerPoint에 PDF 내보내기 기능이 없음", data, code, raw, err)
+            return
         record(ctx, "D4", "PPT PDF 내보내기", (data or {}).get("status") == "ok" and os.path.exists(fp), fp, data, code, raw, err)
 
     run_test(ctx, "D1", "워드 PDF 쪽 번호", d1)
@@ -759,7 +815,7 @@ def test_F(ctx):
         n0 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
         data, code, raw, err = run_cli("ppt.py", "write", "--slide", "new", "--title", "추진 전략", "--text", "- 안정성\\n- 확장성")
         n1 = com_retry(lambda: pp_prs("A.pptx").Slides.Count)
-        cur = com_retry(lambda: win32com.client.GetActiveObject("PowerPoint.Application").ActiveWindow.View.Slide.SlideIndex)
+        cur = com_retry(lambda: pp_app().ActiveWindow.View.Slide.SlideIndex)
         ok = (data or {}).get("status") == "ok" and n1 == n0 + 1 and cur == n1
         manual = ask(ctx, "새 슬라이드에 '추진 전략' 제목과 글머리 2줄이 보기 좋게 들어갔나요?")
         record(ctx, "F3", "새 슬라이드 쓰기 + 고친 슬라이드로 이동", ok and manual is not False,

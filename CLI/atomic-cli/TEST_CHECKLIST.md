@@ -11,6 +11,8 @@ python tools/run_win_tests.py --skip-outlook --auto     :: Outlook 제외, 질�
 - 테스트 파일(A/B .xlsx .docx .pptx)은 `C:\atomic_test`에 자동으로 만듭니다(`--dir`로 변경 가능).
 - 실행 전에 다른 Office 문서는 저장하고 닫아 주세요. 실행 중에는 Office 창을 직접 만지지 마세요.
 - 결과는 `report_*.txt`로 저장됩니다. 이 파일 내용을 그대로 공유해 주세요.
+- 도구의 캐시(스냅샷, 색인)와 data 폴더는 테스트 폴더의 `_cache`, `_data`를 쓰고, 캐시는 실행마다 비웁니다. 그래서 여러 번 실행해도 undo 결과가 이전 실행에 섞이지 않고, 도구 폴더의 `cache`/`data`도 건드리지 않습니다. (`config.json`의 `--probe` 결과는 도구 폴더에 그대로 저장됩니다.)
+- 판정: `PASS` / `FAIL` / `MANUAL-SKIP`(`--auto`라 눈 확인 생략) / `ENV-SKIP`(이 PC에 기능이 없음. 예: PDF 추가 기능이 없는 Office 2007의 D1, D4).
 
 ## 그룹
 | 그룹 | 확인 내용 |
