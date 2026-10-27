@@ -1,4 +1,4 @@
-# atomic-cli 1.0 작업계획서
+# office-cli 1.0 작업계획서
 
 - 최종 갱신: 2026-10-27
 - 전제: 이전 이력과 상관없이 **첫 배포(1.0.0)**로 보고 구조를 다시 설계합니다. 기존 34개 파일은 새 진입점이 테스트를 통과하면 한꺼번에 삭제합니다.
@@ -23,7 +23,7 @@
 ## 2. 구조
 
 ```text
-CLI/atomic-cli/
+CLI/office-cli/
 ├── SKILL.md         # OpenCode 스킬 (짧게)
 ├── README.md        # 사람용 상세 설명서
 ├── CHANGELOG.md     # 1.0.0부터 관리 + 하단 "남은 할 일"
@@ -112,7 +112,7 @@ python word.py write --file "<output_file>"
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
-| 0 | `.py` 복원, 정적 검사, 가짜 COM 테스트, CLI/atomic-cli 이동 | 완료 |
+| 0 | `.py` 복원, 정적 검사, 가짜 COM 테스트, CLI/office-cli 이동 | 완료 |
 | 1 | (구 구조) 데이터 손상·창 간섭 P0 수정 15건 | 완료. 새 구조로 그대로 옮김 |
 | 2 | `_runtime.py` + 계약 테스트 | 완료 (`tests/test_runtime.py`) |
 | 3 | `reader.py` (라이브러리 기반, Linux에서 실제 파일로 테스트) | 완료 (`tests/test_reader.py`). HWP 5.0은 실제 파일 검증 필요 |
@@ -174,7 +174,7 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
 
 ## 2. Phase 0: 기반 정비
 
-1. **소스 복원**: merged_code.md를 `atomic-cli/*.py`로 다시 나눠 저장소에서 diff로 추적할 수 있게 합니다. merged_code.md는 반출용 산출물로만 남깁니다.
+1. **소스 복원**: merged_code.md를 `office-cli/*.py`로 다시 나눠 저장소에서 diff로 추적할 수 있게 합니다. merged_code.md는 반출용 산출물로만 남깁니다.
 2. **정적 검사**: `ruff`(pyflakes와 import 정리 규칙)와 `python -m compileall`을 기본 검사로 둡니다.
 3. **오프라인 테스트 장치** (COM이 없어도 돌아가는 부분부터):
    - 순수 로직 단위 테스트:
@@ -407,7 +407,7 @@ Phase 1과 2는 버그 수정만 하고 구조 변경은 최소로 둡니다. �
    - PDF: 페이지 수 상한을 두고, 스캔본은 OCR이 필요하다고 알리기만 하고 Word 대체 경로는 옵션으로 돌립니다.
    - EML: charset 감지(엄격 디코딩 → cp949 → euc-kr → utf-8 순)를 고칩니다. 스레드는 `In-Reply-To`/`References` 헤더 기준으로 묶습니다.
 5. **가시 위치 보정**: ppt_write의 Smart Stacking에 슬라이드 경계 검사, 16:9 너비 반영, 제목 placeholder 사용을 추가합니다.
-6. **관측성**: `ATOMIC_DEBUG=1`일 때만 stderr에 디버그를 출력합니다. 지금은 항상 출력합니다. 도구별 실행 시간과 COM 호출 수를 JSON의 `meta` 필드에 넣습니다.
+6. **관측성**: `OFFICE_CLI_DEBUG=1`일 때만 stderr에 디버그를 출력합니다. 지금은 항상 출력합니다. 도구별 실행 시간과 COM 호출 수를 JSON의 `meta` 필드에 넣습니다.
 7. **README 전면 재작성**
    - 실제 존재하는 모듈과 인자 기준으로 다시 씁니다.
    - "0.001초", "100% 보장" 같은 측정되지 않은 수치는 실제 측정값이나 정성적 설명으로 바꿉니다.

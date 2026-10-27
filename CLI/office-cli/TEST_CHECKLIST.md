@@ -1,14 +1,14 @@
-# atomic-cli 1.0 Windows 실기 테스트
+# office-cli 1.0 Windows 실기 테스트
 
 ## 실행
-`CLI/atomic-cli` 폴더에서 실행합니다.
+`CLI/office-cli` 폴더에서 실행합니다.
 ```bat
 python tools/run_win_tests.py
 python tools/run_win_tests.py --self-email 본인주소     :: G3 실제 발송 테스트 포함
 python tools/run_win_tests.py --only H                  :: 일부 그룹만
 python tools/run_win_tests.py --skip-outlook --auto     :: Outlook 제외, 질문 없이 자동 판정 항목만
 ```
-- 테스트 파일(A/B .xlsx .docx .pptx)은 `C:\atomic_test`에 자동으로 만듭니다(`--dir`로 변경 가능).
+- 테스트 파일(A/B .xlsx .docx .pptx)은 `C:\office_test`에 자동으로 만듭니다(`--dir`로 변경 가능).
 - 실행 전에 다른 Office 문서는 저장하고 닫아 주세요. 실행 중에는 Office 창을 직접 만지지 마세요.
 - 결과는 `report_*.txt`로 저장됩니다. 이 파일 내용을 그대로 공유해 주세요.
 - 도구의 캐시(스냅샷, 색인)와 data 폴더는 테스트 폴더의 `_cache`, `_data`를 쓰고, 캐시는 실행마다 비웁니다. 그래서 여러 번 실행해도 undo 결과가 이전 실행에 섞이지 않고, 도구 폴더의 `cache`/`data`도 건드리지 않습니다. (`config.json`의 `--probe` 결과는 도구 폴더에 그대로 저장됩니다.)

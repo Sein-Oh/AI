@@ -1,4 +1,4 @@
-"""atomic-cli Office COM 공통 모듈 (excel.py, word.py, ppt.py, office.py가 사용).
+"""office-cli Office COM 공통 모듈 (excel.py, word.py, ppt.py, office.py가 사용).
 
 - 대상 해석: "active" / 열린 문서 이름 / 파일 경로 -> 실제 문서
 - 세션: 사용자가 연 문서는 그대로 사용(닫지 않음), 닫힌 파일은 전용 백그라운드 인스턴스로 열고 정리

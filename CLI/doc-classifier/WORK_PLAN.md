@@ -101,18 +101,18 @@
 | 판정 | 같은 규칙 JSON의 키워드로 확인: 읽은 텍스트에 그 카테고리의 키워드가 있으면 `confirmed`, 다른 카테고리 키워드가 더 많으면 `changed`(새 카테고리 제안), 텍스트가 없으면 `no_text`(스캔 PDF 등), 실패는 `unreadable` + 이유. 확장자 키워드만 있는 카테고리(예: 도면)는 형식이 맞으면 `confirmed` |
 | 기록 | 판정, 짧은 발췌(200자), 읽은 시간. 원문 전체는 저장하지 않음(DB 크기와 보안) |
 | 결과 | 분류별 확인율(confirmed / 표본 수). 확인율이 낮은 분류는 규칙 보완 대상으로 `recommendations`에 |
-| 재사용 | PDF는 `import pymupdf`(옛 이름 `fitz`는 사용 중단 예정). 파서는 atomic-cli `reader.py`의 검증된 코드(HWP 제어문자, PPTX 순서 등)를 "앞부분만 읽기"로 줄여 이 폴더에 둡니다. 도구 폴더는 단독 배포 가능해야 하므로 다른 도구를 import하지 않음 |
+| 재사용 | PDF는 `import pymupdf`(옛 이름 `fitz`는 사용 중단 예정). 파서는 office-cli `reader.py`의 검증된 코드(HWP 제어문자, PPTX 순서 등)를 "앞부분만 읽기"로 줄여 이 폴더에 둡니다. 도구 폴더는 단독 배포 가능해야 하므로 다른 도구를 import하지 않음 |
 
 ### 3.4 summary / list
 
 - `summary`: 형식별·분류별 개수와 용량, 상위 폴더별 분포, 확인율, 오류/건너뜀 요약, 중복 후보 수, 오래된 파일 비율. JSON은 상위 N개로 잘라 LLM에 맞는 크기 유지(`truncated` + 이어보기 명령).
 - `--save 보고서.xlsx` (사용자 결정: 결과는 엑셀): 시트는 `요약`(카테고리별 개수·용량·확인율), `카테고리별`(카테고리마다 상위 폴더 분포), `확인 결과`(peek 표본과 판정·발췌), `미분류 단어`(규칙 보완용), `오류·건너뜀`, `파일 목록`. openpyxl 쓰기 전용 모드로 메모리 일정하게 저장.
   - 파일 목록이 한 시트 한도(1,048,576행)를 넘으면 `파일 목록 2`, `3`...으로 나누고, 그래도 너무 크면(기본 300만 행 초과) 목록만 csv로 따로 저장하고 엑셀에는 요약만 둡니다.
-- `list`: `--category 회의록 --ext hwp --since 2025-01 --folder ...` 조건 조회, 페이지 단위(`--page`, 기본 100행). 결과 경로를 atomic-cli `reader.py read`나 다른 도구로 넘길 수 있게 `next_commands` 제공.
+- `list`: `--category 회의록 --ext hwp --since 2025-01 --folder ...` 조건 조회, 페이지 단위(`--page`, 기본 100행). 결과 경로를 office-cli `reader.py read`나 다른 도구로 넘길 수 있게 `next_commands` 제공.
 
 ## 4. 명령 체계 (초안)
 
-진입점 1개, 동사형 하위 명령 (atomic-cli와 같은 방식).
+진입점 1개, 동사형 하위 명령 (office-cli와 같은 방식).
 
 ```bat
 python doc_classifier.py scan     --root "D:\자료" [--job 이름] [--exclude "*\node_modules\*"] [--max-depth N] [--time-limit 3600] [--resume]
@@ -136,7 +136,7 @@ CLI/doc-classifier/
 ├── WORK_PLAN.md        # 이 문서
 ├── requirements.txt    # pywin32, pymupdf, olefile, openpyxl, python-docx, python-pptx (모두 표준 환경, WinPython 복사본에 포함)
 ├── doc_classifier.py   # 진입점 (scan / classify / peek / summary / list / jobs)
-├── _dc_runtime.py      # 응답 계약, 로그, 경로 (atomic-cli 것과 같은 계약, 단독 배포를 위해 복사)
+├── _dc_runtime.py      # 응답 계약, 로그, 경로 (office-cli 것과 같은 계약, 단독 배포를 위해 복사)
 ├── _dc_store.py        # SQLite 스키마, 묶음 기록, 진행 상태, 작업 잠금
 ├── _dc_scan.py         # 목록화: 폴더 대기열(DB), 속성/링크/클라우드 판정, 우선순위, 상한
 ├── _dc_rules.py        # 규칙 JSON 읽기·검증, 키워드 정규화, 점수 계산, 형식(kind) 표
@@ -145,7 +145,7 @@ CLI/doc-classifier/
 ├── tools/run_win_tests.py   # Windows 실기 테스트 (대용량 트리, 자리표시자, 정션, 긴 경로, 잠긴 파일)
 └── tests/              # 오프라인 테스트 (가짜 트리 생성기 포함)
 ```
-- 내부 모듈은 `_dc_` 접두어: 저장소 pytest가 한 세션에서 모든 도구를 돌리므로 atomic-cli의 `_runtime` 등과 이름이 겹치지 않게 합니다.
+- 내부 모듈은 `_dc_` 접두어: 저장소 pytest가 한 세션에서 모든 도구를 돌리므로 office-cli의 `_runtime` 등과 이름이 겹치지 않게 합니다.
 
 ## 6. 진행 단계
 

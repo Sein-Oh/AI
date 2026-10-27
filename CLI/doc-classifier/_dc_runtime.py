@@ -4,7 +4,7 @@
 - 인자 파서(JsonArgumentParser): 인자 오류도 JSON으로 응답 (exit 2)
 - 로그: stderr, 태그 [INFO] [PROGRESS] [WARN] [ERROR] [STATUS] (상세 로그는 DOCCLS_VERBOSE=1일 때만)
 - 경로: data 폴더, 다음 명령(next_commands) 구성, 이름 추천([추천])
-도구 폴더를 단독으로 복사해 쓸 수 있도록 다른 도구의 런타임을 import하지 않습니다 (계약은 atomic-cli와 같음).
+도구 폴더를 단독으로 복사해 쓸 수 있도록 다른 도구의 런타임을 import하지 않습니다 (계약은 office-cli와 같음).
 """
 import argparse
 import datetime as _dt
