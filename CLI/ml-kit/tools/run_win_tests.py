@@ -299,7 +299,10 @@ def test_all(ctx, only):
     def m8():
         d, c, o, e = run_tool("ml_train.py", "-f", ctx.path("품질 등급.csv"), "-x", "반응온도,촉매비율,수분함량",
                               "-y", "품질등급", "--task", "classification", "--desc", "등급 분류")
-        cmds = [x["command"] for x in (d or {}).get("next_commands", []) if "<" not in x["command"]]
+        nexts = (d or {}).get("next_commands", [])
+        flagged_ok = all(isinstance(x.get("needs_input"), bool) and (x["needs_input"] == ("<" in x["command"]))
+                         for x in nexts)
+        cmds = [x["command"] for x in nexts if not x.get("needs_input")]
         if not cmds:
             record(ctx, "M8", "next_commands를 cmd.exe / PowerShell에 그대로 실행", False, "실행할 next_commands 없음", d, c, e)
             return
@@ -308,9 +311,9 @@ def test_all(ctx, only):
         for kind in ("cmd", "powershell"):
             rd, rc, ro, re_ = run_shell(cmd, kind, f"next_commands via {kind}")
             results[kind] = ((rd or {}).get("status"), (rd or {}).get("version"), rc, re_[-200:] if not ok_(rd) else "")
-        ok = ok_(d) and all(v[0] == "ok" for v in results.values())
-        record(ctx, "M8", "next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호)", ok,
-               f"명령={cmd[-120:]!r}, 결과={results}", d, c, e)
+        ok = ok_(d) and flagged_ok and all(v[0] == "ok" for v in results.values())
+        record(ctx, "M8", "next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호) + needs_input 표시", ok,
+               f"needs_input 표시 정확={flagged_ok}, 명령={cmd[-120:]!r}, 결과={results}", d, c, e)
 
     def m9():
         vd = (s.get("m1") or {}).get("version_dir")

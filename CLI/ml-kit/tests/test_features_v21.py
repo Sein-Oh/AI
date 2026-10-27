@@ -119,6 +119,25 @@ def test_next_command_runs(tmp_path):
     assert out["status"] == "ok", proc.stderr[-2000:]
 
 
+def test_next_commands_flag_placeholders_and_put_runnable_first(tmp_path):
+    # 실기 M8: 목표 달성 시 next_commands[0]이 <새데이터.xlsx> 자리표시자 명령이라 SKILL대로 그대로 실행하면 실패했음
+    data = make_sample(str(tmp_path / "goal.csv"))
+    payload = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,압축압력,촉매비율,수분함량", "-y", "생산효율")
+    assert payload["mean_val_score"] >= 0.9, payload
+    cmds = payload["next_commands"]
+    assert all(isinstance(c["needs_input"], bool) for c in cmds)
+    assert cmds[0]["needs_input"] is False and "<" not in cmds[0]["command"] and "ml_report.py" in cmds[0]["command"]
+    flagged = [c for c in cmds if c["needs_input"]]
+    assert flagged and all(c["placeholder"] in c["command"] for c in flagged)
+    assert cmds.index(flagged[0]) > 0                                   # 자리표시자 명령은 뒤에
+    assert "needs_input" in payload["agent_directive"]
+
+    cls = make_class_sample(str(tmp_path / "cls.csv"))                  # 목표 미달: 재학습 명령은 모두 바로 실행 가능
+    payload = run_tool("ml_train.py", "-f", cls, "-x", "반응온도,촉매비율,수분함량", "-y", "품질등급", "--task", "classification")
+    if payload["mean_val_score"] < 0.9:
+        assert payload["next_commands"] and all(c["needs_input"] is False for c in payload["next_commands"])
+
+
 def test_positive_class_threshold(tmp_path):
     data = make_class_sample(str(tmp_path / "bin.csv"), n=200, imbalanced=True)
     payload = run_tool("ml_train.py", "-f", data, "-x", "반응온도,촉매비율,수분함량", "-y", "품질등급",
