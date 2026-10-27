@@ -393,9 +393,9 @@ def cmd_list(args) -> Dict[str, Any]:
         if res["page"] < res["pages"]:
             argv = [a for a in (args._argv or []) if a]
             nexts.append(rt.next_command(_with_page(argv, res["page"] + 1), f"다음 페이지 ({res['page'] + 1}/{res['pages']})"))
-        reader = os.path.join(os.path.dirname(rt.TOOL_DIR), "atomic-cli", "reader.py")
+        reader = os.path.join(os.path.dirname(rt.TOOL_DIR), "office-cli", "reader.py")
         if os.path.exists(reader) and res["items"]:
-            item = {"purpose": "파일 하나의 내용 읽기 (atomic-cli)", "needs_input": True, "placeholder": "<파일 경로>",
+            item = {"purpose": "파일 하나의 내용 읽기 (office-cli)", "needs_input": True, "placeholder": "<파일 경로>",
                     "command": f"python {rt.quote_arg(reader)} read --file \"<파일 경로>\""}
             nexts.append(item)
         cond = ", ".join(f"{k}={v}" for k, v in res["filters"].items()) or "조건 없음"

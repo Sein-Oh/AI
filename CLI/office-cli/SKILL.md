@@ -1,14 +1,14 @@
 ---
-name: atomic-cli
+name: office-cli
 description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표/수식/차트/서식, 본문/표/그림, 슬라이드), 앱 사이로 차트·표·내용을 옮기고(office.py transfer), Outlook 메일을 조회·작성하고, PDF/HWP/EML/Office 파일을 Office 없이 읽고 검색한다(reader.py). 작업 전 자동 스냅샷으로 되돌리기(office.py undo)를 지원한다. 엑셀 표/그래프 만들기, 보고서·발표자료 작성, 문서 내용 검색 후 다른 문서에 넣기, 메일 답장 작성 요청 시 사용.
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
   platform: windows
 ---
 
-# atomic-cli 스킬 (Windows)
+# office-cli 스킬 (Windows)
 
 `<SKILL_DIR>` 는 이 SKILL.md 가 있는 폴더의 절대 경로다. 모든 명령은 **1회 실행**으로 끝난다.
 stdout 의 **1줄 JSON** 만 읽는다 (stderr 의 `[PROGRESS]` 로그는 무시).

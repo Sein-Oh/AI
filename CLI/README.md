@@ -5,7 +5,7 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 | 도구 | 설명 | 스킬 |
 |---|---|---|
 | [`ml-kit/`](ml-kit/) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`ml-kit/SKILL.md`](ml-kit/SKILL.md) |
-| [`atomic-cli/`](atomic-cli/) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/EML 읽기와 검색 | [`atomic-cli/SKILL.md`](atomic-cli/SKILL.md) |
+| [`office-cli/`](office-cli/) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/EML 읽기와 검색 | [`office-cli/SKILL.md`](office-cli/SKILL.md) |
 | [`doc-classifier/`](doc-classifier/) | 폴더 전체 파일 목록화 -> 파일명 분류 -> 표본 내용 확인 -> 엑셀 보고서 (0.9.2, Windows 실기 대기). 12TB급 대용량 대비 | [`doc-classifier/SKILL.md`](doc-classifier/SKILL.md) |
 
 에이전트 런타임은 **OpenCode** 입니다. 각 도구 폴더가 그대로 OpenCode 스킬 폴더이며, 폴더 이름 = 스킬 이름

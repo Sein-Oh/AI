@@ -16,6 +16,9 @@
 - SKILL.md를 26B~30B 경량 모델용으로 다시 씀: 처음에 `jobs`로 기존 작업 확인(재목록화 방지), 단계별 명령,
   사용자 기준으로 규칙 JSON 만드는 법, 명령별로 보고할 키, 결과 처리 표, 금지 사항(같은 명령 반복, 페이지 끝까지 넘기기, 파일 이동).
 
+### 수정
+- main의 `atomic-cli` -> `office-cli` 이름 변경을 반영: `list`의 `next_commands`가 `office-cli\reader.py read`를 가리키게 함 (이전 경로는 없어서 안내가 빠졌음).
+
 ### 테스트
 - 오프라인 89개: 오류 기록(성공 미기록, 입력/인자/내부 오류, traceback은 내부 오류만, 크기 넘김, 기록 실패해도 응답 유지),
   SKILL.md 형식·버전 일치·언급한 명령과 옵션이 실제로 있는지·길이 상한.
@@ -89,7 +92,7 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 
 ### 구조
 - 진입점 `doc_classifier.py` (`scan`, `jobs`). 내부 모듈 `_dc_runtime.py`(응답 계약), `_dc_store.py`(SQLite, 작업 잠금), `_dc_scan.py`(목록화).
-  저장소 pytest가 한 세션에서 모든 도구를 돌리므로 atomic-cli의 `_runtime`과 겹치지 않게 `_dc_` 접두어를 씁니다.
+  저장소 pytest가 한 세션에서 모든 도구를 돌리므로 office-cli의 `_runtime`과 겹치지 않게 `_dc_` 접두어를 씁니다.
 - 작업 1개 = SQLite 파일 1개(`data\<작업>.db`, `DOCCLS_DATA_DIR`로 변경). classify/peek가 채울 열을 미리 둡니다.
 - 저장소 ACI 계약: stdout 1줄 JSON, exit 0/1/2/130, `VERIFIED:`/`STOP_RETRY:`/`ERROR:`, `next_commands`의 `needs_input`.
 

@@ -7,7 +7,7 @@ import pytest
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TESTS_DIR)
 # 루트 pytest.ini가 --import-mode=importlib를 쓰므로 도구 폴더를 직접 경로에 등록.
-# 내부 모듈은 _dc_ 접두어라 같은 세션의 atomic-cli(_runtime 등)와 이름이 겹치지 않음
+# 내부 모듈은 _dc_ 접두어라 같은 세션의 office-cli(_runtime 등)와 이름이 겹치지 않음
 for p in (ROOT, TESTS_DIR):           # TESTS_DIR: 도우미 dc_tree.py
     if p not in sys.path:
         sys.path.insert(0, p)

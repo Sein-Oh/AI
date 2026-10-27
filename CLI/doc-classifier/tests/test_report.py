@@ -153,6 +153,8 @@ def test_list_filters_and_pages(job, run):
     assert code == 0 and out["total"] == 6 and out["pages"] == 2 and len(out["items"]) == 4
     nxt = out["next_commands"][0]["command"]
     assert nxt.endswith("--page 2") and "--category 계약서" in nxt
+    reader = out["next_commands"][1]
+    assert reader["needs_input"] and os.path.join("office-cli", "reader.py") in reader["command"] and " read --file " in reader["command"]
     code, out = run("list", "--job", "r", "--category", "계약서", "--page-size", "4", "--page", "2")
     assert len(out["items"]) == 2 and not any("다음 페이지" in c["purpose"] for c in out["next_commands"])
     assert run("list", "--job", "r", "--ext", "hwp,.DWG")[1]["total"] == 7

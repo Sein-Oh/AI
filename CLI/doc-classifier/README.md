@@ -202,7 +202,7 @@ python doc_classifier.py list --job 자료 --category 미분류 --page 2
 | `--sort path\|size\|mtime\|name`, `--desc` | 정렬 |
 | `--page`, `--page-size` | 페이지 (기본 100행, 최대 1000) |
 
-- 결과: `total`, `total_size`, `page`, `pages`, `items`(경로, 크기, 수정일, 형식, 카테고리, 신뢰도, 확인 결과), `next_commands`(다음 페이지, atomic-cli `reader.py read`로 내용 읽기).
+- 결과: `total`, `total_size`, `page`, `pages`, `items`(경로, 크기, 수정일, 형식, 카테고리, 신뢰도, 확인 결과), `next_commands`(다음 페이지, office-cli `reader.py read`로 내용 읽기).
 - 분류 전에도 `--ext`, `--folder` 등 목록 정보 조회는 됩니다.
 
 ## 7. DB 구조 (`data\<작업>.db`)

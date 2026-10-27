@@ -548,7 +548,7 @@ def cmd_replace(args) -> Dict[str, Any]:
 def _working_copy(app: Any, doc: Any) -> Tuple[Any, str]:
     """현재 메모리 상태(미저장 포함)를 창 없는 사본 문서로 엽니다. 원본은 그대로."""
     import tempfile
-    fd, tmp = tempfile.mkstemp(prefix="atomic_word_", suffix=".xml")
+    fd, tmp = tempfile.mkstemp(prefix="office_word_", suffix=".xml")
     os.close(fd)
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(doc.WordOpenXML)

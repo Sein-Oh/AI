@@ -248,7 +248,7 @@ def run(tmp_env, *args):
 
 @pytest.fixture
 def env(tmp_path):
-    return dict(os.environ, ATOMIC_DATA_DIR=str(tmp_path / "data"), ATOMIC_CACHE_DIR=str(tmp_path / "cache"))
+    return dict(os.environ, OFFICE_CLI_DATA_DIR=str(tmp_path / "data"), OFFICE_CLI_CACHE_DIR=str(tmp_path / "cache"))
 
 
 def test_cli_read_pages_and_summary(samples, env):

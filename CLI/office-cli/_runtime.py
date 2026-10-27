@@ -1,9 +1,9 @@
-"""atomic-cli 공통 런타임 (pywin32 없이 import 가능).
+"""office-cli 공통 런타임 (pywin32 없이 import 가능).
 
 모든 진입점(excel.py, word.py, ppt.py, outlook.py, reader.py, office.py)이 공유하는 기능:
 - ACI 응답 계약: stdout 정확히 1줄 JSON, exit 0/1/2/130, agent_directive VERIFIED:/STOP_RETRY:/ERROR:
 - 인자 파서(JsonArgumentParser): 인자 오류도 JSON으로 응답 (exit 2)
-- 로그: stderr, 태그 [INFO] [PROGRESS] [WARN] [ERROR] [STATUS] (상세 로그는 ATOMIC_VERBOSE=1일 때만)
+- 로그: stderr, 태그 [INFO] [PROGRESS] [WARN] [ERROR] [STATUS] (상세 로그는 OFFICE_CLI_VERBOSE=1일 때만)
 - 경로: 설정(config.json), data 폴더, 작업 폴더(_work), 입력/출력 경로 해석
 - 텍스트/CSV 입출력: 인코딩 자동 판별, 잠금 파일 대비 저장
 - 결과 길이 제한, 이름 추천([추천]), 다음 명령(next_commands) 구성
@@ -46,7 +46,7 @@ def setup_console() -> None:
 
 
 def _verbose() -> bool:
-    return os.environ.get("ATOMIC_VERBOSE", "") not in ("", "0", "false", "False")
+    return os.environ.get("OFFICE_CLI_VERBOSE", "") not in ("", "0", "false", "False")
 
 
 def log(tag: str, message: str) -> None:
@@ -59,7 +59,7 @@ def log(tag: str, message: str) -> None:
 
 
 def debug(message: str) -> None:
-    """상세 로그. ATOMIC_VERBOSE=1일 때만 [INFO] 태그로 출력합니다."""
+    """상세 로그. OFFICE_CLI_VERBOSE=1일 때만 [INFO] 태그로 출력합니다."""
     if _verbose():
         log("INFO", message)
 
@@ -282,13 +282,13 @@ def _dir_setting(env_name: str, cfg_key: str, default: str) -> str:
 
 
 def get_data_dir() -> str:
-    """사용자 데이터 폴더. 우선순위: ATOMIC_DATA_DIR > config.json data_dir > <도구폴더>/data"""
-    return _dir_setting("ATOMIC_DATA_DIR", "data_dir", os.path.join(TOOL_DIR, "data"))
+    """사용자 데이터 폴더. 우선순위: OFFICE_CLI_DATA_DIR > config.json data_dir > <도구폴더>/data"""
+    return _dir_setting("OFFICE_CLI_DATA_DIR", "data_dir", os.path.join(TOOL_DIR, "data"))
 
 
 def get_cache_dir() -> str:
-    """캐시 폴더 (읽은 문서 텍스트, 색인, 스냅샷). 우선순위: ATOMIC_CACHE_DIR > config.json cache_dir > <도구폴더>/cache"""
-    return _dir_setting("ATOMIC_CACHE_DIR", "cache_dir", os.path.join(TOOL_DIR, "cache"))
+    """캐시 폴더 (읽은 문서 텍스트, 색인, 스냅샷). 우선순위: OFFICE_CLI_CACHE_DIR > config.json cache_dir > <도구폴더>/cache"""
+    return _dir_setting("OFFICE_CLI_CACHE_DIR", "cache_dir", os.path.join(TOOL_DIR, "cache"))
 
 
 def get_work_dir() -> str:
