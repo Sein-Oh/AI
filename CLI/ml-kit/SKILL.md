@@ -38,13 +38,16 @@ metadata:
 
 타겟이 숫자(수율, 온도, 강도)면 회귀, 글자나 등급(양품/불량, A/B/C)이면 분류다. 모르면 사용자에게 묻는다.
 
+**타겟이 여러 개면 `-y`에 쉼표로 모두 넣어 1번에 학습한다** (예: `-y "수율,강도,두께"`). 타겟마다 따로 학습하지 않는다.
+한 번에 학습해야 버전 1개에 모든 타겟이 들어가고 보고서도 1개로 나온다.
+
 회귀:
 ```powershell
-python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --desc "<데이터 설명 한 줄>"
+python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟1>,<타겟2>" --desc "<데이터 설명 한 줄>"
 ```
 분류:
 ```powershell
-python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --task classification --desc "<데이터 설명 한 줄>"
+python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟1>,<타겟2>" --task classification --desc "<데이터 설명 한 줄>"
 ```
 
 필요할 때만 덧붙이는 옵션:
@@ -55,11 +58,13 @@ python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2
 | 분류에서 놓치면 안 되는 값이 있다 (예: 불량) | `--positive-class 불량` |
 | 숫자로 된 코드(101, 102)를 종류로 다뤄야 한다 | `--dtypes "설비코드:str"` |
 | 피처가 10개 이상이다 | 파일 쓰기 도구로 한 줄에 피처 하나씩 쓴 `features.txt`(UTF-8)를 데이터 파일 옆에 만들고 `-x "<그 경로>"` |
+| 숫자 타겟과 등급 타겟이 섞여 있다 | 회귀 타겟끼리 1번, 분류 타겟끼리 `--task classification`으로 1번 (모두 2번) |
 
 - 컬럼명의 단위는 빼도 된다 (`반응온도` = `반응온도(°C)`).
 - 날짜 컬럼과 글자 컬럼(라인, 설비)도 `-x`에 그대로 넣는다.
 
 결과 JSON에서 사용자에게 알릴 것: `version`, `mean_val_score`(1에 가까울수록 좋음), `recommendations`의 첫 문장.
+결과 JSON에 `split_targets_detected`가 있으면 (같은 데이터를 타겟별로 따로 학습한 경우) 그 타겟들을 함께 학습할지 사용자에게 묻고, 원하면 `next_commands[0]`을 그대로 실행한다.
 다음 단계를 위해 기억할 것: `version_dir`, `goal_met`, `next_commands`.
 
 ## 3단계: 성능 개선
@@ -97,6 +102,8 @@ python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>
 ```powershell
 python "C:\CLI\ml-kit\ml_report.py" -m "<version_dir>"
 ```
+- 보고서는 **버전 1개에 1개**이고, 그 버전의 모든 타겟이 한 문서에 들어간다. 버전마다, 타겟마다 따로 만들지 않는다.
+- `<version_dir>`은 마지막 학습 결과의 `version_dir`이다. 사용자가 버전을 말하지 않으면 그 버전 1개로만 만든다.
 - 알릴 것: `report_file`(링크), `overall_verdict`(적합/조건부/부적합).
 - 사용자가 보고서 문장을 직접 정해 주면, 파일 쓰기 도구로 `slots.json`(UTF-8)을 만들고 명령 끝에 `--slots "<그 경로>"`를 붙인다.
   형식: `{"summary": "<요약 문장>", "operation": "<운영 문장>"}`
