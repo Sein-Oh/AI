@@ -46,6 +46,12 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
+VERSION = "2.3.1"                         # must equal SKILL.md metadata.version (tests check it)
+TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
+TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
+ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
+CURRENT_ARGV: Optional[List[str]] = None  # full command (script + args) for the error log; None = sys.argv
+
 def setup_console() -> None:
     """Forces UTF-8 on stdout/stderr (Windows consoles and pipes default to CP949)."""
     for stream in (sys.stdout, sys.stderr):
@@ -139,8 +145,67 @@ def _with_recovered(payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+_RECOVERY_ATTEMPTS: List[str] = []
+
+
+def record_recovery_attempt(msg: str) -> None:
+    """Records a JIT recovery that hit its limit (R4); written as the '복구 시도:' line of the error log (R6)."""
+    _RECOVERY_ATTEMPTS.append(str(msg)[:200])
+
+
+# ------------------------------------------------------------------------------
+# Error log (R6): failed runs are appended to <data>/logs/errors.txt for later analysis
+# by people and development agents. The path is never put in stdout JSON.
+# ------------------------------------------------------------------------------
+
+def get_data_dir() -> str:
+    """Tool data folder: ML_KIT_DATA_DIR > <tool folder>/data (not created here)."""
+    return os.path.abspath(os.environ.get("ML_KIT_DATA_DIR") or os.path.join(TOOL_DIR, "data"))
+
+
+def error_log_path() -> str:
+    return os.path.join(get_data_dir(), "logs", "errors.txt")
+
+
+def quote_arg(value: Any) -> str:
+    """Quotes one command-line argument the way cmd.exe expects (for logs and next_commands)."""
+    s = str(value)
+    if s and all(ch not in s for ch in ' \t"&|<>^()%,;='):
+        return s
+    return '"' + s.replace('"', '\\"') + '"'
+
+
+def write_error_log(payload: Dict[str, Any], trace: str = "", argv: Optional[List[str]] = None) -> None:
+    """Appends one failed run to errors.txt. Never raises: logging must not break the 1-line JSON contract.
+    Only paths and arguments are recorded (no document contents)."""
+    try:
+        import platform
+        path = error_log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:  # rotation failure must not lose the entry
+            if os.path.exists(path) and os.path.getsize(path) > ERROR_LOG_MAX:
+                os.replace(path, path[:-4] + ".old.txt")
+        except Exception:
+            pass
+        if argv is None:
+            argv = CURRENT_ARGV if CURRENT_ARGV is not None else [os.path.basename(sys.argv[0] or "")] + sys.argv[1:]
+        lines = [f"===== {datetime.now().isoformat(timespec='seconds')} | {TOOL_NAME} {VERSION} | "
+                 f"Python {platform.python_version()} | {platform.platform()}",
+                 f"명령: {' '.join(quote_arg(a) for a in argv)}",
+                 f"결과: {payload.get('error_type')} | {payload.get('message')}"]
+        if _RECOVERY_ATTEMPTS:
+            lines.append(f"복구 시도: {'; '.join(_RECOVERY_ATTEMPTS)}")
+        if trace:
+            lines.append("traceback:\n" + trace.rstrip())
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n\n")
+    except Exception:
+        pass
+
+
 def run_cli(execute: Callable[[], Dict[str, Any]], hint: str = "") -> None:
-    """Runs a tool body, guaranteeing exactly one JSON line on stdout and exit code 0/1/130."""
+    """Runs a tool body, guaranteeing exactly one JSON line on stdout and exit code 0/1/130.
+    Failures (exit 1) are appended to <data>/logs/errors.txt; interruptions (130) are not."""
     try:
         result = execute()
     except KeyboardInterrupt as e:
@@ -148,8 +213,12 @@ def run_cli(execute: Callable[[], Dict[str, Any]], hint: str = "") -> None:
         emit_json_response(_with_recovered(error_payload(e)))
         sys.exit(130)
     except Exception as e:
+        import traceback
+        trace = traceback.format_exc()
         sys.stderr.write(f"\n[ERROR] {e}\n")
-        emit_json_response(_with_recovered(error_payload(e, hint)))
+        payload = _with_recovered(error_payload(e, hint))
+        write_error_log(payload, trace if payload.get("error_type") == "internal" else "")
+        emit_json_response(payload)
         sys.exit(1)
     emit_json_response(_with_recovered(result))
 
@@ -159,12 +228,14 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
-        emit_json_response({
+        payload = {
             "status": "error",
             "error_type": "input",
             "message": f"CLI 인자 오류: {message}",
             "agent_directive": "STOP_RETRY: Invalid CLI arguments. Check the option names in SKILL.md and report to the user.",
-        })
+        }
+        write_error_log(payload)
+        emit_json_response(payload)
         sys.exit(2)
 
 
@@ -706,6 +777,7 @@ def retry_fs(fn: Callable[[], Any], attempts: int = 6, delay: float = 0.5) -> An
             return fn()
         except PermissionError:
             if i == attempts - 1:
+                record_recovery_attempt(f"파일 작업 {attempts}회 재시도 실패")
                 raise
             time.sleep(delay * (i + 1))
 

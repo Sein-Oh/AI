@@ -32,6 +32,11 @@ import traceback
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOOLS_DIR = os.path.join(ROOT, "tools")
+if TOOLS_DIR not in sys.path:
+    sys.path.insert(0, TOOLS_DIR)
+import win_test_rules as rules   # noqa: E402  (판단 규칙: 끝내도 되는 프로세스, 문서 없음 오류)
+
 PY = sys.executable
 CMD_TIMEOUT = 120
 RUN_ENV = {}   # 도구에 넘길 환경변수 (테스트 폴더 전용 캐시/데이터 폴더). main()에서 채움
@@ -69,6 +74,13 @@ except ImportError:
     sys.exit(1)
 
 
+class TestDocMissing(Exception):
+    """테스트 문서(A.xlsx 등)가 닫혀 있고 다시 열지도 못함. 그 문서를 쓰는 항목은 바로 ERROR로 끝냅니다."""
+    def __init__(self, name):
+        super().__init__(f"테스트 문서 {name}가 닫혀 다시 열지 못함")
+        self.name = name
+
+
 class SetupError(Exception):
     """테스트 준비(파일 만들기, 창 열기)가 실패해 테스트를 진행할 수 없음."""
     def __init__(self, label, detail="", trace=""):
@@ -89,6 +101,10 @@ class Ctx:
         self.start_time = time.time()           # 이 시각 뒤에 생긴 Office 프로세스만 정리 대상
         self.stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.mark = (0, 0)                      # 현재 항목이 시작된 CALLS, LOG_LINES 위치
+        self.docs_ready = False                 # A 문서를 화면에 연 뒤부터 '닫힌 테스트 문서 다시 열기'를 함
+        self.unrecoverable = set()              # 이번 그룹에서 다시 열지 못한 테스트 문서 (그룹마다 다시 시도)
+        self.recoveries = []                    # 러너 자동 복구 기록 (errors_*.txt)
+        self.cleanup_log = []                   # 창/프로세스 정리 기록 (errors_*.txt)
 
     def path(self, name):
         return os.path.join(self.dir, name)
@@ -142,37 +158,56 @@ def ask(ctx, question):
 
 
 def com_retry(fn, tries=10, delay=0.5):
-    """Office가 바쁠 때(RPC_E_CALL_REJECTED 등) 잠시 기다렸다가 재시도합니다."""
+    """Office가 바쁠 때(RPC_E_CALL_REJECTED 등) 잠시 기다렸다가 재시도합니다.
+    '그 이름의 문서/시트 없음'(DISP_E_BADINDEX)과 테스트 문서 없음은 바쁜 것이 아니므로 바로 올립니다
+    (중첩된 com_retry가 10x10회씩 기다리며 멈춘 것처럼 보이던 문제)."""
     last = None
     for _ in range(tries):
         try:
             return fn()
+        except TestDocMissing:
+            raise
         except Exception as e:
+            if rules.is_missing_doc_error(e):
+                raise
             last = e
             time.sleep(delay)
     raise last
 
 
+_WAITING = [0]   # wait_for 안에서는 닫힌 테스트 문서를 다시 열지 않음 (undo가 다시 여는 중일 수 있음)
+
+
 def wait_for(fn, timeout=40, delay=1.0):
     end = time.time() + timeout
-    while time.time() < end:
-        try:
-            v = fn()
-            if v:
-                return v
-        except Exception:
-            pass
-        time.sleep(delay)
-    return None
+    _WAITING[0] += 1
+    try:
+        while time.time() < end:
+            try:
+                v = fn()
+                if v:
+                    return v
+            except Exception:
+                pass
+            time.sleep(delay)
+        return None
+    finally:
+        _WAITING[0] -= 1
 
 
-def process_count(image):
+def process_pids(image):
+    """실행 중인 프로세스 PID 목록. 확인 실패는 None."""
     try:
         out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"],
                              capture_output=True).stdout.decode("cp949", errors="replace")
-        return sum(1 for line in out.splitlines() if line.lower().startswith(f'"{image.lower()}"'))
+        return rules.parse_tasklist_pids(out, image)
     except Exception:
-        return -1
+        return None
+
+
+def process_count(image):
+    pids = process_pids(image)
+    return -1 if pids is None else len(pids)
 
 
 def describe_com_error(e):
@@ -254,6 +289,12 @@ def run_test(ctx, tid, title, fn):
     log(f"\n[{tid}] {title}")
     try:
         fn()
+    except TestDocMissing as e:
+        # 테스트 문서가 닫혀 다시 열지 못함: 이유 하나로 바로 끝냅니다 (항목마다 오래 재시도하지 않음)
+        log(f"  => [ERROR] {tid} {e}")
+        calls, lines = _evidence(ctx)
+        ctx.results.append({"id": tid, "title": title, "status": "ERROR", "detail": str(e),
+                            "calls": calls, "log": lines})
     except Exception as e:
         trace = traceback.format_exc()
         log(f"  => [ERROR] {tid} {e}")
@@ -266,16 +307,114 @@ def run_test(ctx, tid, title, fn):
 # ---------------------------------------------------------------------------
 # Office 객체 조회 (테스트 검증용, office-cli 코드와 독립)
 # ---------------------------------------------------------------------------
-def office_app(kind):
-    """사용자가 띄운 Office 앱. 더블클릭으로 연 Excel은 포커스를 잃기 전까지 ROT에 등록되지 않아
-    GetActiveObject가 실패하므로(MS KB 238610), 창 핸들 바인딩(_office.find_apps)을 먼저 씁니다."""
+CTX = None   # main()에서 채움 (닫힌 테스트 문서 다시 열기와 기록에 사용)
+_COLL = {"excel": "Workbooks", "word": "Documents", "ppt": "Presentations"}
+
+
+def _office_mod():
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
     import _office
+    return _office
+
+
+def office_app(kind):
+    """사용자가 띄운 Office 앱. 더블클릭으로 연 Excel은 포커스를 잃기 전까지 ROT에 등록되지 않아
+    GetActiveObject가 실패하므로(MS KB 238610), 창 핸들 바인딩(_office.find_apps)을 먼저 씁니다."""
+    _office = _office_mod()
     apps = _office.find_apps(kind)
     if apps:
         return apps[0]
     return win32com.client.GetActiveObject(_office.PROG_ID[kind])
+
+
+def _lookup_doc(kind, name):
+    """모든 인스턴스에서 이름으로 문서를 찾습니다 (Excel이 둘이면 앞 인스턴스에 없을 수 있음). 1회만 시도."""
+    _office = _office_mod()
+    apps = _office.find_apps(kind)
+    if not apps:
+        apps = [win32com.client.GetActiveObject(_office.PROG_ID[kind])]
+    last = None
+    for app in apps:
+        try:
+            return getattr(app, _COLL[kind])(name)
+        except Exception as e:
+            last = e
+    raise last
+
+
+def _note_recovery(msg):
+    log(f"[WARN] {msg}")
+    if CTX is not None:
+        CTX.recoveries.append(f"{datetime.now().strftime('%H:%M:%S')} {msg}")
+
+
+def reopen_test_doc(kind, name):
+    """닫혀 있는 테스트 문서를 준비 단계와 같은 방법(더블클릭과 같은 os.startfile)으로 다시 엽니다.
+    다시 열면 True. 못 열면 이번 그룹에서는 다시 시도하지 않도록 표시하고 False."""
+    ctx = CTX
+    if ctx is None or name in ctx.unrecoverable:
+        return False
+    try:
+        os.startfile(ctx.path(name))
+    except Exception as e:
+        ctx.unrecoverable.add(name)
+        _note_recovery(f"{name}가 닫혀 있어 다시 열려고 했으나 실패했습니다: {describe_com_error(e)}")
+        return False
+    _WAITING[0] += 1          # 아래 확인 중에는 다시 열기를 중첩하지 않음
+    try:
+        end = time.time() + 40
+        while time.time() < end:
+            try:
+                _lookup_doc(kind, name)
+                _note_recovery(f"{name}가 닫혀 있어 다시 열었습니다")
+                time.sleep(2)
+                return True
+            except Exception:
+                time.sleep(1)
+    finally:
+        _WAITING[0] -= 1
+    ctx.unrecoverable.add(name)
+    _note_recovery(f"{name}가 닫혀 있어 다시 열려고 했으나 40초 안에 열리지 않았습니다")
+    return False
+
+
+def _get_doc(kind, name):
+    """이름으로 열린 문서를 얻습니다. 테스트 문서(A.*)가 닫혀 있으면 한 번 다시 열고(JIT 복구),
+    다시 열지 못하면 TestDocMissing으로 바로 끝냅니다 (com_retry로 오래 기다리지 않음)."""
+    is_test_doc = rules.TEST_DOCS.get(kind) == name
+    if is_test_doc and CTX is not None and name in CTX.unrecoverable:
+        raise TestDocMissing(name)
+    try:
+        return com_retry(lambda: _lookup_doc(kind, name))
+    except Exception as e:
+        if not (is_test_doc and rules.is_doc_gone_error(e) and CTX is not None and CTX.docs_ready
+                and _WAITING[0] == 0):
+            raise
+        # undo가 문서를 닫았다 다시 여는 중일 수 있으므로 잠시 기다려 본 뒤 다시 엽니다
+        end = time.time() + 5
+        while time.time() < end:
+            time.sleep(1)
+            try:
+                return _lookup_doc(kind, name)
+            except Exception:
+                pass
+        if not reopen_test_doc(kind, name):
+            raise TestDocMissing(name)
+        return com_retry(lambda: _lookup_doc(kind, name))
+
+
+def ensure_test_docs(ctx):
+    """그룹 시작 전: A.xlsx / A.docx / A.pptx가 열려 있는지 확인하고, 닫혀 있으면 다시 엽니다."""
+    ctx.unrecoverable.clear()
+    for kind, name in rules.TEST_DOCS.items():
+        try:
+            _lookup_doc(kind, name)
+        except Exception as e:
+            if rules.is_doc_gone_error(e):           # 바쁜 경우 등은 건드리지 않음 (열려 있는 문서를 다시 열지 않게)
+                reopen_test_doc(kind, name)
+            else:
+                log(f"[WARN] {name} 열림 확인 실패 (다시 열지 않음): {describe_com_error(e)}")
 
 
 def xl_app():
@@ -283,15 +422,15 @@ def xl_app():
 
 
 def xl_wb(name):
-    return com_retry(lambda: xl_app().Workbooks(name))
+    return _get_doc("excel", name)
 
 
 def wd_doc(name):
-    return com_retry(lambda: office_app("word").Documents(name))
+    return _get_doc("word", name)
 
 
 def pp_prs(name):
-    return com_retry(lambda: office_app("ppt").Presentations(name))
+    return _get_doc("ppt", name)
 
 
 def pp_app():
@@ -351,6 +490,10 @@ def isolate_tool_dirs(ctx):
     os.makedirs(cache, exist_ok=True)
     os.makedirs(data, exist_ok=True)
     RUN_ENV.update(OFFICE_CLI_CACHE_DIR=cache, OFFICE_CLI_DATA_DIR=data)
+    try:   # 이전 실행의 도구 오류 기록은 빼고 이번 실행분만 errors_*.txt에 옮겨 담음
+        TOOL_LOG_OFFSET[0] = os.path.getsize(os.path.join(data, "logs", "errors.txt"))
+    except OSError:
+        TOOL_LOG_OFFSET[0] = 0
 
 
 def setup_files(ctx):
@@ -456,6 +599,7 @@ def open_user_windows(ctx):
         log("[ERROR] A.pptx가 열리지 않았습니다.")
         raise SetupError("A.pptx 화면에 열기", "제한 시간 안에 열린 문서를 찾지 못함")
     time.sleep(2)
+    ctx.docs_ready = True
 
 
 # ---------------------------------------------------------------------------
@@ -515,18 +659,29 @@ def test_A(ctx):
             os.remove(c_path)
         import shutil
         shutil.copy2(ctx.path("B.xlsx"), c_path)
-        before = process_count("EXCEL.EXE")
+        pids0 = process_pids("EXCEL.EXE")
+        if pids0 is None:      # 기존 PID를 모르면 '이 단계가 띄운 프로세스'를 가릴 수 없음
+            record(ctx, "A5", "다중 Excel 프로세스 목록", None, "tasklist로 Excel 프로세스를 확인하지 못해 건너뜀")
+            return
+        before_pids = set(pids0)
+        before = len(before_pids)
         subprocess.Popen(["cmd", "/c", "start", "", "excel.exe", "/x", c_path])
-        if not wait_for(lambda: process_count("EXCEL.EXE") > before, timeout=30):
+        if not wait_for(lambda: set(process_pids("EXCEL.EXE") or []) - before_pids, timeout=30):
             record(ctx, "A5", "다중 Excel 프로세스 목록", None, "두 번째 Excel 프로세스를 띄우지 못해 건너뜀")
             return
         time.sleep(5)
+        # 이 단계가 띄운 프로세스만 정리 대상 (A.xlsx를 연 사용자 Excel은 실행 중에 생겼어도 대상이 아님)
+        spawned = sorted(set(process_pids("EXCEL.EXE") or []) - before_pids)
+        log(f"    두 번째 Excel PID: {spawned} (기존 PID: {sorted(before_pids)})")
         data, code, raw, err = run_cli("excel.py", "info", "--all")
         text = json.dumps(data, ensure_ascii=False) if data else raw
         ok = "A.xlsx" in text and "C_second_instance.xlsx" in text
         record(ctx, "A5", "다중 Excel 프로세스 목록", ok, f"EXCEL.EXE 프로세스 {process_count('EXCEL.EXE')}개", data, code, raw, err)
-        close_test_documents(ctx, only_name="C_second_instance.xlsx")     # 두 번째 Excel도 문서가 없어지면 종료
+        # 두 번째 Excel도 문서가 없어지면 종료. 끝내는 대상은 spawned PID뿐이고 문서가 남은 프로세스는 건드리지 않음
+        close_test_documents(ctx, only_name="C_second_instance.xlsx", allowed_pids=spawned, label="A5")
         wait_for(lambda: process_count("EXCEL.EXE") <= before, timeout=15)
+        if not wait_for(lambda: _lookup_doc("excel", "A.xlsx"), timeout=5):
+            log("[WARN] A5 정리 뒤 A.xlsx가 보이지 않습니다. 다음 그룹 시작 전에 다시 엽니다.")
         ask(ctx, "두 번째 Excel 창(C_second_instance.xlsx)이 닫혔나요? 남아 있으면 저장하지 않고 직접 닫은 뒤 y를 누르세요")
 
     run_test(ctx, "A1", "닫힌 엑셀 읽기", a1)
@@ -755,8 +910,8 @@ def test_D(ctx):
 # ---------------------------------------------------------------------------
 def prepare_e_sheets():
     def _do():
-        app = xl_app()
-        wb = app.Workbooks("A.xlsx")
+        wb = xl_wb("A.xlsx")
+        app = wb.Application
         prev = app.DisplayAlerts
         app.DisplayAlerts = False
         try:
@@ -1504,16 +1659,85 @@ def save_shots(ctx):
 
 
 # 별도 프로세스에서 실행합니다: 러너가 COM 참조를 쥐고 있으면 Quit해도 PowerPoint/Excel이 남습니다.
+# 끝내도 되는 프로세스의 판단은 tools/win_test_rules.py(테스트 있음)에 있습니다.
+#  - 문서가 남아 있는 프로세스(COM 문서 수 > 0, 제목 있는 창, 창 제목에 A.xlsx 등)는 Quit도 WM_CLOSE도 하지 않음
+#  - allowed_pids를 주면(A5) 그 PID만, 아니면 이 실행이 시작된 뒤 생긴 프로세스만
 CLEANUP_SCRIPT = r"""
-import json, os, sys
-sys.path.insert(0, sys.argv[1])
+import datetime, json, os, sys, time
+root = sys.argv[1]
+opts = json.loads(sys.argv[2])
+sys.path.insert(0, root)
+sys.path.insert(0, os.path.join(root, "tools"))
 import _office
-test_dir = os.path.normcase(sys.argv[2])
-keep_untitled = set(json.loads(sys.argv[3]))          # 실행 전부터 있던 제목 없는 문서는 사용자 것
-only_name = sys.argv[4] if len(sys.argv) > 4 else ""   # 지정하면 그 이름의 문서만 (빈 문자열: 테스트 문서 전체)
-closed = []
+import win_test_rules as rules
+try:
+    import win32api, win32con, win32gui, win32process
+except ImportError:
+    win32gui = None
+test_dir = os.path.normcase(opts["test_dir"])
+keep_untitled = set(opts.get("keep_untitled") or [])   # 실행 전부터 있던 제목 없는 문서는 사용자 것
+only_name = opts.get("only_name") or ""                 # 지정하면 그 이름의 문서만 (빈 문자열: 테스트 문서 전체)
+allowed = set(opts["allowed_pids"]) if opts.get("allowed_pids") is not None else None
+run_start = (datetime.datetime.fromtimestamp(float(opts["run_start"]), datetime.timezone.utc)
+             if opts.get("run_start") else None)
+protect_names = opts.get("protect_names") or []
+closed, actions, doc_pids = [], [], set()
+_starts = {}
+
+def started(pid):
+    if pid is None or win32gui is None:
+        return None
+    if pid not in _starts:
+        try:
+            h = win32api.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+            try:
+                _starts[pid] = win32process.GetProcessTimes(h)["CreationTime"]
+            finally:
+                win32api.CloseHandle(h)
+        except Exception:
+            _starts[pid] = None
+    return _starts[pid]
+
+def app_pid(app, kind):
+    if win32gui is None:
+        return None
+    try:
+        if kind == "excel":
+            hwnd = app.Hwnd
+        elif kind == "ppt":
+            hwnd = app.HWND
+        else:
+            hwnd = app.ActiveWindow.Hwnd                         # Word 2013+, 문서가 있을 때만
+        return win32process.GetWindowThreadProcessId(int(hwnd))[1]
+    except Exception:
+        return None
+
+def frame_windows():
+    found = []
+    if win32gui is None:
+        return found
+    classes = _office.FRAME_CLASS["excel"] + _office.FRAME_CLASS["ppt"]    # PowerPoint 2007은 PP12FrameClass
+    def cb(hwnd, _):
+        try:
+            cls = win32gui.GetClassName(hwnd)
+            if cls in classes:
+                found.append({"hwnd": hwnd, "pid": win32process.GetWindowThreadProcessId(hwnd)[1], "cls": cls,
+                              "title": win32gui.GetWindowText(hwnd), "visible": bool(win32gui.IsWindowVisible(hwnd))})
+        except Exception:
+            pass
+        return True
+    win32gui.EnumWindows(cb, None)
+    return found
+
+seen = set()
+quit_later = []
 for kind, coll in (("excel", "Workbooks"), ("word", "Documents"), ("ppt", "Presentations")):
     for app in _office.find_apps(kind):
+        pid = app_pid(app, kind)
+        if pid is not None and (kind, pid) in seen:
+            actions.append(f"{kind} pid {pid}: 같은 인스턴스가 두 번 나와 건너뜀")
+            continue
+        seen.add((kind, pid))
         try:
             docs = getattr(app, coll)
             for i in range(docs.Count, 0, -1):
@@ -1523,44 +1747,51 @@ for kind, coll in (("excel", "Workbooks"), ("word", "Documents"), ("ppt", "Prese
                 if ours:
                     closed.append(name)
                     d.Close(False) if kind == "excel" else (d.Close(0) if kind == "word" else d.Close())
-            if docs.Count == 0:
-                app.Quit()
+                    actions.append(f"{kind} pid {pid}: 문서 닫음 {name}")
+            left = docs.Count
+            if left:
+                if pid is not None:
+                    doc_pids.add(pid)
+                actions.append(f"{kind} pid {pid}: 문서 {left}개 남음 -> 보호 (종료하지 않음)")
+            else:
+                quit_later.append((kind, pid, app))
         except Exception as e:
             sys.stderr.write(f"[WARN] {kind}: {e}\n")
-app = docs = d = None                                   # COM 참조를 놓아야 Quit이 실제로 반영됨
-# Quit을 받고도 남는 인스턴스(예: excel.exe /x로 띄운 두 번째 Excel)는 창 닫기(WM_CLOSE)로 끝냅니다.
-# 대상: 이 실행이 시작된 뒤 생긴 프로세스이면서, 창이 숨겨져 있거나 문서가 없는 Excel/PowerPoint만.
-import time, datetime, win32api, win32con, win32gui, win32process
-run_start = datetime.datetime.fromtimestamp(float(sys.argv[5]), datetime.timezone.utc) if len(sys.argv) > 5 else None
-def _started(pid):
-    h = win32api.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
-    try:
-        return win32process.GetProcessTimes(h)["CreationTime"]
-    finally:
-        win32api.CloseHandle(h)
-def _leftover_windows():
-    found = []
-    def cb(hwnd, _):
-        cls = win32gui.GetClassName(hwnd)
-        if cls in _office.FRAME_CLASS["excel"] + _office.FRAME_CLASS["ppt"]:       # PowerPoint 2007은 PP12FrameClass
-            title = win32gui.GetWindowText(hwnd)
-            empty = title in ("Microsoft Excel", "Microsoft PowerPoint", "")
-            if not win32gui.IsWindowVisible(hwnd) or empty:
-                found.append(hwnd)
-        return True
-    win32gui.EnumWindows(cb, None)
-    return found
-if run_start is not None:
-    time.sleep(2)
-    for hwnd in _leftover_windows():
+            actions.append(f"{kind} pid {pid}: 확인 실패 {type(e).__name__}: {e}")
+windows = frame_windows()
+protected = rules.protected_pids(windows, doc_pids, protect_names)
+for kind, pid, app in quit_later:
+    ok, why = rules.may_quit_app(pid, 0, protected, allowed, run_start, started(pid))
+    if ok:
         try:
-            pid = win32process.GetWindowThreadProcessId(hwnd)[1]
-            if _started(pid) >= run_start:
-                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                closed.append(f"(빈 {win32gui.GetClassName(hwnd)} pid {pid})")
+            app.Quit()
+            actions.append(f"{kind} pid {pid}: Quit ({why})")
+        except Exception as e:
+            actions.append(f"{kind} pid {pid}: Quit 실패 {type(e).__name__}: {e}")
+    else:
+        actions.append(f"{kind} pid {pid}: 문서 0개지만 Quit 안 함 ({why})")
+app = docs = d = quit_later = None                      # COM 참조를 놓아야 Quit이 실제로 반영됨
+# Quit을 받고도 남는 인스턴스(예: excel.exe /x로 띄운 두 번째 Excel)는 창 닫기(WM_CLOSE)로 끝냅니다.
+# 대상: 숨은 창 또는 제목이 빈 창이면서 rules.may_end_process를 통과한 프로세스의 창만.
+if win32gui is not None and (run_start is not None or allowed is not None):
+    time.sleep(2)
+    windows = frame_windows()
+    protected = rules.protected_pids(windows, doc_pids, protect_names)
+    targets, skipped = rules.select_close_targets(windows, protected, allowed, run_start,
+                                                  {w["pid"]: started(w["pid"]) for w in windows})
+    for w in targets:
+        try:
+            win32gui.PostMessage(w["hwnd"], win32con.WM_CLOSE, 0, 0)
+            closed.append(f"(빈 {w['cls']} pid {w['pid']})")
+            actions.append(f"WM_CLOSE {w['cls']} pid {w['pid']} hwnd {w['hwnd']} 제목='{w['title']}' 표시={w['visible']}")
         except Exception as e:
             sys.stderr.write(f"[WARN] window close: {e}\n")
-print(json.dumps(closed, ensure_ascii=False))
+            actions.append(f"WM_CLOSE 실패 pid {w['pid']}: {e}")
+    for w, why in skipped:
+        actions.append(f"WM_CLOSE 안 함 {w['cls']} pid {w['pid']} 제목='{w['title']}' 표시={w['visible']}: {why}")
+    if protected:
+        actions.append(f"보호한 PID: {sorted(protected)}")
+print(json.dumps({"closed": closed, "actions": actions}, ensure_ascii=False))
 """
 
 
@@ -1580,18 +1811,32 @@ def untitled_documents():
     return names
 
 
-def close_test_documents(ctx, only_name=""):
-    """테스트 폴더 문서와 실행 중에 생긴 제목 없는 문서를 저장하지 않고 닫고, 문서가 남지 않은 앱은 끝냅니다."""
-    args = [PY, "-c", CLEANUP_SCRIPT, ROOT, ctx.dir, json.dumps(ctx.untitled_before, ensure_ascii=False),
-            only_name, str(ctx.start_time)]
-    proc = subprocess.run(args, capture_output=True, timeout=120, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+def close_test_documents(ctx, only_name="", allowed_pids=None, label="종료 정리"):
+    """테스트 폴더 문서와 실행 중에 생긴 제목 없는 문서를 저장하지 않고 닫고, 문서가 남지 않은 앱은 끝냅니다.
+    allowed_pids를 주면 그 프로세스만 끝냅니다. 문서가 남아 있는 프로세스는 어떤 경우에도 끝내지 않습니다.
+    한 일은 ctx.cleanup_log에 남겨 errors_*.txt에 기록합니다."""
+    opts = {"test_dir": ctx.dir, "keep_untitled": ctx.untitled_before, "only_name": only_name,
+            "run_start": ctx.start_time, "allowed_pids": sorted(allowed_pids) if allowed_pids is not None else None,
+            "protect_names": [] if not only_name else [n for n in rules.TEST_DOCS.values() if n != only_name]}
+    args = [PY, "-c", CLEANUP_SCRIPT, ROOT, json.dumps(opts, ensure_ascii=False)]
+    stamp = datetime.now().strftime("%H:%M:%S")
+    try:
+        proc = subprocess.run(args, capture_output=True, timeout=120, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    except Exception as e:
+        ctx.cleanup_log.append(f"{stamp} [{label}] 정리 스크립트 실행 실패: {type(e).__name__}: {e}")
+        return []
     err = proc.stderr.decode("utf-8", errors="replace").strip()
     if err:
         log(err[-500:])
     try:
-        return json.loads(proc.stdout.decode("utf-8").strip().splitlines()[-1])
+        result = json.loads(proc.stdout.decode("utf-8").strip().splitlines()[-1])
     except Exception:
+        ctx.cleanup_log.append(f"{stamp} [{label}] 정리 결과를 읽지 못함 (exit {proc.returncode}): {err[-300:]}")
         return []
+    ctx.cleanup_log.append(f"{stamp} [{label}] 대상 문서={only_name or '테스트 폴더 전체'}, "
+                           f"끝내도 되는 PID={opts['allowed_pids'] if allowed_pids is not None else '실행 중 생긴 프로세스'}")
+    ctx.cleanup_log += [f"{stamp} [{label}]   {a}" for a in result.get("actions", [])]
+    return result.get("closed", [])
 
 
 # ---------------------------------------------------------------------------
@@ -1741,7 +1986,14 @@ def write_error_log(ctx, fatal=None):
         lines += ["traceback:", _indent(trace)]
         lines += ["중단 직전 도구 실행:"] + [ln for c in CALLS[-3:] for ln in _call_lines(c)]
         lines += ["중단 직전 로그 (최근 200줄):", _indent("\n".join(LOG_LINES[-200:]))]
-    lines += ["", f"## {4 if fatal is not None else 3}. 문제 항목 상세"]
+    sec = 4 if fatal is not None else 3
+    lines += ["", f"## {sec}. 러너 자동 복구와 창/프로세스 정리"]
+    lines.append("자동 복구: " + ("없음" if not ctx.recoveries else ""))
+    lines += [f"  {r}" for r in ctx.recoveries]
+    lines.append("정리 기록: " + ("없음 (아직 정리 전)" if not ctx.cleanup_log else ""))
+    lines += [f"  {c}" for c in ctx.cleanup_log]
+    sec += 1
+    lines += ["", f"## {sec}. 문제 항목 상세"]
     if not problems:
         lines.append("없음")
     for r in problems:
@@ -1756,9 +2008,42 @@ def write_error_log(ctx, fatal=None):
             lines += _call_lines(c)
         if r.get("log"):
             lines += ["  이 항목의 진행 로그:", _indent("\n".join(r["log"]))]
+    lines += ["", f"## {sec + 1}. 도구 오류 로그 ({TOOL_ERROR_LOG_NAME})"] + tool_error_log_lines()
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return path
+
+
+TOOL_ERROR_LOG_NAME = r"_data\logs\errors.txt"
+TOOL_LOG_LIMIT = 200000   # 도구 오류 로그를 옮겨 담는 상한(글자, 뒤쪽 우선)
+TOOL_LOG_OFFSET = [0]     # 실행 시작 때 도구 오류 로그 크기 (이번 실행분만 담기 위해)
+
+
+def tool_error_log_lines():
+    """도구가 실패할 때마다 남긴 <OFFICE_CLI_DATA_DIR>/logs/errors.txt를 그대로 옮겨 담습니다 (한 파일에 모두 모으려고)."""
+    data = RUN_ENV.get("OFFICE_CLI_DATA_DIR")
+    if not data:
+        return ["(도구 데이터 폴더를 정하기 전에 끝남)"]
+    path = os.path.join(data, "logs", "errors.txt")
+    head = [f"원본: {path} (이번 실행에서 추가된 부분)"]
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        start = TOOL_LOG_OFFSET[0]
+        if start > len(raw):          # 실행 중 2MB를 넘어 errors.old.txt로 넘어감: 새 파일 전체
+            head.append("(실행 중 로그가 회전되어 이전 부분은 errors.old.txt에 있음)")
+            start = 0
+        text = raw[start:].decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return [f"없음 ({path} 없음: 도구 실패가 기록되지 않음)"]
+    except Exception as e:
+        return [f"읽기 실패 ({path}): {type(e).__name__}: {e}"]
+    if not text.strip():
+        return [f"없음 (이번 실행에서 {path}에 추가된 기록 없음)"]
+    if len(text) > TOOL_LOG_LIMIT:
+        head.append(f"(앞부분 {len(text) - TOOL_LOG_LIMIT}자 생략)")
+        text = text[-TOOL_LOG_LIMIT:]
+    return head + text.rstrip().splitlines()
 
 
 GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G),
@@ -1781,7 +2066,8 @@ def main():
         args.auto = True
 
     pythoncom.CoInitialize()
-    ctx = Ctx(args)
+    global CTX
+    ctx = CTX = Ctx(args)
     selected = {g.strip().upper() for g in args.only.split(",")} if args.only else {g for g, _ in GROUPS}
     if args.skip_outlook:
         selected.discard("G")
@@ -1808,6 +2094,7 @@ def main():
                 ctx.mark = (len(CALLS), len(LOG_LINES))
                 log(f"\n{'-' * 25} 그룹 {g} {'-' * 25}")
                 try:
+                    ensure_test_docs(ctx)          # 앞 그룹에서 테스트 문서가 닫혔으면 다시 엶 (JIT 복구)
                     fn(ctx)
                 except Exception as e:
                     trace = traceback.format_exc()
@@ -1858,6 +2145,7 @@ def main():
         pythoncom.CoUninitialize()            # 러너가 쥔 COM 참조를 놓아야 Quit한 PowerPoint가 실제로 끝남
         closed = close_test_documents(ctx)
         log(f" 테스트 문서 {len(closed)}개를 저장하지 않고 닫았습니다: {', '.join(closed)}")
+        err_path = _safe_error_log(ctx)       # 종료 정리 기록까지 넣어 다시 씀 (같은 파일)
     log("=" * 70)
     if args.agent:
         if problems:

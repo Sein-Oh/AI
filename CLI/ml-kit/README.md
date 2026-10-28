@@ -53,6 +53,8 @@ ml-kit/
 │
 └── [3단계: ML 결과 보고서]
     └── ml_report.py        # 버전 폴더 1개 -> Word 문서 1개 (회귀·분류, 차트 포함, 소견 자동 작성)
+
+data/logs/errors.txt        # 실패한 실행의 오류 로그 (자동 생성, git 제외, 8장 4) 참고)
 ```
 
 ### 1-B) OpenCode 스킬 설치
@@ -604,6 +606,21 @@ python ml_report.py -d sample_ml_data --slots slots.json
 }
 ```
 `best_version`은 문서에 사용한 버전입니다 (`version`과 같음). 2.1 이전의 타겟별 키(`target`, `metrics`, `slots_filled`, `reports`, `target_count`)는 문서가 하나로 합쳐지면서 2.2.0에서 없어졌습니다.
+
+보고서 서식 템플릿 (2.3.1): python-docx의 `templates/default-docx-template` 폴더(XML 파일)를 먼저 쓰고, 없으면 `default.docx`를 씁니다.
+회사 보안 프로그램(DRM)이 `.docx` 템플릿을 바꿔 스타일(`Caption` 등)이 없거나 본문이 들어 있어도, 빠진 스타일은 `Normal` 기반으로 만들고
+본문은 지운 뒤 작성합니다. 이때 결과 JSON `recovered`에 적힙니다. 두 템플릿을 모두 열 수 없으면 `STOP_RETRY`와 재설치 명령
+(`python -m pip install --force-reinstall python-docx`)을 안내합니다.
+
+### 4) 오류 로그 (`data\logs\errors.txt`, 2.3.1)
+실패한 실행(exit 1, 인자 오류 exit 2)은 자동으로 도구 폴더의 `data\logs\errors.txt`에 덧붙습니다.
+`C:\CLI\ml-kit`에 배포했다면 `C:\CLI\ml-kit\data\logs\errors.txt`입니다. 환경변수 `ML_KIT_DATA_DIR`로 데이터 폴더를 바꿀 수 있습니다.
+- 기록: 시각, ml-kit 버전, Python 버전, OS, 실행한 명령(스크립트와 인자), 오류 종류와 메시지,
+  자동 복구가 한도를 넘겨 실패한 경우 `복구 시도:`, 내부 오류(`ERROR:`)일 때만 traceback.
+  데이터 내용은 기록하지 않고 경로와 인자만 남깁니다.
+- 기록하지 않음: 성공, 사용자 중단(exit 130), 자동 복구에 성공한 실행(`[WARN]`과 `recovered`로 충분).
+- 2MB를 넘으면 `errors.old.txt`로 넘기고 새로 시작합니다 (1세대만 보관). 기록에 실패해도 도구 결과(JSON 1줄)는 그대로입니다.
+- 로그 경로는 결과 JSON에 넣지 않습니다. 문제가 생기면 `errors.txt`(와 `errors.old.txt`)를 개발 담당자에게 보내 주세요.
 
 ---
 

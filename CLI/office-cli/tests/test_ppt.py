@@ -196,9 +196,9 @@ def test_slide_actions(pp, capsys):
 
 
 def test_read_closed_pptx_uses_python_pptx(tmp_path, capsys, monkeypatch):
-    import pptx
+    from sample_docs import new_pptx
     p = tmp_path / "d.pptx"
-    prs = pptx.Presentation()
+    prs = new_pptx()
     s = prs.slides.add_slide(prs.slide_layouts[5])
     s.shapes.title.text = "제목"
     prs.save(p)

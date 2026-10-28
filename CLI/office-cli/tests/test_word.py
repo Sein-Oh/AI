@@ -178,9 +178,9 @@ def test_replace_map_and_limits(wd, capsys):
 
 
 def test_read_closed_docx_with_python_docx(tmp_path, capsys, monkeypatch):
-    import docx
+    from sample_docs import new_docx
     p = tmp_path / "계획.docx"
-    d = docx.Document()
+    d = new_docx()
     d.add_heading("배경", level=1)
     d.add_paragraph("본문입니다")
     d.save(p)
