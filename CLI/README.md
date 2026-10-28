@@ -10,6 +10,22 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 에이전트 런타임은 **OpenCode** 입니다. 각 도구 폴더가 그대로 OpenCode 스킬 폴더이며, 폴더 이름 = 스킬 이름
 (소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 설치 위치: `C:\Users\<사용자>\.config\opencode\skills\<tool>\`.
 
+## Windows 통합 테스트 (`run_all_tests.py`)
+
+`CLI` 폴더만 반입한 PC(예: `C:\CLI`)에서 진단과 테스트를 한 번에 돌리고 결과를 **파일 1개**로 모읍니다. 사람이 실행하는 도구입니다.
+
+```bat
+cd /d C:\CLI
+python run_all_tests.py --label 회사PC          :: 전부 (office-cli 눈 확인 질문에 답해야 함)
+python run_all_tests.py --label 회사PC --auto   :: 질문 없이 (자리 비울 때)
+python run_all_tests.py --only diag            :: 환경 진단만 (1분)
+```
+
+- 단계: `diag`(Python, 라이브러리, 문서 보안(DRM)이 python-docx/pptx 템플릿과 새로 쓴 파일을 바꾸는지) -> `pytest`(도구별 오프라인 테스트)
+  -> `ml`(ml-kit 실기) -> `office`(office-cli 실기, Outlook은 `--outlook`일 때만). 끝에 각 도구의 `data\logs\errors.txt`(실제 사용 중 오류)도 붙입니다.
+- 결과: `C:\CLI\test_result_<라벨>_<시각>.txt`. 단계마다 바로 기록하므로 중간에 멈추거나 Ctrl+C로 끊어도 남습니다. 이 파일 하나를 그대로 Claude에게 전달하세요.
+- 시작 전에 열린 Office 문서를 모두 저장하고 닫고, 실기 테스트 중에는 Office 창을 만지지 마세요.
+
 ## 새 도구 폴더 구성
 
 ```text
