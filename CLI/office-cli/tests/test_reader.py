@@ -9,6 +9,7 @@ import pytest
 
 import _runtime as rt
 import reader
+from sample_docs import new_docx, new_pptx
 
 TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -18,8 +19,7 @@ TOOL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ---------------------------------------------------------------------------
 
 def make_docx(path):
-    import docx
-    d = docx.Document()
+    d = new_docx()
     d.add_heading("추진 배경", level=1)
     d.add_paragraph("2026년 공정 최적화 마일스톤을 정리합니다.")
     t = d.add_table(rows=2, cols=3)
@@ -35,9 +35,8 @@ def make_docx(path):
 
 
 def make_pptx(path):
-    import pptx
     from pptx.util import Inches
-    prs = pptx.Presentation()
+    prs = new_pptx()
     for i, title in enumerate(["첫 슬라이드", "두 번째 슬라이드", "세 번째 슬라이드"], 1):
         s = prs.slides.add_slide(prs.slide_layouts[5])  # 제목만
         s.shapes.title.text = title
@@ -119,19 +118,63 @@ def make_hwpx(path):
         z.writestr("Contents/section2.xml", sec2)
 
 
-@pytest.fixture
-def samples(tmp_path):
+class Samples(dict):
+    """샘플 파일 경로. 만들지 못한 형식(예: DRM으로 python-pptx 기본 템플릿 손상)을 꺼내는 테스트만 건너뜁니다."""
+
+    def __init__(self, files, broken):
+        super().__init__(files)
+        self.broken = broken
+
+    def __getitem__(self, key):
+        if key in self.broken:
+            pytest.skip(self.broken[key])
+        return super().__getitem__(key)
+
+
+def build_samples(tmp_path):
     files = {
         "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
         "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
     }
-    make_docx(str(files["docx"]))
-    make_pptx(str(files["pptx"]))
-    make_xlsx(str(files["xlsx"]))
-    make_pdf(str(files["pdf"]))
-    make_eml(str(files["eml"]))
-    make_hwpx(str(files["hwpx"]))
-    return {k: str(v) for k, v in files.items()}
+    makers = {"docx": make_docx, "pptx": make_pptx, "xlsx": make_xlsx, "pdf": make_pdf, "eml": make_eml,
+              "hwpx": make_hwpx}
+    broken = {}
+    for kind, make in makers.items():
+        try:
+            make(str(files[kind]))
+        except pytest.skip.Exception as e:      # 한 형식을 못 만들어도 다른 형식 테스트는 그대로 실행
+            broken[kind] = str(e.msg) if getattr(e, "msg", None) else str(e)
+    return Samples({k: str(v) for k, v in files.items() if k not in broken}, broken)
+
+
+@pytest.fixture
+def samples(tmp_path):
+    return build_samples(tmp_path)
+
+
+def test_samples_skip_only_broken_kind(tmp_path):
+    s = Samples({"docx": "a.docx"}, {"pptx": "python-pptx 기본 템플릿이 손상됨 (DRM 추정)"})
+    assert s["docx"] == "a.docx"
+    with pytest.raises(pytest.skip.Exception, match="DRM"):
+        s["pptx"]
+
+
+def test_drm_damaged_templates_docx_falls_back_pptx_skips(tmp_path, monkeypatch):
+    """DRM이 라이브러리 기본 템플릿을 암호화한 PC 흉내: docx는 폴더 템플릿으로 만들고 pptx만 건너뜀."""
+    import sample_docs
+    enc = tmp_path / "default.enc"
+    enc.write_bytes(b"DRMONE\x00\x01" + os.urandom(64))
+    real_default, real_folder = sample_docs.docx_template_paths()
+    monkeypatch.setattr(sample_docs, "docx_template_paths", lambda: (str(enc), real_folder))
+    monkeypatch.setattr(sample_docs, "pptx_template_path", lambda: str(enc))
+    out = tmp_path / "out"
+    out.mkdir()
+    s = build_samples(out)
+    assert set(s.keys()) == {"docx", "xlsx", "pdf", "eml", "hwpx"}
+    units, _ = reader.parse_docx(s["docx"])
+    assert units[0]["text"] == "추진 배경"
+    with pytest.raises(pytest.skip.Exception, match="DRM"):
+        s["pptx"]
 
 
 # ---------------------------------------------------------------------------

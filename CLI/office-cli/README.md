@@ -70,10 +70,17 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 | 작업 폴더 (`--save` 경로 생략 시, 7일 후 자동 정리) | `data\_work` | - |
 | 캐시 (읽은 문서 색인, 스냅샷) | `<도구폴더>\cache` | `OFFICE_CLI_CACHE_DIR` 또는 `cache_dir` |
 | 설정 (`transfer --probe` 결과 등) | `<도구폴더>\config.json` | - |
+| 오류 로그 (실패한 실행 자동 기록) | `data\logs\errors.txt` | data 폴더를 따라감 |
 
-- 입력 파일은 절대경로 → data 폴더 → 작업 폴더 순서로 찾습니다. 없으면 비슷한 파일명을 `[추천]`으로 알려 줍니다.
+- 입력 파일은 절대경로 -> data 폴더 -> 작업 폴더 순서로 찾습니다. 없으면 비슷한 파일명을 `[추천]`으로 알려 줍니다.
 - 텍스트 입력은 UTF-8, UTF-16, CP949를 자동으로 판별합니다. CSV 출력은 기본 utf-8-sig입니다(Excel에서 한글 정상).
 - 결과가 길면 기본 200행 또는 약 8,000자에서 자르고 `truncated: true`와 이어 읽기 명령을 줍니다.
+
+### 오류 로그
+- 실패한 실행(exit 1, 인자 오류 exit 2)은 자동으로 `<data 폴더>\logs\errors.txt`에 덧붙습니다. `C:\CLI`에 배치했다면 `C:\CLI\office-cli\data\logs\errors.txt`(`config.json`의 `data_dir`나 `OFFICE_CLI_DATA_DIR`를 바꿨으면 그 폴더 아래).
+- 항목: 시각, 도구 버전, Python, OS / 실행한 명령과 인자 / `error_type`과 message / 재시도 한도를 넘긴 복구 시도(`복구 시도:`) / 내부 오류(`ERROR:`)일 때만 traceback. 문서 본문은 기록하지 않습니다.
+- 성공, 사용자 중단(exit 130)은 기록하지 않습니다. 2MB를 넘으면 `errors.old.txt`로 넘기고 새로 시작합니다. 로그 경로는 stdout JSON에 넣지 않습니다(사람과 개발 에이전트의 사후 분석용).
+- 실기 테스트 러너의 `errors_<시각>.txt`는 테스트 한 번의 판정 근거를 모은 별도 파일이고, 그 실행 중에 쌓인 도구 오류 로그(`<테스트 폴더>\_data\logs\errors.txt`)도 끝에 함께 옮겨 담습니다.
 
 ## 3. 명령 요약
 
@@ -135,14 +142,14 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 
 | 전달 | 명령 | 방식 |
 |---|---|---|
-| 엑셀 차트 → 워드/PPT | `--from excel --chart 이름 --to word,ppt` | 그림 (아래 3방식) |
-| 엑셀 범위 → 워드/PPT | `--from excel --range A1:D10 --to word` | 네이티브 표 (값 전달, 클립보드 없음) |
-| 워드/PPT → 엑셀 | `--from word --what text\|table [--table N] --to excel` | 새 시트에 표로 |
+| 엑셀 차트 -> 워드/PPT | `--from excel --chart 이름 --to word,ppt` | 그림 (아래 3방식) |
+| 엑셀 범위 -> 워드/PPT | `--from excel --range A1:D10 --to word` | 네이티브 표 (값 전달, 클립보드 없음) |
+| 워드/PPT -> 엑셀 | `--from word --what text\|table [--table N] --to excel` | 새 시트에 표로 |
 
 차트 그림은 다음 순서로 자동 시도하고, 결과 JSON의 `method`에 실제로 쓴 방식을 적습니다.
 1. `export`: Excel의 `Chart.Export` PNG를 씁니다. **파일 앞부분이 PNG가 아니면(DRM 암호화) 건너뜁니다.**
 2. `redraw`: 차트의 계열 값을 COM으로 읽고 matplotlib으로 다시 그립니다. Python이 쓴 파일을 쓰고 클립보드는 쓰지 않습니다. 원본 서식은 근사치입니다.
-3. `relay`: 엑셀 → 워드 → PPT 클립보드 경유입니다.
+3. `relay`: 엑셀 -> 워드 -> PPT 클립보드 경유입니다.
 
 회사 PC에서 처음 한 번 `python office.py transfer --probe`를 실행하면, 세 방식을 실제로 시험해 대상 앱별로 되는 순서를 `config.json`에 저장합니다.
 
@@ -170,5 +177,8 @@ python -m pytest -q CLI/office-cli          :: 오프라인 (가짜 COM + 실제
 python CLI/office-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세한 내용: TEST_CHECKLIST.md)
 ```
 - 실기 테스트는 테스트 폴더에 `report_*.txt`(요약)와 `errors_*.txt`(분석용 상세 로그)를 남깁니다. 문제가 있으면 `errors_*.txt`를 그대로 Claude에게 전달하세요.
+  `errors_*.txt`에는 러너의 자동 복구(닫힌 A 문서 다시 열기), 창/프로세스 정리 기록(어떤 PID에 Quit/WM_CLOSE를 보냈고 무엇을 보호했는지), 도구 오류 로그가 함께 들어 있습니다.
+- 러너는 테스트 문서(A.xlsx/A.docx/A.pptx)가 열린 프로세스를 끝내지 않습니다. 정리 판단 규칙은 `tools/win_test_rules.py`(오프라인 테스트 `tests/test_win_runner.py`).
+- DRM PC에서 python-pptx 기본 템플릿(`pptx/templates/default.pptx`)이 암호화돼 있으면 그 템플릿이 필요한 오프라인 테스트만 "python-pptx 기본 템플릿이 손상됨 (DRM 추정)"으로 건너뜁니다. python-docx는 폴더 템플릿으로 대신 만듭니다. 도구 코드는 기본 템플릿을 쓰지 않습니다.
 - OpenCode 에이전트에게 실기 테스트를 맡기려면 `tools/office-cli-test` 폴더를 스킬 폴더의 `office-cli` 옆에 복사합니다. 에이전트는 `--agent`로 실행해 결과 JSON 1줄만 읽습니다.
 - 대상은 Office 16.0(2016/2019/2021/365)입니다. Word 2007의 `SaveAs2` 부재는 `SaveAs`로 대체하므로 Office 2007에서도 실기 테스트가 돕니다. 다만 PDF 추가 기능이 없으면 PDF 내보내기 항목은 `ENV-SKIP`으로 기록됩니다.

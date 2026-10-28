@@ -2,6 +2,34 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.2.1] - 2026-10-28
+
+회사 PC 실기 테스트(Windows 11, Office 16.0 / Microsoft 365, WinPython 3.13.13, DRM) 결과 반영과 오류 로그(R6).
+
+### 기능 (추가만, 기존 인자·키 유지)
+- 오류 로그: 실패한 실행(exit 1, 인자 오류 exit 2)을 `<data 폴더>/logs/errors.txt`에 자동으로 덧붙입니다 (`CLI/README.md` R6, 기준 doc-classifier `write_error_log`).
+  머리줄 `===== <시각> | office-cli <버전> | Python <버전> | <OS>`, `명령:`, `결과: <error_type> | <message>`, 한도를 넘긴 복구 시도는 `복구 시도:`, 내부 오류(`ERROR:`)만 `traceback:`.
+  성공과 사용자 중단(130)은 기록하지 않고, 2MB를 넘으면 `errors.old.txt`로 넘깁니다(1세대). 회전 실패와 기록 실패는 따로 삼켜 stdout 1줄 JSON에 영향이 없습니다. 로그 경로는 JSON에 넣지 않습니다.
+- `_runtime.VERSION`("1.2.1"), `record_recovery_attempt()`. `retry_fs`가 한도를 넘기면 `복구 시도:`에 남깁니다. SKILL.md `metadata.version`과 같은지 테스트합니다.
+
+### 실기 테스트 러너 (`tools/run_win_tests.py`)
+- A5(두 번째 Excel 정리)가 A.xlsx를 연 사용자 Excel까지 닫던 문제. 이후 B2, B3, C1, C2, D3, E, H1, H3, I1, I2가 `DISP_E_BADINDEX`(Workbooks("A.xlsx") 없음)로 실패했습니다.
+  원인: 정리 스크립트가 "실행 시작 뒤 생긴 Excel/PowerPoint의 숨은 창 또는 제목 빈 창"에 WM_CLOSE를 보냈는데, A.xlsx를 연 Excel도 러너가 띄운 것이고 Office 16에는 숨은 XLMAIN 창이 있습니다 (Office 2007에서는 드러나지 않음).
+  - 문서가 남아 있는 프로세스(COM 문서 수 > 0, 제목 있는 창, 창 제목에 A.xlsx 등)는 Quit도 WM_CLOSE도 하지 않습니다.
+  - A5는 Excel을 띄우기 전후의 PID를 비교해 자기가 띄운 PID만 끝냅니다. 종료 정리는 실행 시작 뒤 생긴 빈 프로세스만, 실행 전부터 있던 Office는 문서가 없어도 끝내지 않습니다.
+  - 같은 인스턴스가 두 번 잡히면 건너뛰고, Office 16의 빈 창 제목(`Excel`, `PowerPoint`)도 인식합니다.
+  - 판단 규칙은 `tools/win_test_rules.py`로 분리해 오프라인 테스트(`tests/test_win_runner.py`, 가짜 Office/pywin32로 회사 PC 상황 재현)를 붙였습니다.
+- JIT 복구: 그룹 시작 전과 문서 조회 때 A.xlsx/A.docx/A.pptx가 닫혀 있으면 준비 단계와 같은 방법(`os.startfile`)으로 다시 열고 `[WARN] A.xlsx가 닫혀 있어 다시 열었습니다`를 남깁니다.
+  다시 열지 못하면 그 그룹의 남은 항목을 "테스트 문서 A.xlsx가 닫혀 다시 열지 못함" 하나의 이유로 바로 ERROR 처리합니다.
+- `com_retry`가 '그 이름의 항목 없음'(`DISP_E_BADINDEX`)을 재시도하지 않습니다. 중첩된 재시도(최대 10x10x10회)로 멈춘 것처럼 보여 Ctrl+C로 끝내야 했습니다.
+- 열린 문서 조회가 첫 번째 Excel 인스턴스만 보지 않고 모든 인스턴스를 찾습니다.
+- `errors_*.txt`에 "러너 자동 복구와 창/프로세스 정리"(다시 연 문서, 닫은 문서, Quit/WM_CLOSE를 보낸 PID와 창, 보호한 PID)와 "도구 오류 로그"(이번 실행 중 `<테스트 폴더>/_data/logs/errors.txt`에 추가된 부분) 절을 넣습니다. 종료 정리 뒤에 한 번 더 써서 정리 기록까지 담습니다.
+
+### 테스트
+- DRM PC에서 python-pptx 기본 템플릿(`site-packages/pptx/templates/default.pptx`)이 zip이 아니라(암호화) `pptx.Presentation()`이 실패하던 문제(1 FAILED + 12 ERROR).
+  템플릿이 필요한 테스트만 "python-pptx 기본 템플릿이 손상됨 (DRM 추정)"으로 건너뛰고, reader 샘플(docx/xlsx/pdf/eml/hwpx)은 형식별로 만들어 나머지 테스트는 그대로 돕니다.
+  python-docx는 기본 .docx가 손상돼 있으면 폴더 템플릿(`docx/templates/default-docx-template`)으로 만듭니다 (`tests/sample_docs.py`). 도구 코드는 인자 없는 `Presentation()`/`Document()`를 쓰지 않습니다.
+
 ## [1.2.0] - 2026-10-28
 
 저장소 지침(AGENTS.md 2026-10-28) 반영 1차: 사용자 확인 없이 덮어쓰거나 추측하던 동작을 멈춥니다.
@@ -120,7 +148,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - Outlook 날짜 범위 검색 (`--since`).
 
 ### 확인 필요
-- Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 남은 것: 회사 PC(Office 16)에서 전체 실행, 눈 확인 항목(`--auto` 없이), Outlook G 그룹, PDF 내보내기(D1, D4).
+- Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 회사 PC(Office 16) 1차(1.2.0)는 A5 정리가 A.xlsx를 닫아 중단, D1·D4(PDF)와 G1·G2·G4는 통과. 남은 것: 1.2.1로 회사 PC 전체 재실행(`errors_*.txt`의 정리 기록에서 A5가 두 번째 Excel PID만 끝냈는지 확인), 눈 확인 항목.
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증.
 - 회사 PC에서 `office.py transfer --probe` 결과 확인. (집 PC Office 2007: export, redraw 성공 / relay는 "워드에 붙여넣기 안 됨"으로 실패)
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
@@ -128,7 +156,6 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
 상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
 - [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
-- [ ] `run_cli`/`JsonArgumentParser.error`에서 `data/logs/errors.txt` 기록, `_runtime.VERSION` 추가 (기준: doc-classifier `write_error_log`). 러너의 `errors_<시각>.txt`는 별도 목적이라고 README에 명시
 - [ ] 결과 JSON `recovered` 배열: 잠금 새 이름 저장, transfer 방식 대체, 색인 재생성, 오래된 스냅샷 정리 (공통 수집기는 `_runtime`)
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
 - [ ] COM 호출 거부(0x8001010A, 0x80010001) 재시도 `com_retry`를 `_office.py`에 (횟수·시간 상한, 넘으면 기존 office_busy STOP_RETRY)

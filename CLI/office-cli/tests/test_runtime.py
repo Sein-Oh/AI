@@ -221,3 +221,110 @@ def test_markdown_blocks_and_bold():
                       ("heading", (2, "끝"))]
     assert rt.split_bold("가 **나** 다 __라__") == ("가 나 다 라", [(2, 3), (6, 7)])
     assert rt.looks_like_markdown("- 항목") and not rt.looks_like_markdown("그냥 문장")
+
+
+# ---------------------------------------------------------------------------
+# R6 오류 로그 (<데이터 폴더>/logs/errors.txt)
+# ---------------------------------------------------------------------------
+
+def _error_log(tmp_path):
+    p = tmp_path / "data" / "logs" / "errors.txt"
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def test_error_log_input_error_without_traceback(tmp_path):
+    code, _, _ = run_script(tmp_path, TOOL_BODY, "go", "--mode", "input")
+    assert code == 1
+    text = _error_log(tmp_path)
+    assert text.startswith(f"===== ") and f"| office-cli {rt.VERSION} | Python " in text
+    assert "명령: demo.py go --mode input" in text
+    assert "결과: input | 시트 'Sheet3'" in text
+    assert "traceback:" not in text
+    assert text.endswith("\n\n")
+
+
+def test_error_log_internal_error_has_traceback(tmp_path):
+    code, payload, _ = run_script(tmp_path, TOOL_BODY, "go", "--mode", "crash")
+    assert code == 1 and payload["agent_directive"].startswith("ERROR:")
+    text = _error_log(tmp_path)
+    assert "결과: internal | RuntimeError: 버그" in text
+    assert "traceback:" in text and "RuntimeError" in text.split("traceback:")[1]
+    assert "errors.txt" not in json.dumps(payload, ensure_ascii=False)     # 로그 경로는 stdout JSON에 넣지 않음
+
+
+def test_error_log_argument_error_exit_2(tmp_path):
+    code, _, _ = run_script(tmp_path, TOOL_BODY, "go", "--bad")
+    assert code == 2
+    text = _error_log(tmp_path)
+    assert "명령: demo.py go --bad" in text and "결과: input | CLI 인자 오류" in text
+
+
+def test_error_log_skips_success_and_interrupt(tmp_path):
+    assert run_script(tmp_path, TOOL_BODY, "go", "--mode", "ok")[0] == 0
+    assert run_script(tmp_path, TOOL_BODY, "go", "--mode", "interrupt")[0] == 130
+    assert not (tmp_path / "data" / "logs" / "errors.txt").exists()
+
+
+def test_error_log_rotates_over_limit(monkeypatch):
+    path = rt.error_log_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("old\n")
+    monkeypatch.setattr(rt, "ERROR_LOG_MAX", 2)
+    rt.write_error_log("demo", ["go"], {"error_type": "input", "message": "새 항목"})
+    assert open(path[:-4] + ".old.txt", encoding="utf-8").read() == "old\n"
+    new = open(path, encoding="utf-8").read()
+    assert new.startswith("===== ") and "결과: input | 새 항목" in new
+
+
+def test_error_log_rotation_failure_still_writes(monkeypatch):
+    path = rt.error_log_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("old\n")
+    monkeypatch.setattr(rt, "ERROR_LOG_MAX", 2)
+
+    def deny(*a, **k):
+        raise PermissionError("locked")
+    monkeypatch.setattr(rt.os, "replace", deny)
+    rt.write_error_log("demo", ["go"], {"error_type": "input", "message": "회전 실패"})
+    assert "결과: input | 회전 실패" in open(path, encoding="utf-8").read()
+
+
+def test_error_log_recovery_attempts_line(monkeypatch):
+    monkeypatch.setattr(rt, "RECOVERY_ATTEMPTS", [])
+    monkeypatch.setattr(rt.time, "sleep", lambda s: None)
+
+    def locked():
+        raise PermissionError(13, "locked", "report.xlsx")
+    with pytest.raises(PermissionError):
+        rt.retry_fs(locked, attempts=3)
+    rt.write_error_log("demo", ["go"], {"error_type": "input", "message": "잠김"})
+    text = open(rt.error_log_path(), encoding="utf-8").read()
+    assert "복구 시도: 파일 작업 report.xlsx 3회 재시도 실패" in text
+
+
+def test_error_log_failure_does_not_break_output(tmp_path):
+    body = "rt.error_log_path = lambda: (_ for _ in ()).throw(OSError('disk'))\n" + TOOL_BODY
+    code, payload, _ = run_script(tmp_path, body, "go", "--mode", "crash")
+    assert code == 1 and payload["status"] == "error"
+    code, payload, _ = run_script(tmp_path, body, "go", "--bad")
+    assert code == 2 and payload["status"] == "error"
+
+
+def test_error_log_records_in_process_argv(capsys):
+    import reader
+    with pytest.raises(SystemExit) as ei:
+        reader.main(["read", "--file", "없는파일_로그확인.docx"])
+    assert ei.value.code == 1
+    capsys.readouterr()
+    text = open(rt.error_log_path(), encoding="utf-8").read()
+    assert "명령: reader.py read --file 없는파일_로그확인.docx" in text
+
+
+def test_version_matches_skill_md():
+    import re
+    for skill in ("SKILL.md", os.path.join("tools", "office-cli-test", "SKILL.md")):
+        with open(os.path.join(TOOL_DIR, skill), encoding="utf-8") as f:
+            m = re.search(r'^\s+version:\s*"([^"]+)"', f.read(), re.M)
+        assert m and m.group(1) == rt.VERSION, skill

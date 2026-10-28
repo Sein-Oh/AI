@@ -7,6 +7,7 @@
 - 경로: 설정(config.json), data 폴더, 작업 폴더(_work), 입력/출력 경로 해석
 - 텍스트/CSV 입출력: 인코딩 자동 판별, 잠금 파일 대비 저장
 - 결과 길이 제한, 이름 추천([추천]), 다음 명령(next_commands) 구성
+- 오류 로그: 실패한 실행(exit 1, 2)을 <data>/logs/errors.txt에 자동 기록 (write_error_log)
 """
 import argparse
 import csv
@@ -21,6 +22,8 @@ import sys
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+TOOL_NAME = "office-cli"
+VERSION = "1.2.1"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -29,6 +32,12 @@ DEFAULT_MAX_ROWS = 200
 DEFAULT_MAX_CHARS = 8000
 # 작업 폴더 파일 보관 기간 (일)
 WORK_RETENTION_DAYS = 7
+# 오류 로그가 이보다 커지면 errors.old.txt로 넘기고 새로 시작 (1세대만 보관)
+ERROR_LOG_MAX = 2 * 1024 * 1024
+# 실제 명령 인자. JsonArgumentParser.parse_args가 채웁니다 (인자 오류 기록에도 실제 명령을 남기려고)
+CURRENT_ARGV: Optional[List[str]] = None
+# JIT 복구가 한도를 넘겨 실패한 시도 (오류 로그의 '복구 시도:' 줄)
+RECOVERY_ATTEMPTS: List[str] = []
 
 
 # ==============================================================================
@@ -215,8 +224,53 @@ def error_payload(exc: BaseException, tool: str = "", command: str = "") -> Dict
     return base
 
 
+def record_recovery_attempt(msg: str) -> None:
+    """JIT 복구가 한도를 넘겨 실패했을 때 무엇을 몇 번 시도했는지 남깁니다 (오류 로그의 '복구 시도:' 줄)."""
+    try:
+        RECOVERY_ATTEMPTS.append(str(msg)[:300])
+    except Exception:
+        pass
+
+
+def error_log_path() -> str:
+    """<데이터 폴더>/logs/errors.txt (데이터 폴더: OFFICE_CLI_DATA_DIR > config.json data_dir > <도구폴더>/data)"""
+    return os.path.join(get_data_dir(), "logs", "errors.txt")
+
+
+def write_error_log(tool: str, argv: Optional[Sequence[str]], payload: Dict[str, Any], trace: str = "") -> None:
+    """실패한 실행을 <데이터 폴더>/logs/errors.txt에 덧붙입니다 (사람과 개발 에이전트의 사후 분석용).
+    기준 구현: archive/doc-classifier/_dc_runtime.py. 경로와 인자만 기록하고 문서 본문은 기록하지 않습니다.
+    회전 실패와 기록 실패를 따로 감싸고, 어떤 오류도 삼킵니다 (stdout 1줄 JSON 계약을 깨면 안 됨)."""
+    try:
+        import platform
+        path = error_log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > ERROR_LOG_MAX:
+                os.replace(path, path[:-4] + ".old.txt")
+        except Exception:
+            pass
+        if argv is None:
+            argv = CURRENT_ARGV if CURRENT_ARGV is not None else sys.argv[1:]
+        script = f"{tool}.py" if tool else os.path.basename(sys.argv[0] or "")
+        args = " ".join([script] + [quote_arg(a) for a in argv]).strip()
+        lines = [f"===== {_dt.datetime.now().isoformat(timespec='seconds')} | {TOOL_NAME} {VERSION} | "
+                 f"Python {platform.python_version()} | {platform.platform()}",
+                 f"명령: {args}",
+                 f"결과: {payload.get('error_type')} | {payload.get('message')}"]
+        if RECOVERY_ATTEMPTS:
+            lines.append("복구 시도: " + "; ".join(RECOVERY_ATTEMPTS))
+        if trace:
+            lines.append("traceback:\n" + trace.rstrip())
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n\n")
+    except Exception:
+        pass
+
+
 def run_cli(tool: str, command: str, execute: Callable[[], Dict[str, Any]]) -> None:
-    """도구 본문을 실행하고, 어떤 경우에도 stdout 1줄 JSON과 종료 코드(0/1/130)를 보장합니다."""
+    """도구 본문을 실행하고, 어떤 경우에도 stdout 1줄 JSON과 종료 코드(0/1/130)를 보장합니다.
+    실패(exit 1)는 <데이터 폴더>/logs/errors.txt에 자동 기록합니다 (사용자 중단 130과 성공은 기록하지 않음)."""
     setup_console()
     try:
         result = execute()
@@ -227,12 +281,19 @@ def run_cli(tool: str, command: str, execute: Callable[[], Dict[str, Any]]) -> N
     except SystemExit:
         raise
     except Exception as e:
+        import traceback
+        trace = traceback.format_exc()
         log("ERROR", f"{type(e).__name__}: {e}")
         if _verbose():
-            import traceback
-            sys.stderr.write(traceback.format_exc())
-        emit_json(error_payload(e, tool, command))
+            sys.stderr.write(trace)
+        payload = error_payload(e, tool, command)
+        # traceback은 내부 오류(ERROR:)일 때만 남깁니다
+        internal = str(payload.get("agent_directive", "")).startswith("ERROR:")
+        write_error_log(tool, None, payload, trace if internal else "")
+        emit_json(payload)
         sys.exit(1)
+    if result.get("status") != "ok":
+        write_error_log(tool, None, result)
     emit_json(result)
     sys.exit(0 if result.get("status") == "ok" else 1)
 
@@ -242,16 +303,24 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
     tool_name = ""
 
+    def parse_args(self, args=None, namespace=None):  # type: ignore[override]
+        # 최상위 파서만 parse_args를 부릅니다 (서브파서는 parse_known_args). 오류 로그에 남길 실제 인자를 기억합니다.
+        global CURRENT_ARGV
+        CURRENT_ARGV = [str(a) for a in args] if args is not None else sys.argv[1:]
+        return super().parse_args(args, namespace)
+
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
-        emit_json({
+        payload = {
             "status": "error",
             "tool": self.tool_name,
             "command": "",
             "error_type": "input",
             "message": f"CLI 인자 오류: {message}",
             "agent_directive": "STOP_RETRY: CLI 인자가 잘못되었습니다. SKILL.md의 명령 형식을 확인하고 사용자에게 보고하세요.",
-        })
+        }
+        write_error_log(self.tool_name, None, payload)
+        emit_json(payload)
         sys.exit(2)
 
 
@@ -418,7 +487,8 @@ def read_csv_rows(path: str) -> List[List[str]]:
 
 
 def retry_fs(fn: Callable[[], Any], attempts: int = 6, delay: float = 0.5) -> Any:
-    """백신/동기화 프로그램의 일시적 잠금에 대비해 파일 작업을 재시도합니다."""
+    """백신/동기화 프로그램의 일시적 잠금에 대비해 파일 작업을 재시도합니다.
+    한도를 넘기면 오류 로그의 '복구 시도:' 줄에 남기고 마지막 예외를 올립니다."""
     last: Optional[BaseException] = None
     for i in range(attempts):
         try:
@@ -427,6 +497,8 @@ def retry_fs(fn: Callable[[], Any], attempts: int = 6, delay: float = 0.5) -> An
             last = e
             time.sleep(delay * (i + 1))
     assert last is not None
+    name = os.path.basename(str(getattr(last, "filename", "") or ""))
+    record_recovery_attempt(f"파일 작업 {name} {attempts}회 재시도 실패 ({type(last).__name__})".replace("  ", " "))
     raise last
 
 
