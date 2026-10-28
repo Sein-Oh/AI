@@ -6,6 +6,9 @@
 
 회사 PC 2차 실기(2.3.1, 실기 M1~M14 모두 통과) 결과 반영. 오프라인 테스트 3건 실패 수정.
 
+### 스킬
+- SKILL.md를 PowerShell 기준으로 정리: 전역 지침의 인코딩 줄 사용, 시간 제한 600000, 실행 전에 물어볼 값(파일, 타겟, 피처), 컬럼 이름 확인 방법, `version_dir`을 모를 때 `--history`로 찾기, 파일은 파일 쓰기 도구로 UTF-8 저장.
+
 ### 수정
 - 회사 PC의 python-docx 템플릿 폴더(`templates/default-docx-template`)에서 `docProps/thumbnail.jpeg`가 빠져 있어
   python-docx가 폴더를 열지 못했습니다(FileNotFoundError). 보고서는 그때 `default.docx`로 넘어가 성공했지만, 폴더 템플릿을 쓰는 테스트가 실패했습니다.

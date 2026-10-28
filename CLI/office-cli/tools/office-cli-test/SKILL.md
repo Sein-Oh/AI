@@ -19,6 +19,7 @@ metadata:
 
 ## 2. 명령
 명령 실행 도구의 timeout 은 **1800000**(30분)으로 지정한다.
+PowerShell에서는 명령 앞에 전역 지침의 인코딩 줄(`$env:PYTHONIOENCODING='utf-8'; ...`)을 붙인다.
 
 | 요청 | 명령 |
 |---|---|

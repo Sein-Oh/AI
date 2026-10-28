@@ -17,7 +17,9 @@ AI_WORK/
 ├── docs/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
-│   └── COMPLIANCE_REVIEW_*.md # 도구별 지침 준수 검토 결과
+│   ├── COMPLIANCE_REVIEW_*.md # 도구별 지침 준수 검토 결과
+│   ├── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내
+│   └── test_logs/             # 사내 PC 실기 테스트 결과 원본
 ├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
 │   └── doc-classifier/        # 폴더 파일 목록화/분류 0.9.2 (다른 개발자 담당으로 보관)
 └── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
