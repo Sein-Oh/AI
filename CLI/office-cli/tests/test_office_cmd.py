@@ -9,7 +9,7 @@ import _runtime as rt
 import excel
 import office
 from fake_excel import FakeExcelWorkbook, FakeXlApp
-from fake_office import FakeWorkbook, make_win32com
+from fake_office import FakeExcelApp, FakeWorkbook, make_win32com
 
 
 def run(capsys, *argv):
@@ -191,6 +191,138 @@ def test_undo_pick_out_of_range(tmp_path, monkeypatch, capsys):
     off.save_snapshot("excel", FakeWorkbook(str(orig)))
     code, out = run(capsys, "undo", "--pick", "5")
     assert code == 1 and "--list" in out["message"]
+
+
+# --- 저장한 적 없는 문서 undo (시나리오 12: 새 워드 문서에 차트를 넣은 뒤 "방금 한 거 되돌려줘") ---
+
+class _UntitledWordDoc:
+    def __init__(self, name, xml):
+        self.Name = name
+        self.FullName = name                       # 저장 안 된 문서는 FullName == Name (절대 경로 아님)
+        self.Saved = False
+        self.WordOpenXML = xml
+        self.inserted = []
+        self.activated = 0
+
+    def Range(self, *a):
+        doc = self
+
+        class _R:
+            def InsertXML(self, xml):
+                doc.inserted.append(xml)
+                doc.WordOpenXML = xml
+        return _R()
+
+    def Activate(self):
+        self.activated += 1
+
+
+class _Docs:
+    def __init__(self, items):
+        self.items = list(items)
+        self.added = []
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def __call__(self, i):
+        return self.items[i - 1]
+
+    def Add(self, Template=None):
+        d = _UntitledWordDoc("문서2", "<new/>")
+        self.added.append(Template)
+        self.items.append(d)
+        return d
+
+
+@pytest.fixture
+def untitled_env(monkeypatch):
+    fake, _ = make_win32com()
+    monkeypatch.setattr(off, "win32com", fake)
+    monkeypatch.setattr(off, "pythoncom", None)
+    apps = []
+    monkeypatch.setattr(off, "find_apps", lambda kind: list(apps))
+    return apps
+
+
+def test_undo_unsaved_word_restores_in_same_window(untitled_env, capsys):
+    doc = _UntitledWordDoc("문서1", "<before/>")
+    app = type("WordApp", (), {})()
+    app.Documents = _Docs([doc])
+    untitled_env.append(app)
+    off.save_snapshot("word", doc, "office", "transfer")                 # flat_xml 스냅샷
+    doc.WordOpenXML = "<with-chart/>"                                    # 차트가 들어간 상태
+    code, out = run(capsys, "undo")
+    assert code == 0 and out["restored_as"] == "restored_in_place" and out["name"] == "문서1"
+    assert doc.inserted == ["<before/>"] and doc.activated == 1          # 같은 문서의 내용을 바꿈
+    assert app.Documents.Count == 1 and app.Documents.added == []          # 새 창을 열지 않음
+    assert open(out["pre_undo_backup"], encoding="utf-8").read() == "<with-chart/>"
+    assert "같은 창" in out["preview"] and "같은 창" in out["agent_directive"]
+    assert out["agent_directive"].startswith("VERIFIED:")
+
+
+def _close_removes(wb, coll):
+    def close(SaveChanges=None):
+        wb.rec("Close", SaveChanges)
+        coll.items.remove(wb)
+    wb.Close = close
+
+
+def test_undo_unsaved_excel_replaces_and_closes_modified(untitled_env, capsys):
+    app = FakeExcelApp()
+    wb = FakeWorkbook("")                                                # Book1, 저장 안 됨
+    app.Workbooks.items.append(wb)
+    _close_removes(wb, app.Workbooks)
+    untitled_env.append(app)
+    off.save_snapshot("excel", wb, "excel", "write")
+    code, out = run(capsys, "undo")
+    assert code == 0 and out["restored_as"] == "replaced_untitled_document"
+    assert app.Workbooks.Count == 1 and app.Workbooks(1) is not wb        # 바뀐 통합문서는 닫히고 하나만 남음
+    assert ("Close", False) in wb.calls                                  # 저장하지 않고 닫음
+    assert app.Workbooks(1).template.endswith(".xlsx") and os.path.exists(out["pre_undo_backup"])
+    assert "저장하지 않고 닫았습니다" in out["preview"]
+
+
+def test_undo_unsaved_ppt_replaces_and_closes_modified(untitled_env, capsys):
+    from fake_office import FakePptApp, FakePresentation
+    app = FakePptApp()
+    prs = FakePresentation("프레젠테이션1")
+    prs.Saved = 0
+    app.Presentations.items.append(prs)
+    untitled_env.append(app)
+    off.save_snapshot("ppt", prs, "ppt", "write")
+    code, out = run(capsys, "undo")
+    assert code == 0 and out["restored_as"] == "replaced_untitled_document"
+    assert ("Close",) in prs.calls and prs.Saved == -1                   # 묻지 않고 닫힘 (백업은 따로 보관)
+    assert app.Presentations.open_args[1:] == (0, -1, -1) and os.path.exists(out["pre_undo_backup"])
+
+
+def test_undo_unsaved_doc_not_open_opens_new_untitled(untitled_env, capsys):
+    app = FakeExcelApp()
+    wb = FakeWorkbook("")
+    off.save_snapshot("excel", wb, "excel", "write")
+    other = FakeWorkbook("")
+    other.Name = "Book2"
+    app.Workbooks.items.append(other)                                    # Book1은 이미 닫힘
+    untitled_env.append(app)
+    code, out = run(capsys, "undo")
+    assert code == 0 and out["restored_as"] == "new_untitled_document" and out["pre_undo_backup"] == ""
+    assert app.Workbooks.Count == 2 and "열려 있지 않아" in out["preview"]
+    assert other.calls == []                                             # 다른 문서는 건드리지 않음
+
+
+def test_undo_unsaved_same_name_twice_does_not_guess(untitled_env, capsys):
+    app1, app2 = FakeExcelApp(), FakeExcelApp()
+    a, b = FakeWorkbook(""), FakeWorkbook("")                            # 두 Excel 창의 Book1
+    app1.Workbooks.items.append(a)
+    app2.Workbooks.items.append(b)
+    untitled_env.extend([app1, app2])
+    off.save_snapshot("excel", a, "excel", "write")
+    code, out = run(capsys, "undo")
+    assert code == 0 and out["restored_as"] == "new_untitled_document"
+    assert "2개" in out["preview"] and "그대로 열려 있습니다" in out["preview"]
+    assert not any(c[0] == "Close" for c in a.calls + b.calls)           # 어느 것도 닫지 않음
 
 
 def test_windows_lists_documents(monkeypatch, capsys):

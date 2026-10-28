@@ -112,8 +112,9 @@ class FakeWorkbooks:
         self.items.append(wb)
         return wb
 
-    def Add(self):
+    def Add(self, Template=None):
         wb = FakeWorkbook("")
+        wb.template = Template
         self.items.append(wb)
         return wb
 
@@ -191,6 +192,9 @@ class FakePresentations:
     @property
     def Count(self):
         return len(self.items)
+
+    def __call__(self, i):
+        return self.items[i - 1]
 
     def Open(self, path, *args):
         self.open_args = (path,) + args

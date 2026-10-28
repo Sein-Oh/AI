@@ -2,6 +2,35 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.2.2] - 2026-10-28
+
+사내 경량 LLM(Gemma, OpenCode + PowerShell)으로 `docs/opencode/SCENARIOS.md`를 실행한 시나리오 테스트 결과 반영 (시나리오 10, 12).
+
+### 수정
+- (시나리오 10) Sheet1만 있는 빈 통합문서에서 "Sheet9에 '테스트'라고 써줘" -> Gemma가 사용자에게 묻지 않고 Sheet9를 만들어 썼습니다.
+  원인: 없는 시트 오류(`_office.missing_sheet`)의 message에 "새 시트로 만들려면 같은 명령에 --new-sheet를 붙이세요"가 있었고, 비슷한 시트가 있으면 `[후보]`에 "(새 시트 만들기: --new-sheet)"를 섞어 넣어 LLM이 그것을 골랐습니다.
+  - message와 `[후보]`에는 사실만 적습니다: 없는 시트, 있는 시트 목록, 아무 데도 쓰지 않았음, 사용자에게 물어볼 것. `--new-sheet`와 명령문을 넣지 않습니다.
+  - 표기만 다른 시트(대소문자·공백·_-.)가 하나면 지금처럼 `[추천]`(error_type `input`). 그 밖에는 새 error_type `needs_user_decision`(첫 단어는 `STOP_RETRY:` 그대로). 비슷한 기존 시트가 있으면 그 이름만 `[후보]`와 `candidates`에 넣습니다.
+  - `agent_directive`: `STOP_RETRY: 다시 실행하지 마세요. message를 사용자에게 그대로 보여 주고, 새 시트 '<이름>'을(를) 만들지 물어보세요. 사용자가 만들라고 답한 경우에만 같은 명령에 --new-sheet를 붙여 실행하세요.` (`[후보]`가 있으면 기존 시트를 고르는 경우도 안내)
+  - 공통 런타임에 `UserDecisionError`(InputError 하위 클래스, 사용자 결정이 필요한 오류) 추가.
+  - SKILL.md 3절 `[후보]` 행에서 `--new-sheet`를 고를 값 목록에서 빼고 "사용자가 새 시트를 원한다고 답한 경우에만"으로 바꿨습니다.
+  - `office.py transfer --to excel --sheet X`에서 X가 이미 있을 때의 `[추천] X 2`는 유지합니다. transfer는 원래 항상 새 시트에 받고(`--sheet` 생략 시에도 `Word 내용 2`처럼 비어 있는 이름), 기존 시트를 덮어쓰는 길은 `--overwrite`뿐이라 추천대로 다시 실행해도 기존 데이터가 바뀌지 않습니다.
+- (시나리오 12) 저장한 적 없는 새 워드 문서(`문서1`)에 엑셀 차트를 transfer한 뒤 "방금 한 거 되돌려줘" -> `office.py undo`가 빈 워드 창을 새로 열고, 차트가 들어간 문서는 그대로 남았습니다.
+  원인: 저장한 적 없는 문서의 스냅샷은 항상 "새 제목 없는 문서"로 열었습니다(1.0 설계).
+  - 스냅샷 때의 문서 이름으로 열린 문서 중 저장 안 된 문서를 찾습니다(`_office.open_untitled`, 스냅샷 meta에 `untitled` 추가).
+  - 워드: 현재 내용을 `pre_undo_backup`(.xml)에 보관하고, 같은 창에서 내용만 스냅샷으로 바꿉니다(flat XML 스냅샷은 `InsertXML`, 그 밖은 `InsertFile`). `restored_as: "restored_in_place"`.
+  - 엑셀/PPT: 현재 상태를 `pre_undo_backup`에 보관하고 스냅샷을 새 제목 없는 문서로 연 뒤, 바뀐 문서를 저장하지 않고 닫습니다(문서 수 그대로). `restored_as: "replaced_untitled_document"`.
+  - 바뀐 문서가 닫혔거나 같은 이름의 저장 안 된 문서가 둘 이상이면 고르지 않고 예전처럼 새 문서로만 엽니다(`new_untitled_document`). 이유를 `preview`에 적습니다.
+  - `preview`와 `agent_directive`에 무엇을 했는지 적습니다(예: `'문서1'을(를) 같은 창에서 되돌렸습니다`). 결과에 `restored_name`(되돌린 내용이 있는 문서 이름) 추가. 기존 키(`restored`, `app`, `name`, `restored_as`, `pre_undo_backup`) 유지.
+
+### 실기 테스트 러너 (`tools/run_win_tests.py`)
+- C3(저장 안 한 새 통합문서 undo): 기대값을 "통합문서 수 +1"에서 "수 그대로, 바뀐 통합문서는 닫힘, 되돌린 통합문서의 A1이 쓰기 전 값"으로 바꿨습니다.
+- C8 추가: 새 워드 문서에 쓰고 undo -> 같은 창에서 문장이 사라지고 문서 수 그대로 (시나리오 12).
+
+### 테스트
+- 없는 시트: message·`[후보]`에 `--new-sheet`와 명령문이 없음, directive가 사용자에게 묻게 함, `[추천]`(표기만 다름) 유지, `[후보]`는 실제 시트만, 시나리오 10 재현.
+- 저장 안 한 문서 undo: 워드 같은 창 복원(새 문서 없음, 백업 기록), 엑셀/PPT 바꿔 열고 바뀐 문서 닫기, 문서가 닫혀 있으면 예전 동작, 같은 이름 둘이면 고르지 않음.
+
 ## [1.2.1] - 2026-10-28
 
 회사 PC 실기 테스트(Windows 11, Office 16.0 / Microsoft 365, WinPython 3.13.13, DRM) 결과 반영과 오류 로그(R6).

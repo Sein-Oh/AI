@@ -4,7 +4,7 @@ description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.2.1"
+  version: "1.2.2"
   platform: windows
 ---
 
@@ -57,12 +57,12 @@ metadata:
 |---|---|
 | `VERIFIED:` | 완료. `preview`를 사용자에게 알린다. 같은 명령을 다시 실행하거나 결과를 다시 읽지 않는다. |
 | `UNVERIFIED:` | 실행은 됐지만 확인하지 못했다. 다시 실행하지 않고 `unverified` 내용을 그대로 알린다. |
-| `STOP_RETRY:` + message에 `[후보]` | 다시 실행하지 않는다. `[후보]`를 보여 주고 사용자가 고르게 한 뒤, 고른 값으로 실행한다 (시트: `--sheet 이름` 또는 `--new-sheet`, 앵커: `--occurrence 번호`, 문서: `--target 전체경로`). |
+| `STOP_RETRY:` + message에 `[후보]` | 다시 실행하지 않는다. `[후보]`를 보여 주고 사용자가 고르게 한 뒤, 고른 값으로 실행한다 (시트: `--sheet 이름`, 앵커: `--occurrence 번호`, 문서: `--target 전체경로`). 사용자가 새 시트를 원한다고 답한 경우에만 `--new-sheet`. |
 | `STOP_RETRY:` + message에 `[추천]` | 추천된 값으로 **1번만** 다시 실행한다. 또 실패하면 message를 그대로 알린다. |
-| `STOP_RETRY:` (위 둘 없음) | 다시 실행하지 않는다. message를 그대로 알린다. |
+| `STOP_RETRY:` (위 둘 없음) | 다시 실행하지 않는다. message를 그대로 알린다. 없는 시트(`needs_user_decision`)면 새 시트를 만들지 사용자에게 묻는다. |
 | `ERROR:` | 다시 실행하지 않는다. message를 그대로 알린다. |
 
 - JSON에 `recovered`가 있으면 그 문장을 그대로 알린다.
 - 메일은 기본으로 작성 창만 띄운다. `--send`는 사용자가 **발송을 분명히 요청한 경우에만** 붙인다.
 - 아래는 사용자가 요청한 경우에만 쓴다: 시트/슬라이드 삭제, `ppt.py slide --action clear --all-slides`, `--new-sheet`(새 시트), `--overwrite`(기존 시트에 덮어쓰기).
-- 잘못 고쳤으면 `office.py undo`로 되돌린다.
+- 잘못 고쳤으면 `office.py undo`로 되돌린다. 저장한 적 없는 문서도 그 문서를 되돌린다 (결과 `preview`를 그대로 알린다).

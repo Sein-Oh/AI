@@ -96,11 +96,22 @@ def _sheet_names(wb):
     return [wb.Worksheets(i).Name for i in range(1, wb.Worksheets.Count + 1)]
 
 
+def _no_create_imperative(out):
+    # 시나리오 10: message나 [후보]에 --new-sheet / '만드세요'가 있으면 경량 LLM이 묻지 않고 새 시트를 만든다
+    texts = [out["message"]] + list(out.get("candidates", []))
+    assert not any("--new-sheet" in x or "만드세요" in x or "붙이세요" in x for x in texts), texts
+
+
 def test_write_missing_sheet_is_not_created_without_flag(xl, capsys):
     app, wb = xl
     code, out = run(capsys, "write", "--sheet", "결과표", "--value", "1")
-    assert code == 1 and out["agent_directive"].startswith("STOP_RETRY:")
-    assert "--new-sheet" in out["message"] and "[추천]" not in out["message"]
+    assert code == 1 and out["error_type"] == "needs_user_decision"
+    assert out["agent_directive"].startswith("STOP_RETRY: 다시 실행하지 마세요.")
+    assert "만들지 물어보세요" in out["agent_directive"]
+    assert "만들라고 답한 경우에만 같은 명령에 --new-sheet" in out["agent_directive"]   # 플래그는 사용자 동의 조건으로만
+    _no_create_imperative(out)
+    assert "[추천]" not in out["message"] and "[후보]" not in out["message"] and "candidates" not in out
+    assert "있는 시트: Sheet1, 요약" in out["message"] and "사용자에게 물어보세요" in out["message"]
     assert _sheet_names(wb) == ["Sheet1", "요약"]                       # 새 시트 없음
     code, out = run(capsys, "write", "--range", "'결과표'!A1", "--value", "1")
     assert code == 1 and _sheet_names(wb) == ["Sheet1", "요약"]
@@ -110,16 +121,38 @@ def test_write_sheet_differs_only_in_spacing_recommends_existing(xl, capsys):
     app, wb = xl
     code, out = run(capsys, "write", "--sheet", "Sheet 1", "--value", "1")
     assert code == 1 and out["error_type"] == "input" and out["message"].endswith("[추천] Sheet1")
+    _no_create_imperative(out)
     assert _sheet_names(wb) == ["Sheet1", "요약"]
 
 
 def test_write_similar_but_different_sheet_asks_user(xl, capsys):
-    # Sheet2를 Sheet1의 오타로 단정해 덮어쓰지 않음: [후보]로 사용자에게 고르게 함
+    # Sheet2를 Sheet1의 오타로 단정해 덮어쓰지 않음: [후보]는 실제 기존 시트만, 새 시트 여부는 사용자에게 물음
     app, wb = xl
     code, out = run(capsys, "write", "--sheet", "Sheet2", "--value", "1")
-    assert code == 1 and out["error_type"] == "ambiguous" and "[후보] Sheet1" in out["message"]
-    assert "Sheet1" in out["candidates"] and any("--new-sheet" in c for c in out["candidates"])
+    assert code == 1 and out["error_type"] == "needs_user_decision" and out["message"].endswith("[후보] Sheet1")
+    assert out["candidates"] == ["Sheet1"]
+    assert out["agent_directive"].startswith("STOP_RETRY: 다시 실행하지 마세요.")
+    assert "만들라고 답한 경우에만" in out["agent_directive"]
+    _no_create_imperative(out)
     assert _sheet_names(wb) == ["Sheet1", "요약"] and (1, 1) not in ws_of(wb, "Sheet1").values
+
+
+def test_scenario10_blank_workbook_sheet9_asks_user(capsys, monkeypatch):
+    # 시나리오 10: Sheet1만 있는 빈 통합문서에 "Sheet9에 써줘" -> 만들지 않고 사용자에게 물음
+    app = FakeXlApp()
+    wb = FakeExcelWorkbook(app, "Book1", sheets=("Sheet1",))
+    wb.FullName = "Book1"                                                # 저장한 적 없는 새 통합문서
+    fake, _ = make_win32com()
+    monkeypatch.setattr(off, "win32com", fake)
+    monkeypatch.setattr(off, "pythoncom", None)
+    monkeypatch.setattr(off, "list_open", lambda kind: [])
+    monkeypatch.setattr(off, "get_active", lambda kind: {"name": wb.Name, "path": "", "app": app, "doc": wb})
+    code, out = run(capsys, "write", "--sheet", "Sheet9", "--value", "테스트")
+    assert code == 1 and out["error_type"] == "needs_user_decision"
+    assert out.get("candidates", []) == ["Sheet1"] and "[추천]" not in out["message"]
+    _no_create_imperative(out)
+    assert "Sheet9" in out["agent_directive"] and "물어보세요" in out["agent_directive"]
+    assert _sheet_names(wb) == ["Sheet1"]
 
 
 def test_write_new_sheet_flag_rules(xl, capsys):

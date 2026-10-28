@@ -776,22 +776,33 @@ def test_C(ctx):
         record(ctx, "C2", "연속 undo 두 번", v1 == "값1" and v2 == "원래값", f"1차 후 A1={v1!r}, 2차 후 A1={v2!r}", d2, c2_, r2, e2)
 
     def c3():
+        # 1.2.2: 저장 안 한 문서 undo는 되돌린 내용을 새 창으로 열고 바뀐 통합문서는 닫음 -> 통합문서 수 그대로
         app = xl_app()
         new_wb = com_retry(lambda: app.Workbooks.Add())
         new_name = new_wb.Name
+
+        def _seed():
+            new_wb.Worksheets(1).Range("A1").Value = "원래새값"
+        com_retry(_seed)
         new_wb.Activate()
         before = app.Workbooks.Count
         run_cli("excel.py", "write", "--range", "A1", "--value", "새문서값")
         data, code, raw, err = run_cli("office.py", "undo", "--app", "excel")
         time.sleep(2)
-        after = com_retry(lambda: xl_app().Workbooks.Count)
-        ok = (data or {}).get("status") == "ok" and (data or {}).get("restored_as") == "new_untitled_document" and after == before + 1
-        record(ctx, "C3", "저장 안 한 새 통합문서 undo", ok, f"통합문서 수 {before}->{after}", data, code, raw, err)
+        app = xl_app()
+        after = com_retry(lambda: app.Workbooks.Count)
+        names = [com_retry(lambda i=i: app.Workbooks(i).Name) for i in range(1, after + 1)]
+        restored = (data or {}).get("restored_name", "")
+        value = com_retry(lambda: xl_wb(restored).Worksheets(1).Range("A1").Value) if restored in names else None
+        ok = (data or {}).get("status") == "ok" and (data or {}).get("restored_as") == "replaced_untitled_document" \
+            and after == before and new_name not in names and value == "원래새값"
+        record(ctx, "C3", "저장 안 한 새 통합문서 undo -> 바뀐 창 닫고 되돌린 창 하나", ok,
+               f"통합문서 수 {before}->{after}, '{new_name}' 남음={new_name in names}, 되돌린 A1={value!r}", data, code, raw, err)
         try:
             app = xl_app()
             for i in range(app.Workbooks.Count, 0, -1):
                 wb = app.Workbooks(i)
-                if wb.Name != "A.xlsx" and (wb.Name == new_name or not wb.Path):
+                if wb.Name != "A.xlsx" and (wb.Name in (new_name, restored) or not wb.Path):
                     wb.Close(SaveChanges=False)
         except Exception:
             pass
@@ -838,6 +849,35 @@ def test_C(ctx):
         ok = (data or {}).get("restored") is False and code == 0
         record(ctx, "C7", "스냅샷 소진 시 '되돌릴 것 없음'", ok, "", data, code, raw, err)
 
+    def c8():
+        # 시나리오 12: 저장 안 한 새 워드 문서에 쓴 뒤 undo -> 같은 창에서 되돌림, 새 창 없음
+        wd = office_app("word")
+        doc = com_retry(lambda: wd.Documents.Add())
+        name = doc.Name
+        com_retry(lambda: doc.Activate())
+        before = com_retry(lambda: wd.Documents.Count)
+        run_cli("word.py", "write", "--text", "새문서문장")
+        written = "새문서문장" in com_retry(lambda: wd_doc(name).Content.Text)
+        data, code, raw, err = run_cli("office.py", "undo", "--app", "word")
+        time.sleep(2)
+        after = com_retry(lambda: wd.Documents.Count)
+        try:
+            text = com_retry(lambda: wd_doc(name).Content.Text)
+        except Exception:
+            text = None
+        ok = written and (data or {}).get("status") == "ok" and (data or {}).get("restored_as") == "restored_in_place" \
+            and after == before and text is not None and "새문서문장" not in text
+        record(ctx, "C8", "저장 안 한 새 워드 문서 undo -> 같은 창에서 되돌림", ok,
+               f"쓰기 확인={written}, 문서 수 {before}->{after}, 같은 창 남음={text is not None}, "
+               f"문장 남음={text is not None and '새문서문장' in text}", data, code, raw, err)
+        try:
+            for i in range(wd.Documents.Count, 0, -1):
+                d = wd.Documents(i)
+                if not d.Path:
+                    d.Close(SaveChanges=0)
+        except Exception:
+            pass
+
     run_test(ctx, "C1", "Excel undo", c1)
     run_test(ctx, "C2", "연속 undo", c2)
     run_test(ctx, "C3", "새 통합문서 undo", c3)
@@ -845,6 +885,7 @@ def test_C(ctx):
     run_test(ctx, "C5", "워드 undo", c5)
     run_test(ctx, "C6", "PPT undo", c6)
     run_test(ctx, "C7", "스냅샷 소진", c7)
+    run_test(ctx, "C8", "새 워드 문서 undo", c8)
 
 
 # ---------------------------------------------------------------------------
