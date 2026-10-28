@@ -92,3 +92,25 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증.
 - 회사 PC에서 `office.py transfer --probe` 결과 확인. (집 PC Office 2007: export, redraw 성공 / relay는 "워드에 붙여넣기 안 됨"으로 실패)
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
+
+### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
+상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
+- [ ] excel write/transfer에서 없는 `--sheet`를 새 시트로 자동 생성하지 않기, 비슷한 시트가 있으면 STOP_RETRY + `[추천]` (excel.py:426,430). 새 시트는 명시 플래그로만
+- [ ] word `--anchor`가 여러 곳에 맞으면 STOP_RETRY(후보 수 + `[추천]`), 못 찾으면 비슷한 단락 `[추천]` (word.py:378-388). `match_open` 같은 파일명 중복도 STOP_RETRY (_office.py:216)
+- [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
+- [ ] `run_cli`/`JsonArgumentParser.error`에서 `data/logs/errors.txt` 기록, `_runtime.VERSION` 추가 (기준: doc-classifier `write_error_log`). 러너의 `errors_<시각>.txt`는 별도 목적이라고 README에 명시
+- [ ] 결과 JSON `recovered` 배열: 잠금 새 이름 저장, transfer 방식 대체, 색인 재생성, 오래된 스냅샷 정리 (공통 수집기는 `_runtime`)
+- [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
+- [ ] COM 호출 거부(0x8001010A, 0x80010001) 재시도 `com_retry`를 `_office.py`에 (횟수·시간 상한, 넘으면 기존 office_busy STOP_RETRY)
+- [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)와 undo 복원 `shutil.copy2`(office.py:709,715,721)에 적용. retry_fs는 일시적 오류만 재시도
+- [ ] COM 내보내기(excel.py:781,802; word.py:577,584; ppt.py:741,750; office.py:124)를 `save_with_lock_fallback`으로, 기존 출력 파일은 새 이름 저장 + `recovered`
+- [ ] `--dry-run`: excel replace/range clear·move/sheet delete/chart delete --all, word replace/write --pos replace, ppt replace/slide delete·clear. 스냅샷이 없는 쓰기는 `undo_available: false`
+- [ ] 빈 결과 `count: 0` + "찾은 항목 없음": excel read 빈 범위, word/ppt/reader read 0단위, reader list, outlook list, office windows, info --all, chart list, undo --list
+- [ ] 잘리는 결과에 `truncated` + 전체 결과 파일 경로: excel read --search(50), excel replace cells(30), reader search(--save도 전체 hits), reader list(100), undo --list(20), outlook list/search. `body_truncated` 옆에 `truncated`
+- [ ] next_commands: excel write 자리표시 `--title 차트` 제거(excel.py:509), word.py:136·ppt.py:183 transfer 명령에 `--from-target`
+- [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
+- [ ] tools/run_win_tests.py `--agent` 모드: JsonArgumentParser와 최상위 예외 처리, 로그 태그 `[준비]` `[주의]` `[확인]` -> `[INFO]` `[WARN]`
+- [ ] .md 문자 규칙: 유니코드 화살표 26개 -> `->` (SKILL.md:44, README.md:69,133-135,140, TEST_CHECKLIST.md:34, WORK_PLAN.md 7곳), 원문자 -> `1.` `2.` (WORK_PLAN.md:195)
+- [ ] `_STOP_RETRY_ERRORS`에서 ValueError/KeyError 제외 (_runtime.py:79-80)
+- [ ] pyproject.toml `target-version = "py313"`
+- [ ] 인자 alias 정리(추가만): `-r`/`-c`/`-n` 충돌, `--limit` 대 `--top`, `--pages` 대 `--slides`
