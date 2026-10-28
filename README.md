@@ -34,14 +34,14 @@ AI_WORK/
     │   ├── ml_report.py       # 3단계: Word 보고서
     │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.2.2)
+    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.3.0)
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
         ├── WORK_PLAN.md       # 1.0 설계 기록
         ├── requirements.txt
         ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
-        ├── reader.py          # PDF/HWP/EML/Office 파일 읽기와 검색 (Office 불필요)
+        ├── reader.py          # PDF/HWP/Office 파일 읽기, 캐시 등록, 근거(쪽/장절/번호) 검색 (Office 불필요)
         ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
         ├── _runtime.py / _office.py   # 공통 모듈
         ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너), office-cli-test/ (실기 테스트 스킬)

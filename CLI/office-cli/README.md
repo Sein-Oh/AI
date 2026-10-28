@@ -1,7 +1,7 @@
-# office-cli 1.2
+# office-cli 1.3
 
 Excel, Word, PowerPoint, Outlook을 AI 에이전트(26B~30B 경량 LLM)가 명령 한 줄로 다루게 하는 CLI 도구입니다.
-PDF, HWP, EML, Office 파일은 Office 없이 읽고 검색합니다.
+PDF, HWP, Office 파일은 Office 없이 읽고, 캐시에 등록해 쪽·장절·번호 근거와 함께 검색합니다.
 
 - 에이전트용 요약: [`SKILL.md`](SKILL.md)
 - 변경 이력과 남은 할 일: [`CHANGELOG.md`](CHANGELOG.md)
@@ -15,7 +15,7 @@ CLI/office-cli/
 ├── word.py      워드   read / info / write / replace / export
 ├── ppt.py       PPT    read / info / write / replace / export / slide
 ├── outlook.py   메일   list / search / read / current / folders / new / reply / forward
-├── reader.py    파일   read / search / list   (Office 불필요: PDF, HWP, HWPX, EML, DOCX, PPTX, XLSX, CSV, TXT, MD)
+├── reader.py    파일   read / index / search / list   (Office 불필요: PDF, HWP, HWPX, DOCX, PPTX, XLSX, CSV, TXT, MD)
 ├── office.py    공통   windows / focus / transfer / undo
 ├── _runtime.py  공통 런타임 (응답 계약, 경로, 입출력, 마크다운 해석)
 ├── _office.py   Office COM 공통 (세션, 스냅샷, 색/테마)
@@ -78,7 +78,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 |---|---|---|
 | data 폴더 (파일명만 쓴 입력/출력) | `<도구폴더>\data` | 환경변수 `OFFICE_CLI_DATA_DIR` 또는 `config.json`의 `data_dir` |
 | 작업 폴더 (`--save` 경로 생략 시, 7일 후 자동 정리) | `data\_work` | - |
-| 캐시 (읽은 문서 색인, 스냅샷) | `<도구폴더>\cache` | `OFFICE_CLI_CACHE_DIR` 또는 `cache_dir` |
+| 캐시 (등록한 문서 색인, 스냅샷) | `<도구폴더>\cache` | `OFFICE_CLI_CACHE_DIR` 또는 `cache_dir` |
 | 설정 (`transfer --probe` 결과 등) | `<도구폴더>\config.json` | - |
 | 오류 로그 (실패한 실행 자동 기록) | `data\logs\errors.txt` | data 폴더를 따라감 |
 
@@ -136,11 +136,78 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 - 첨부는 `data\_work\mail_attachments\`에 저장합니다. 같은 이름 첨부는 번호를 붙이고, 본문 삽입 이미지와 실행 파일 형식은 저장하지 않습니다.
 
 ### reader.py
-- `read --file 경로 [--pages 1-3] [--format summary] [--save]`
-- `search --query "A AND B" | "A OR B" [--regex --file 파일또는폴더 --top --full --save 결과.md|결과.csv]`
-- `list`: 읽은 적 있는 문서(색인)
-- 읽은 문서는 자동으로 캐시와 색인에 등록됩니다. 파일이 바뀌면 다시 읽습니다.
+용도: (1) 작성 중인 문서(Word/Excel/PPT)가 규정·규격서(PDF/Word)에 맞는지 확인, (2) 여러 문서에서 키워드를 찾아 근거(쪽, 장절, 문항/조항 번호)와 함께 모으기.
+
+| 명령 | 하는 일 |
+|---|---|
+| `index --folder 폴더 [--depth 3 \| --recursive] [--max-files 300]` | 폴더의 문서를 내용 출력 없이 캐시에 등록. 결과: `count`, `indexed`, `updated`, `unchanged`, `failed`, `failures`(20개까지), `remaining`, `truncated`, `skipped_types`(지원하지 않는 확장자별 개수) |
+| `index --file 파일` / `index --all` | 파일 하나 등록 / 등록된 문서 전체를 다시 확인(바뀐 파일, 이전 형식 캐시만 다시 읽음) |
+| `read --file 경로 [--pages 1-3 \| --units 57-120] [--format summary] [--save .md\|.csv\|.xlsx]` | 파일 하나 읽기(캐시에 등록). 단위마다 `page`, `section`, `number`, `kind` |
+| `search --query "A AND B" \| "A OR B" [--file 파일또는폴더] [--pages 3-7] [--section 장절일부] [--regex --top --full --max-files] [--save 근거.xlsx\|.csv\|.md]` | 캐시에서 검색 |
+| `list [--name 이름일부] [--folder 폴더]` | 캐시된 문서 목록: 파일, 경로, 형식, 단위 수, 쪽 수, 장절 수, `cached_at`, `stale`(원본 변경 또는 이전 형식), `missing`(원본 없음) |
+
+- 지원 형식: PDF, HWP, HWPX, DOCX/DOCM, PPTX/PPTM, XLSX/XLSM, CSV, TXT, MD. 그 밖의 확장자는 "지원하지 않는 형식입니다"(STOP_RETRY). EML은 1.3.0에서 뺐습니다 (Outlook 통합 도구에서 별도로 다룰 예정).
+- `--max-files`는 이번 실행에서 **새로 읽는** 파일 수의 상한입니다. 이미 최신인 파일은 세지 않으므로 같은 명령을 다시 실행하면 남은 파일부터 이어서 등록합니다(`next_commands[0]`). 등록은 원본을 바꾸지 않는 읽기 전용 작업입니다.
 - DRM으로 암호화된 Office 파일은 라이브러리로 열 수 없으므로, `excel.py`/`word.py`/`ppt.py read --target 경로`로 Office에서 읽으라고 안내합니다.
+
+#### 검색과 캐시
+- `--file` 없음: 캐시에 등록된 문서 전체만 검색합니다(파일을 다시 읽지 않음). 등록된 문서가 없으면 `error_type: not_indexed`(STOP_RETRY).
+  원본이 바뀌었거나 이전 파서 형식인 캐시는 그대로 검색하고 `stale_cache_count`와 `index --all` 명령을 줍니다. 원본이 지워진 문서는 `file_missing: true`.
+- `--file 파일`: 캐시가 없거나 낡았으면(수정 시각/크기/파서 버전) 먼저 읽어 등록하고, 최신이면 캐시를 씁니다. `--file 폴더`: 폴더(기본 3단계 하위)의 미등록/변경 문서를 `--max-files`까지 등록한 뒤 그 폴더 문서만 검색합니다.
+  결과에 `indexed_now`(새로 등록한 파일 이름, 20개까지), `indexed_now_count`, `from_cache`, 남은 파일이 있으면 `not_indexed_remaining`과 `index --folder` 명령.
+- 거르기: `--pages 3-7`(쪽 정보가 없는 단위는 빼고 `page_unknown_skipped`로 개수 보고), `--section "SCOPE"`(장절 경로 일부, 대소문자 무시).
+- 결과 항목: `file`, `path`, `page`, `page_source`, `section`(목록), `section_text`(` > `로 이음), `number`, `loc`, `heading`, `evidence`, `snippet`, `--full`이면 `text`.
+  공통: `total_matches`(= `count`), `matched`(= `shown`), `truncated`, `files_searched`, `output_file`, `next_commands`. 잘렸으면 `--save "근거.xlsx"`로 전체를 저장하는 명령을 줍니다.
+- `evidence` 형식: `규격서.pdf p.12, 1. SCOPE > 1.1. Scope (1.1)`. 쪽이 없으면 `loc`(예: `매출.xlsx 매출!12행`), Word 쪽을 쪽 나눔으로만 셌으면 `p.3(추정)`.
+- `--save`: `.xlsx`(머리글 굵게, 줄바꿈, 열 너비, 첫 행 고정), `.csv`, `.md`(기본). 열: 파일, 쪽, 장절, 번호, 위치, 내용(문장/단락), 문맥. `.md`에는 항목마다 `근거:` 줄. 저장 파일에는 `--top`과 관계없이 전체(최대 5,000건)를 담습니다.
+
+#### 캐시 형식 (모든 형식 공통, `PARSER_VERSION` 2)
+문서마다 `cache/docs/<해시>.json` = `{file, type, mtime, size, parser_version, parsed_at, meta, units}`, 색인 `cache/index.json`(경로별 형식, 단위 수, 쪽 수, 장절 수, 수정 시각, 크기, 파서 버전).
+
+| 단위 키 | 뜻 |
+|---|---|
+| `id` | 1부터 순서 |
+| `kind` | `heading`(제목), `paragraph`(단락, 글머리 항목 포함), `row`(표 행, 엑셀/CSV 행), `slide`(슬라이드) |
+| `loc` | 사람이 읽는 위치: `p.12`, `p.3 표 1 2행`, `단락 37`, `표 3 5행`, `슬라이드 3`, `매출!12행` |
+| `page`, `page_source` | 쪽 번호와 출처(아래 표). 모르면 둘 다 null |
+| `section` | 위에서 아래로의 장절 경로. 예: `["III. 개발 내용", "1. 개발 내용 종합", "가. 검증기술"]`. 제목 단위는 자기 자신까지 포함 |
+| `number` | 단위 글 머리의 번호 토큰. 예: `1.1.1`, `가`, `III`, `제12조`, `Q3`, `(1)`, `1)`. 끝의 `.`/`#`은 뺌(`1.0#` -> `1.0`). 원문자 입력은 `(1)`로 |
+| `heading` | 하위 호환: `section`의 마지막 값(없으면 빈 글) |
+| `text` | 본문 |
+
+- 표는 **행 단위**입니다. 첫 행이 머리글로 보이면(짧은 글, 숫자만 있는 칸 없음) 각 행을 `항목: 내전압 | 기준: 1.5 kV 1분 | 시험방법: KS C 1234`처럼 만들어, 기준 값을 검색하면 그 요구사항 행이 머리글과 함께 나옵니다.
+  병합/빈 머리글 칸은 앞 칸 머리글을 이어 쓰고, 여러 줄 칸은 공백으로 잇습니다. 행의 `number`는 첫 칸이 번호(`1`, `1.2`, `REQ-001`)일 때. DOCX는 표 단위 대신 행 단위만 둡니다(같은 내용이 두 번 걸리지 않게).
+  PDF는 pymupdf `find_tables()`로 선이 있는 표를 찾아 행 단위로 넣고, 표 영역의 글은 단락에서 뺍니다. 표를 못 찾으면 단락으로 처리합니다.
+- 이전 형식(`parser_version` 1) 캐시도 검색됩니다: 빈 키를 채웁니다(`p.N`/`슬라이드 N`에서 쪽, `heading`에서 장절). 다시 읽으면(`read`, `index`) 새 형식으로 바뀝니다.
+
+| 형식 | `page` / `page_source` | 장절 |
+|---|---|---|
+| PDF | 정확한 쪽 / `pdf` (쪽마다 단락·줄 묶음 단위) | 번호 패턴 + 글자 크기/굵게 |
+| DOCX | Word가 저장한 쪽 경계 `w:lastRenderedPageBreak`가 있으면 그것으로 / `word_saved_layout`. 없으면 강제 쪽 나눔(`w:br type=page`, `pageBreakBefore`, 다음 쪽 구역 나누기)만 세어 / `page_break`(실제보다 적을 수 있어 근거에 `(추정)`). 둘 다 없으면 null | 제목 스타일(Heading N, 제목 N, 개요 수준) + Word 자동 번호(numbering.xml) + 번호 패턴 |
+| PPTX | 슬라이드 번호 / `slide` | `[슬라이드 제목]` |
+| HWPX | 문단의 쪽 나눔(`pageBreak`)이 있으면 / `page_break`, 없으면 null | 개요 수준(문단 모양의 `heading type=OUTLINE`)과 개요 번호, 없으면 번호 패턴 |
+| HWP, TXT/MD | null | 번호 패턴 (MD는 `#` 수준) |
+| XLSX / CSV | null | `[시트 이름]` / 없음 |
+
+#### 제목(장절)과 번호 인식
+줄 머리의 번호를 **계열**로 나누고, 계열의 수준은 문서에서 처음 나온 위치로 정합니다.
+- 계열: 로마 숫자(`III.`, 전각 로마 숫자), 점 번호(`1.` `1.1` `1.1.` `1.0#` `1.1#`: 숫자 개수가 깊이, 끝의 `.0`은 세지 않음), 가나다(`가.`), `1)`, `(1)`, `가)`, `(가)`, `a)`, `(a)`, `A.`, `a.`, 원문자(입력만), `제N편/장/절/관/조/항/호`, `Chapter/Part/Section/Article N`, `Annex/Appendix N`, `부록/별표/별지/첨부 N`, 문항(`Q3`, `문3`, `문항 3`).
+- 수준: 처음 보는 계열은 현재 가장 깊은 제목의 한 단계 아래. 이미 본 계열이 다시 나오면 그 수준으로 돌아가고 더 깊은 제목은 닫습니다. 점 번호는 `기준 수준 + 깊이 - 1`.
+  PDF에서는 상위 제목보다 글자가 분명히 큰 제목을 그 하위로 두지 않습니다.
+- 글머리 기호(`O`, `o`, `-`, `*`, `·`, 동그라미/네모/세모 기호, 참고 표시 등)는 번호가 아니고(`number` null) 제목도 아닙니다. 지금 장절 아래의 단락입니다.
+- 제목 조건(오탐 방지): 한 줄, 80자 이하(굵게/큰 글씨는 120자), 번호 뒤에 글자가 있음, 문장 끝(`.`, `다`, `니다`, 긴 줄의 `~함/~임/~음/~됨`)으로 끝나지 않음. 문장 속 숫자, 날짜(`2026. 10. 28.`), 수치(`3.5kg`)는 번호가 아닙니다.
+  구분 기호 없는 숫자(`2 REQUIREMENTS`)는 PDF에서 본문보다 크거나 굵을 때만 제목입니다. Word 제목 스타일은 이 조건과 관계없이 제목입니다.
+  `제N조(제목) 본문...`처럼 긴 조문은 `제N조(제목)`만 장절에 넣습니다. 번호가 있지만 제목이 아닌 단락(`1. 시스템은 ...한다.`)도 `number`는 채웁니다.
+- 예: 아래 세 형식 모두 올바르게 중첩됩니다 (`tests/test_reader_evidence.py`).
+  ```text
+  III. 개발 내용            -> [III. 개발 내용]
+  1. 개발 내용 종합         -> [III. 개발 내용, 1. 개발 내용 종합]
+  가. 검증기술              -> [..., 가. 검증기술]
+    O 프로그램 전체 연구 목표  -> 단락 (number null), 장절은 위와 같음
+  1. SCOPE / 1.1. Scope / 1.1.1. Data / 1.2. Purpose   -> 1.2는 [1. SCOPE, 1.2. Purpose]
+  1.0# Introduction / 1.1# Purpose / 1.1.1# Information -> 1.1.1#은 3단계
+  ```
+- 한 문서는 번호 체계 하나를 쓴다고 가정합니다. 같은 글자 크기로 서로 다른 체계를 섞은 문서는 먼저 나온 체계 아래로 들어갈 수 있습니다.
 
 ### office.py
 - `windows`: 열린 Office 문서 목록과 실행 중인 Office 버전, PDF 내보내기 가능 여부(`office`). PDF 기능이 없는 Office에서는 `export --save *.pdf`가 시도 없이 바로 안내합니다
@@ -175,7 +242,9 @@ python office.py transfer --from excel --chart "사인 2주기" --to word,ppt
 python office.py transfer --from word --what text --to excel     :: 새 시트에 받음 (--sheet 이름, 기존 시트에 덮어쓰기는 --overwrite)
 python office.py transfer --from ppt --what text --to excel
 
-:: 문서 검색 -> 워드에 넣기
+:: 문서 등록 -> 근거 검색 -> 엑셀로 저장 / 워드에 넣기
+python reader.py index --folder "C:\docs\규격"
+python reader.py search --query "내전압 AND 기준" --save "근거.xlsx"
 python reader.py search --query "마일스톤" --file "C:\docs\기획" --save
 python word.py write --file "<결과의 output_file>"
 ```
