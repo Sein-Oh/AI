@@ -21,7 +21,8 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 - 환경이 바뀌면 이 표, `constraints.txt`, `docs/ENVIRONMENT.md` 세 곳을 함께 갱신한다.
 
 ## 반드시 지킬 ACI 계약 (상세: CLI/README.md)
-1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr.
+1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr. `-h/--help` 텍스트도 stderr로 보내고 stdout에는 JSON 1줄.
+   - 사람용 실기 테스트 러너(`tools/run_win_tests.py`)는 계약 대상이 아니다. 단, 에이전트용 모드(`--agent` 등)는 계약을 지킨다.
 2. exit 0 = ok, 1 = error, 2 = 인자 오류, 130 = 중단.
    - 성공: `"status": "ok"`, `agent_directive`는 `VERIFIED:`로 시작.
    - 실패: `"status": "error"`, `agent_directive`는 `STOP_RETRY:`(입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도) 또는 `ERROR:`(내부 오류, 재시도 금지).
@@ -68,7 +69,8 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
    새 복구 사례는 회귀 테스트(실패 상황 재현 -> 복구 확인)와 함께 추가한다.
 
 ## 오류 로그 저장
-- 실패한 실행(exit 1, 2)은 `run_cli()`가 자동으로 `<도구 데이터 폴더>/logs/errors.txt`에 덧붙인다. 사용자 중단(exit 130)은 기록하지 않는다.
+- 실패한 실행은 자동으로 `<도구 데이터 폴더>/logs/errors.txt`에 덧붙인다. 사용자 중단(exit 130)은 기록하지 않는다.
+  - exit 1은 `run_cli()`, 인자 오류 exit 2는 `JsonArgumentParser.error()`가 기록한다.
   - 데이터 폴더 기본값은 `<도구폴더>/data`, 도구별 환경변수로 바꿀 수 있다 (예: `DOCCLS_DATA_DIR`, `OFFICE_CLI_DATA_DIR`). `data/`는 git에 올리지 않는다.
 - 항목 형식 (UTF-8, 항목 사이 빈 줄):
   ```text
@@ -89,6 +91,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 - 이모지, 원문자(동그라미 숫자 등), 장식 기호(체크 표시, 별, 유니코드 화살표 등)는 저장소 전체에서 금지한다.
   대상: 코드, 주석, stdout/stderr 출력, SKILL.md, README.md, CHANGELOG.md, 커밋 메시지, PR 본문.
 - 대신 ASCII를 쓴다: `[OK]`/`[FAIL]`, `->`, `1.` `2.`.
+- 가운뎃점(·), 곱셈(×), 도(°) 등 CP949로 표현되는 일반 기호는 허용한다.
 - 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`만 사용한다.
 - 이유: CP949 콘솔에서 깨지거나 인코딩 오류가 나고, 경량 LLM의 토큰 해석이 흔들린다.
 
