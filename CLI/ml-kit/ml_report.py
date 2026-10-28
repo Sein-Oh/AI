@@ -21,7 +21,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError,
-    sanitize_filename, load_json_file, save_with_lock_fallback, warn_long_path,
+    sanitize_filename, load_json_file, save_with_lock_fallback, warn_long_path, avoid_overwrite,
     normalize_version, strip_unit,
 )
 
@@ -60,7 +60,7 @@ except ImportError as _e:
 
 
 REPORT_TITLE = "ML 결과 보고서"
-REPORT_VERSION = "2.2.0"
+REPORT_VERSION = "2.3.0"
 
 # ==============================================================================
 # 1. Design tokens (grayscale-safe slate palette + one navy accent)
@@ -882,7 +882,8 @@ def text_features(t: Dict[str, Any]) -> str:
 # 6. Document sections
 # ==============================================================================
 
-def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[str]) -> Dict[str, Any]:
+def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[str],
+                 overwrite: bool = False) -> Dict[str, Any]:
     _setup_matplotlib()
     rec, targets, version = ctx["record"], ctx["targets"], ctx["version"]
     task = rec["task"]
@@ -1193,6 +1194,7 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     out_abs = os.path.abspath(out_path)
     os.makedirs(os.path.dirname(out_abs), exist_ok=True)
     warn_long_path(out_abs)
+    out_abs = avoid_overwrite(out_abs, overwrite, what="보고서")
     saved = R.save(out_abs)
 
     return {
@@ -1303,7 +1305,7 @@ def execute_report(args: argparse.Namespace) -> Dict[str, Any]:
     if args.target and args.target.strip().lower() != "all":
         target_filter = [t.strip() for t in args.target.split(",") if t.strip()]
     ctx = load_version(resolve_version_dir(args), target_filter)
-    return build_report(ctx, parse_slots(args.slots), args.out)
+    return build_report(ctx, parse_slots(args.slots), args.out, overwrite=args.overwrite)
 
 
 def main():
@@ -1315,6 +1317,8 @@ def main():
     parser.add_argument("--version", "-v", help="-d와 함께 쓸 버전 (예: v2 또는 2)")
     parser.add_argument("--target", "-t", help="문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 all = 전체)")
     parser.add_argument("--out", "-o", help="저장할 .docx 경로 (생략 시 데이터 폴더에 ML결과보고서_<데이터>_<버전>.docx)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="같은 이름의 보고서가 있으면 덮어쓰기 (생략 시 시각을 붙인 새 이름으로 저장)")
     parser.add_argument("--slots", help="소견 덮어쓰기 JSON 파일 또는 문자열: summary, data, performance, features, lineage, "
                                         "correlation, operation, targets.{타겟}.{performance|features}")
     args = parser.parse_args()

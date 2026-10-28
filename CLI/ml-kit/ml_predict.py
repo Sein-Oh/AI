@@ -123,19 +123,35 @@ def error_payload(exc: BaseException, hint: str = "") -> Dict[str, Any]:
     }
 
 
+_RECOVERED: List[str] = []
+
+
+def note_recovered(msg: str) -> None:
+    """Records a JIT recovery that changed the result (e.g. saved under a new name); reported as JSON `recovered`."""
+    msg = str(msg)[:200]
+    sys.stderr.write(f"[WARN] {msg}\n")
+    _RECOVERED.append(msg)
+
+
+def _with_recovered(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if _RECOVERED and "recovered" not in payload:
+        payload = {**payload, "recovered": list(_RECOVERED)}
+    return payload
+
+
 def run_cli(execute: Callable[[], Dict[str, Any]], hint: str = "") -> None:
     """Runs a tool body, guaranteeing exactly one JSON line on stdout and exit code 0/1/130."""
     try:
         result = execute()
     except KeyboardInterrupt as e:
         sys.stderr.write("\n[ERROR] 실행 중단 (KeyboardInterrupt)\n")
-        emit_json_response(error_payload(e))
+        emit_json_response(_with_recovered(error_payload(e)))
         sys.exit(130)
     except Exception as e:
         sys.stderr.write(f"\n[ERROR] {e}\n")
-        emit_json_response(error_payload(e, hint))
+        emit_json_response(_with_recovered(error_payload(e, hint)))
         sys.exit(1)
-    emit_json_response(result)
+    emit_json_response(_with_recovered(result))
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -733,9 +749,28 @@ def atomic_write_text(path: str, text: str) -> None:
                 pass
 
 
+_STAMP_SUFFIX = re.compile(r"_\d{8}_\d{6}(_\d+)?$")
+
+
 def _timestamped(path: str) -> str:
+    """'a.csv' -> 'a_YYYYMMDD_HHMMSS.csv'. An existing time suffix is replaced (never doubled); never returns an existing path."""
     base, ext = os.path.splitext(path)
-    return f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+    base = _STAMP_SUFFIX.sub("", base)
+    alt = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+    n = 2
+    while os.path.exists(alt):
+        alt = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{n}{ext}"
+        n += 1
+    return alt
+
+
+def avoid_overwrite(path: str, overwrite: bool = False, what: str = "결과 파일") -> str:
+    """Never replaces an existing result file unless --overwrite was given: returns a timestamped sibling instead."""
+    if overwrite or not os.path.exists(path):
+        return path
+    alt = _timestamped(path)
+    note_recovered(f"{what} {os.path.basename(path)} 이미 있음 -> {os.path.basename(alt)}로 저장 (덮어쓰려면 --overwrite)")
+    return alt
 
 
 def save_with_lock_fallback(path: str, writer: Callable[[str], None], what: str = "파일") -> str:
@@ -749,9 +784,7 @@ def save_with_lock_fallback(path: str, writer: Callable[[str], None], what: str 
     except PermissionError:
         alt = _timestamped(path)
         writer(alt)
-        sys.stderr.write(
-            f"[WARN] {what}이(가) 다른 프로그램(Excel/Word 등)에서 열려 있어 새 파일명으로 저장되었습니다: {os.path.basename(alt)}\n"
-        )
+        note_recovered(f"{what} {os.path.basename(path)} 잠김(Excel/Word 등에서 열림) -> {os.path.basename(alt)}로 저장")
         return alt
 
 
@@ -1230,9 +1263,11 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         warn_long_path(saved_file)
         os.makedirs(os.path.dirname(saved_file), exist_ok=True)
         ext = os.path.splitext(saved_file)[1].lower()
-        if ext in [".xlsx", ".xls"]:
-            if ext == ".xls":
-                saved_file = os.path.splitext(saved_file)[0] + ".xlsx"
+        if ext == ".xls":
+            saved_file = os.path.splitext(saved_file)[0] + ".xlsx"
+            ext = ".xlsx"
+        saved_file = avoid_overwrite(saved_file, getattr(args, "overwrite", False), what="예측 결과 파일")
+        if ext == ".xlsx":
             saved_file = save_with_lock_fallback(
                 saved_file, lambda p: df_result.to_excel(p, index=False), what="결과 Excel 파일")
         else:
@@ -1345,6 +1380,8 @@ def main():
     parser.add_argument("--unit-row", type=int, help="단위 행 번호 (선택)")
     parser.add_argument("--data-row", type=int, help="데이터 시작 행 번호 (선택)")
     parser.add_argument("--encoding", help="결과 CSV 저장 인코딩 (기본값: Windows Excel 최적화 cp949)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="--out 파일이 이미 있으면 덮어쓰기 (생략 시 시각을 붙인 새 이름으로 저장)")
 
     args = parser.parse_args()
 

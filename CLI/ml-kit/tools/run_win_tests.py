@@ -35,6 +35,7 @@ import traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
+sys.path.insert(0, ROOT)
 PY = sys.executable
 CONTRACT = []       # (호출, 문제) - stdout/stderr 계약 위반 기록
 CALLS = []          # 모든 도구 호출 기록 (AI 판독용 로그)
@@ -47,9 +48,9 @@ EXPECT = {
     "M2": "입력 xlsx가 Excel에 열려(잠겨) 있어도 status=ok, description이 M1의 '공정 효율 예측 (실기 테스트)'로 상속",
     "M3": "Excel이 저장한 CSV의 실제 인코딩이 cp949이고 status=ok, mean_val_score >= 0.8",
     "M4": "예측 status=ok, 결과 CSV를 Excel로 열었을 때 머리글에 'pred_생산효율(%)'와 '반응온도(°C)'가 깨지지 않고 보임",
-    "M5": "결과 CSV가 Excel에 열려 있으면 status=ok이고 output_file이 요청 경로와 다른(시각이 붙은) 새 파일",
+    "M5": "결과 CSV가 Excel에 열려 있으면 (--overwrite를 줘도) status=ok, output_file이 요청 경로와 다른(시각이 붙은) 새 파일, recovered에 '잠김'",
     "M6": "보고서 status=ok, Word로 열림, 표 5개 이상, 문서 첫 문단에 '보고서' 포함",
-    "M7": "보고서가 Word에 열려 있으면 status=ok이고 report_file이 기존 파일과 다른 새 파일",
+    "M7": "보고서가 Word에 열려 있으면 (--overwrite를 줘도) status=ok, report_file이 기존 파일과 다른 새 파일, recovered에 '잠김'",
     "M8": "next_commands의 needs_input이 자리표시자('<') 유무와 일치, needs_input=false인 첫 명령을 cmd.exe와 PowerShell에 그대로 넣어 둘 다 status=ok",
     "M9": "ml_predict.py + v1 폴더만 있는 배포 폴더에서 단건 예측 status=ok, predictions와 intervals 존재",
     "M10": "2만 행 학습 300초 미만, 예측 60초 미만, 둘 다 status=ok",
@@ -201,10 +202,26 @@ HEADERS = ("일시", "라인", "반응온도", "소비전력", "압축압력", "
 UNITS = ("", "", "°C", "kW", "bar", "wt%", "%", "%")
 
 
+DIR_MARKER = ".created_by_ml-kit-tests"
+
+
+def prepare_test_dir(path):
+    """테스트 폴더를 새로 준비한다. 러너가 만든 폴더(표식 파일)나 빈 폴더만 지우고 쓴다.
+    사용자의 다른 폴더를 --dir로 잘못 줘도 지우지 않는다."""
+    from ml_predict import remove_tree
+    if os.path.isdir(path) and os.listdir(path):
+        if not os.path.exists(os.path.join(path, DIR_MARKER)):
+            raise RuntimeError(
+                f"--dir 폴더가 비어 있지 않고 테스트 러너가 만든 폴더가 아니어서 지우지 않았습니다: {path} "
+                f"(빈 폴더나 없는 경로를 --dir로 주거나, 필요 없으면 직접 지운 뒤 다시 실행하세요)")
+        remove_tree(path)
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, DIR_MARKER), "w", encoding="utf-8") as f:
+        f.write("ml-kit tools/run_win_tests.py 테스트 폴더. 다음 실행 때 통째로 지워집니다.\n")
+
+
 def setup(ctx):
-    if os.path.exists(ctx.dir):
-        shutil.rmtree(ctx.dir, ignore_errors=True)
-    os.makedirs(ctx.dir, exist_ok=True)
+    prepare_test_dir(ctx.dir)
     rows = process_xl_rows()
     xl = Office("Excel.Application")
     ctx.state.setdefault("office", {})["Excel"] = str(getattr(xl.app, "Version", "?"))
@@ -305,12 +322,13 @@ def test_all(ctx, only):
         xl = Office("Excel.Application")
         try:
             wb = xl.app.Workbooks.Open(out, ReadOnly=False)            # 결과 CSV를 Excel이 잠금
-            d, c, o, e = run_tool("ml_predict.py", "-m", vd, "-f", s["xlsx"], *xlsx_layout, "--out", out)
+            d, c, o, e = run_tool("ml_predict.py", "-m", vd, "-f", s["xlsx"], *xlsx_layout, "--out", out, "--overwrite")
             wb.Close(SaveChanges=False)
         finally:
             xl.quit()
         got = (d or {}).get("output_file") or ""
-        ok = ok_(d) and os.path.exists(got) and os.path.normcase(got) != os.path.normcase(out)
+        ok = (ok_(d) and os.path.exists(got) and os.path.normcase(got) != os.path.normcase(out)
+              and any("잠김" in x for x in (d or {}).get("recovered", [])))
         record(ctx, "M5", "결과 CSV가 Excel에 열려 있으면 새 이름으로 저장", ok,
                f"요청={os.path.basename(out)}, 실제={os.path.basename(got)}", d, c, e)
 
@@ -339,12 +357,13 @@ def test_all(ctx, only):
         wd = Office("Word.Application")
         try:
             doc = wd.app.Documents.Open(rep, ReadOnly=False, AddToRecentFiles=False, Visible=False)   # Word가 잠금
-            d, c, o, e = run_tool("ml_report.py", "-d", root)
+            d, c, o, e = run_tool("ml_report.py", "-d", root, "--overwrite")
             doc.Close(SaveChanges=0)
         finally:
             wd.quit()
         got = (d or {}).get("report_file") or ""
-        ok = ok_(d) and os.path.exists(got) and os.path.normcase(got) != os.path.normcase(rep)
+        ok = (ok_(d) and os.path.exists(got) and os.path.normcase(got) != os.path.normcase(rep)
+              and any("잠김" in x for x in (d or {}).get("recovered", [])))
         record(ctx, "M7", "보고서가 Word에 열려 있으면 새 이름으로 저장", ok,
                f"기존={os.path.basename(rep)}, 새 파일={os.path.basename(got)}", d, c, e)
 
@@ -586,7 +605,7 @@ def write_testlog(ctx, log_dir, label, stamp, fatal=None):
 
 def main():
     parser = argparse.ArgumentParser(description="ml-kit Windows 실기 테스트 러너")
-    parser.add_argument("--dir", default=r"C:\ml_test\ml 테스트", help="테스트 폴더 (실행 때마다 새로 만듦, 한글/공백 경로 권장)")
+    parser.add_argument("--dir", default=r"C:\ml_test\ml 테스트", help="테스트 폴더 (없는 경로나 빈 폴더. 러너가 만든 폴더만 실행 때마다 비우고 새로 만듦, 한글/공백 경로 권장)")
     parser.add_argument("--only", help="실행할 항목 (예: M1,M4). M1이 만든 모델을 쓰는 항목은 M1도 함께 지정")
     parser.add_argument("--label", default="PC", help="로그 파일 이름에 붙일 PC 라벨 (예: 집PC, 회사PC)")
     parser.add_argument("--log-dir", default=os.path.join(ROOT, "tools", "test_logs"),
