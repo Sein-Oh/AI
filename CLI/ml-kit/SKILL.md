@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.3.2"
+  version: "2.4.0"
   platform: windows
 ---
 
@@ -38,8 +38,8 @@ metadata:
 
 타겟이 숫자(수율, 온도, 강도)면 회귀, 글자나 등급(양품/불량, A/B/C)이면 분류다. 모르면 사용자에게 묻는다.
 
-**타겟이 여러 개면 `-y`에 쉼표로 모두 넣어 1번에 학습한다** (예: `-y "수율,강도,두께"`). 타겟마다 따로 학습하지 않는다.
-한 번에 학습해야 버전 1개에 모든 타겟이 들어가고 보고서도 1개로 나온다.
+타겟이 여러 개면 `-y`에 쉼표로 함께 넣어 1번에 학습하는 것을 권장한다 (예: `-y "수율,강도,두께"`).
+타겟별로 따로 학습해도 괜찮다. 보고서(5단계)가 모든 타겟을 자동으로 합친다.
 
 회귀:
 ```powershell
@@ -64,7 +64,6 @@ python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2
 - 날짜 컬럼과 글자 컬럼(라인, 설비)도 `-x`에 그대로 넣는다.
 
 결과 JSON에서 사용자에게 알릴 것: `version`, `mean_val_score`(1에 가까울수록 좋음), `recommendations`의 첫 문장.
-결과 JSON에 `split_targets_detected`가 있으면 (같은 데이터를 타겟별로 따로 학습한 경우) 그 타겟들을 함께 학습할지 사용자에게 묻고, 원하면 `next_commands[0]`을 그대로 실행한다.
 다음 단계를 위해 기억할 것: `version_dir`, `goal_met`, `next_commands`.
 
 ## 3단계: 성능 개선
@@ -86,7 +85,7 @@ python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -i "<피처1>=<값>,<피
 ```powershell
 python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>"
 ```
-- `<version_dir>`은 학습 결과 JSON의 `version_dir` 값을 그대로 쓴다. 모르면 `python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" --history`를 실행해 `<data_root>\<best_version>`을 쓴다.
+- `<version_dir>`: 보고서를 만들었으면 보고서 결과의 `best_version_dir`, 아니면 마지막 학습 결과의 `version_dir`을 그대로 쓴다. 모르면 `python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" --history`를 실행해 `<data_root>\<best_version>`을 쓴다.
 - 알릴 것: 한 건이면 `predictions_summary.<타겟>.predictions`, 회귀는 `intervals`(90% 범위)도. 파일이면 `output_file`.
 - 아래 값이 `true`이면 옆의 문장을 덧붙인다:
 
@@ -100,11 +99,13 @@ python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>
 ## 5단계: ML 결과 보고서 (Word)
 
 ```powershell
-python "C:\CLI\ml-kit\ml_report.py" -m "<version_dir>"
+python "C:\CLI\ml-kit\ml_report.py" -f "<데이터파일>"
 ```
-- 보고서는 **버전 1개에 1개**이고, 그 버전의 모든 타겟이 한 문서에 들어간다. 버전마다, 타겟마다 따로 만들지 않는다.
-- `<version_dir>`은 마지막 학습 결과의 `version_dir`이다. 사용자가 버전을 말하지 않으면 그 버전 1개로만 만든다.
-- 알릴 것: `report_file`(링크), `overall_verdict`(적합/조건부/부적합).
+- 도구가 이력에서 타겟마다 가장 좋았던 학습 조건으로 모든 타겟을 묶은 최고 모델을 자동으로 만들고(필요할 때만 다시 학습, 몇 분 걸릴 수 있으니 시간 제한 600000) 보고서 1개를 만든다. 타겟이나 버전을 고르지 않는다.
+- 회귀와 분류 타겟이 섞여 있으면 보고서가 2개(`best_reports`)다.
+- 알릴 것: `report_file`(링크), `overall_verdict`(적합/조건부/부적합), `made_best`(true면 이번에 다시 학습함),
+  `best_targets`의 타겟별 `source_version`(학습 조건 출처), `source_score`(그때 점수), `new_score`(이번 점수)를 짧게.
+- 이후 예측(4단계)에는 결과의 `best_version_dir`을 쓴다.
 - 사용자가 보고서 문장을 직접 정해 주면, 파일 쓰기 도구로 `slots.json`(UTF-8)을 만들고 명령 끝에 `--slots "<그 경로>"`를 붙인다.
   형식: `{"summary": "<요약 문장>", "operation": "<운영 문장>"}`
 

@@ -7,6 +7,8 @@ Atomic Version Packaging, and Single Source of Truth (SSOT) Ledger.
 --task regression (default) : champion by Out-of-Fold R2
 --task classification       : champion by Out-of-Fold Macro-F1 (Stratified K-Fold)
 
+--best (2.4.0)              : every target of the history retrained with its best recipe into one version per task
+
 Shared runtime (data loading, --eval engine, CLI protocol) is imported from ml_predict.py.
 
 Designed for lightweight 26B-30B LLM agents with 1-turn declarative execution.
@@ -1161,8 +1163,8 @@ def build_next_commands(
 
     if mean_score >= 0.90:  # caller passes the weakest target's score
         cmds.append({
-            "purpose": "ML 결과 보고서(Word) 생성",
-            "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -m {_q(final_dir)}",
+            "purpose": "ML 결과 보고서(Word) 생성 (이 데이터의 모든 타겟을 1개 문서로)",
+            "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -f {_q(raw_file)}",
             "needs_input": False,
         })
         cmds.append({
@@ -1207,15 +1209,118 @@ def _same_experiment(record: Dict[str, Any], task: str, targets: List[str]) -> b
     return record.get("task", TASK_REGRESSION) == task and sorted(record.get("targets", [])) == sorted(targets)
 
 
+def data_fingerprint(path: str) -> Dict[str, Any]:
+    """Size, modification time and SHA-256 of the data file (best-version freshness check)."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    st = os.stat(path)
+    return {"size": int(st.st_size), "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            "sha256": h.hexdigest()}
+
+
+def _prepare_group(df_raw: pd.DataFrame, group: Dict[str, Any], task: str) -> Dict[str, Any]:
+    """
+    One feature recipe (features, --eval formulas, --dtypes, positive class) applied to the loaded data.
+    A normal run has one group; a best run (--best) has one group per distinct recipe.
+    """
+    feats_in, tgts_in = group["features"], group["targets"]
+    feature_names = parse_feature_or_target_list(feats_in, "features") if isinstance(feats_in, str) else list(feats_in or [])
+    target_names = parse_feature_or_target_list(tgts_in, "targets") if isinstance(tgts_in, str) else list(tgts_in or [])
+    if not feature_names:
+        raise InputError("학습에 투입할 독립변수 목록(-x, --features)이 지정되지 않았거나 파일이 비어 있습니다.")
+    if not target_names:
+        raise InputError("예측할 종속변수 목록(-y, --targets)이 지정되지 않았거나 파일이 비어 있습니다.")
+    dtypes = group.get("dtypes")
+
+    # Fail-Fast Validation & Type Sanitization
+    log_progress(10, "컬럼 유효성 검증 및 타입 정제 중...")
+    df_clean, feature_names, target_names, column_aliases = validate_and_sanitize_data(
+        df=df_raw, feature_names=feature_names, target_names=target_names, dtypes_arg=dtypes, task=task)
+
+    # Feature Engineering (--eval): a string from the CLI or the canonical list stored in the ledger
+    applied_evals: List[str] = []
+    created_features: List[str] = []
+    evals = group.get("eval")
+    if evals:
+        log_progress(15, "방탄 AST 파생변수 연산 중 (--eval)...")
+        if isinstance(evals, str):
+            df_clean, applied_evals, created_features = run_safe_eval(df=df_clean, eval_str=evals, target_cols=target_names)
+        else:
+            df_clean, applied_evals, created_features = apply_eval_expressions(
+                df_clean, list(evals), target_cols=target_names, strict=True)
+        for c_feat in created_features:
+            if c_feat not in feature_names:
+                feature_names.append(c_feat)
+
+    # Feature typing (numeric / categorical / datetime) and model input frame
+    feature_schema = infer_feature_schema(df_clean, feature_names, created_features, dtypes_arg=dtypes)
+    X_all = prepare_features(df_clean, feature_schema)
+    empty_numeric = [c for c in feature_schema["numeric"] if X_all[c].notna().sum() == 0]
+    if empty_numeric:
+        raise InputError(
+            f"컬럼 {empty_numeric}에 숫자로 변환 가능한 값이 하나도 없습니다. 헤더/데이터 시작 행(--header-row, --data-row)을 확인하십시오."
+        )
+    for col in feature_schema["numeric"]:
+        df_clean[col] = X_all[col]
+    return {"df": df_clean, "features": feature_names, "targets": target_names, "aliases": column_aliases,
+            "evals": applied_evals, "created": created_features, "schema": feature_schema, "X": X_all,
+            "dtypes": dtypes, "positive_class": group.get("positive_class")}
+
+
+def _merge_schemas(schemas: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Union of feature schemas (one schema when every target uses the same features)."""
+    numeric: List[str] = []
+    categorical: Dict[str, List[str]] = {}
+    dates: Dict[str, List[str]] = {}
+    inputs: List[str] = []
+    for s in schemas:
+        numeric += [c for c in s["numeric"] if c not in numeric]
+        for c, v in s["categorical"].items():
+            categorical.setdefault(c, v)
+        for c, v in s["datetime"].items():
+            dates.setdefault(c, v)
+        inputs += [c for c in s["input_columns"] if c not in inputs]
+    return {"numeric": numeric, "categorical": categorical, "datetime": dates, "input_columns": inputs}
+
+
+def _union_frame(frames: List[pd.DataFrame]) -> pd.DataFrame:
+    """Column-wise union (first occurrence of a column name wins); all frames share the loaded row index."""
+    if len(frames) == 1:
+        return frames[0]
+    parts, seen = [], set()
+    for fr in frames:
+        cols = [c for c in fr.columns if c not in seen]
+        seen.update(cols)
+        if cols:
+            parts.append(fr[cols])
+    return pd.concat(parts, axis=1)
+
+
 def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     """Orchestrates 1-Turn declarative regression / classification pipeline."""
-    start_time = time.time()
     task = (getattr(args, "task", None) or TASK_REGRESSION).lower()
     positive_class = getattr(args, "positive_class", None)
     if positive_class is not None:
         if task != TASK_CLASSIFICATION:
             raise InputError("--positive-class는 --task classification과 함께 사용해야 합니다.")
         positive_class = normalize_labels(pd.Series([positive_class])).iloc[0]
+    group = {"features": args.features, "targets": args.targets, "eval": args.eval,
+             "dtypes": args.dtypes, "positive_class": positive_class}
+    return train_version(args, task, [group])
+
+
+def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, Any]],
+                  best_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Trains every target of every group into ONE new version folder.
+    Normal runs: one group (all -y targets share the -x features). Best runs (--best): one group per
+    distinct recipe, so each target keeps its own features/--eval; each model_<t>.json carries its own
+    features_required, so ml_predict.py needs no change.
+    """
+    start_time = time.time()
     primary_metric = PRIMARY_METRIC[task]
     metric_label = METRIC_LABEL[task]
     raw_file = os.path.abspath(args.file)
@@ -1250,56 +1355,36 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             data_row=args.data_row
         )
 
-        # Parse Explicit Features & Targets (Supports file path or comma-separated string)
-        feature_names = parse_feature_or_target_list(args.features, param_name="features")
-        target_names = parse_feature_or_target_list(args.targets, param_name="targets")
-
-        if not feature_names:
-            raise InputError("학습에 투입할 독립변수 목록(-x, --features)이 지정되지 않았거나 파일이 비어 있습니다.")
-        if not target_names:
-            raise InputError("예측할 종속변수 목록(-y, --targets)이 지정되지 않았거나 파일이 비어 있습니다.")
-
-        # Fail-Fast Validation & Type Sanitization
-        log_progress(10, "컬럼 유효성 검증 및 타입 정제 중...")
-        df_clean, feature_names, target_names, column_aliases = validate_and_sanitize_data(
-            df=df_raw,
-            feature_names=feature_names,
-            target_names=target_names,
-            dtypes_arg=args.dtypes,
-            task=task
-        )
-
-        # Feature Engineering (--eval)
-        applied_evals = []
-        created_features = []
-        if args.eval:
-            log_progress(15, "방탄 AST 파생변수 연산 중 (--eval)...")
-            df_clean, applied_evals, created_features = run_safe_eval(
-                df=df_clean,
-                eval_str=args.eval,
-                target_cols=target_names
-            )
-            # Add new features to feature_names if not already present
-            for c_feat in created_features:
-                if c_feat not in feature_names:
-                    feature_names.append(c_feat)
-
-        # Feature typing (numeric / categorical / datetime) and model input frame
-        feature_schema = infer_feature_schema(df_clean, feature_names, created_features, dtypes_arg=args.dtypes)
-        X_all = prepare_features(df_clean, feature_schema)
-        empty_numeric = [c for c in feature_schema["numeric"] if X_all[c].notna().sum() == 0]
-        if empty_numeric:
-            raise InputError(
-                f"컬럼 {empty_numeric}에 숫자로 변환 가능한 값이 하나도 없습니다. 헤더/데이터 시작 행(--header-row, --data-row)을 확인하십시오."
-            )
-        for col in feature_schema["numeric"]:
-            df_clean[col] = X_all[col]
+        prepared = [_prepare_group(df_raw, g, task) for g in groups]
+        g0 = prepared[0]
+        column_aliases: Dict[str, str] = {}
+        target_group: Dict[str, Dict[str, Any]] = {}
+        target_names: List[str] = []
+        for g in prepared:
+            column_aliases.update(g["aliases"])
+            for t in g["targets"]:
+                if t in target_group:
+                    raise InputError(f"타겟 '{t}'이(가) 학습 조건 두 곳에 들어 있습니다.")
+                target_group[t] = g
+                target_names.append(t)
+        # Version-wide views: identical to the group's own values when there is one group
+        feature_names = list(dict.fromkeys(f for g in prepared for f in g["features"]))
+        applied_evals = list(dict.fromkeys(e for g in prepared for e in g["evals"]))
+        feature_schema = _merge_schemas([g["schema"] for g in prepared])
+        X_all = _union_frame([g["X"] for g in prepared])
+        df_clean = _union_frame([g["df"][[c for c in g["features"] + g["targets"] if c in g["df"].columns]]
+                                 for g in prepared]) if len(prepared) > 1 else g0["df"]
 
         # Correlation (numeric inputs incl. date parts + numeric targets) for SSOT reporting
         log_progress(20, "변수 간 2차원 상관행렬 계산 중...")
-        num_inputs = [c for c in feature_schema["input_columns"] if c not in feature_schema["categorical"]]
         target_numeric = target_names if task == TASK_REGRESSION else []
-        corr_frame = pd.concat([X_all[num_inputs], df_clean[target_numeric]], axis=1)
+        corr_parts = []
+        for g in prepared:
+            num_inputs = [c for c in g["schema"]["input_columns"] if c not in g["schema"]["categorical"]]
+            corr_parts.append(g["X"][num_inputs])
+        corr_parts.append(pd.concat([target_group[t]["df"][[t]] for t in target_numeric], axis=1)
+                          if target_numeric else pd.DataFrame(index=df_raw.index))
+        corr_frame = _union_frame(corr_parts) if len(prepared) > 1 else pd.concat(corr_parts, axis=1)
         corr_full = corr_frame.corr().round(4)
 
         # Multi-Target 5-Model Competitive Training (one task per run)
@@ -1311,17 +1396,18 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
 
         total_targets = len(target_names)
         for t_idx, target_name in enumerate(target_names):
+            g = target_group[target_name]
             t_offset = 25 + int(55 * t_idx / total_targets)
             t_weight = int(55 / total_targets)
 
             log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
-            extra = {"positive_class": positive_class} if task == TASK_CLASSIFICATION else {}
+            extra = {"positive_class": g["positive_class"]} if task == TASK_CLASSIFICATION else {}
             t_bench, champion_pipe, champion_info, oof_df = benchmark_fn(
-                X=X_all,
-                y_series=df_clean[target_name],
+                X=g["X"],
+                y_series=g["df"][target_name],
                 target_name=target_name,
-                schema=feature_schema,
+                schema=g["schema"],
                 seed=args.seed,
                 log_offset=t_offset,
                 log_weight=t_weight,
@@ -1337,7 +1423,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             all_champion_scores.append(champion_info["val_score"])
 
             # Target statistics
-            y_valid = df_clean[target_name].dropna()
+            y_valid = g["df"][target_name].dropna()
             if task == TASK_REGRESSION:
                 target_summaries[target_name] = {
                     "mean": round(float(y_valid.mean()), 4),
@@ -1349,7 +1435,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                 target_summaries[target_name] = {
                     "classes": champion_info["classes"],
                     "class_counts": champion_info["class_counts"],
-                    "missing_dropped": int(df_clean[target_name].isna().sum())
+                    "missing_dropped": int(g["df"][target_name].isna().sum())
                 }
 
         mean_val_score = float(np.mean(all_champion_scores))
@@ -1434,11 +1520,13 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         with open(os.path.join(staging_dir, "leaderboard.json"), "w", encoding="utf-8") as f:
             f.write(dumps_json(leaderboard_data, indent=2))
 
-        datetime_stats = {}
-        for col in feature_schema["datetime"]:
-            dt = parse_datetime(df_clean[col]).dropna()
-            if not dt.empty:
-                datetime_stats[col] = {"min": dt.min().isoformat(), "max": dt.max().isoformat()}
+        def _datetime_stats(g: Dict[str, Any]) -> Dict[str, Any]:
+            out = {}
+            for col in g["schema"]["datetime"]:
+                dt = parse_datetime(g["df"][col]).dropna()
+                if not dt.empty:
+                    out[col] = {"min": dt.min().isoformat(), "max": dt.max().isoformat()}
+            return out
 
         # Correlation: full matrix as a file, a bounded matrix in the ledger (keeps history.json small)
         corr_full.to_csv(os.path.join(staging_dir, "correlation.csv"), encoding="utf-8-sig")
@@ -1451,6 +1539,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
 
         # 2. Target Models and Metadata
         for target_name, champ_data in target_champions.items():
+            g = target_group[target_name]
             pipe = champ_data["pipeline"]
             info = champ_data["info"]
             safe_target = sanitize_filename(target_name)
@@ -1464,8 +1553,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
 
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
-            for fname in feature_schema["numeric"]:
-                s = df_clean[fname].dropna()
+            for fname in g["schema"]["numeric"]:
+                s = g["df"][fname].dropna()
                 if not s.empty:
                     feat_stats[fname] = {
                         "mean": round(float(s.mean()), 4),
@@ -1505,16 +1594,18 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
                     "decision_threshold": info.get("decision_threshold"),
                 })
             meta_json.update({
-                "features_required": feature_names,
-                "feature_count": len(feature_names),
+                "features_required": g["features"],
+                "feature_count": len(g["features"]),
                 "feature_stats": feat_stats,
-                "datetime_stats": datetime_stats,
-                "feature_schema": feature_schema,
-                "derived_evals": applied_evals,
+                "datetime_stats": _datetime_stats(g),
+                "feature_schema": g["schema"],
+                "derived_evals": g["evals"],
                 "target_summary": target_summaries.get(target_name, {}),
                 "sklearn_version": sklearn.__version__,
                 "python_version": sys.version.split()[0]
             })
+            if best_info:
+                meta_json["best_source"] = best_info["best_source"].get(target_name)
             with open(os.path.join(staging_dir, f"model_{safe_target}.json"), "w", encoding="utf-8") as f:
                 f.write(dumps_json(meta_json, indent=2))
 
@@ -1542,16 +1633,17 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "rows_loaded": int(len(df_raw)),
             "columns_loaded": int(df_raw.shape[1]),
             "rows_used": {t: int(target_benchmarks[t]["sample_count"]) for t in target_names},
-            "target_missing_rows": {t: int(df_clean[t].isna().sum()) for t in target_names},
+            "target_missing_rows": {t: int(target_group[t]["df"][t].isna().sum()) for t in target_names},
             "feature_missing": feature_missing,
             "missing_imputed_cells": missing_imputed,
             "layout": {"header_row": args.header_row, "unit_row": args.unit_row, "data_row": args.data_row},
         }
 
+        run_tag = getattr(args, "tag", None) or ("best" if best_info else "")
         history_record = {
             "version": current_version,
             "timestamp": datetime.now().isoformat(),
-            "tag": getattr(args, "tag", None) or "",
+            "tag": run_tag,
             "description": project_desc,
             "duration_sec": duration_sec,
             "data_hygiene": {
@@ -1579,12 +1671,34 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "correlation_truncated": corr_truncated,
             "target_correlations": target_correlations
         }
-        next_commands = build_next_commands(
-            args=args, raw_file=raw_file, task=task, positive_class=positive_class,
-            feature_names=feature_names, created_features=created_features, applied_evals=applied_evals,
-            target_names=target_names, champion={**prim_champ, "weak_features": weak_feats}, schema=feature_schema,
-            mean_score=min_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
-        )
+        # Recipe inputs that ml_train --best needs to replay a run (added in 2.4.0)
+        if len(prepared) == 1:
+            if g0["dtypes"]:
+                history_record["dtypes"] = g0["dtypes"]
+            if g0["positive_class"] is not None:
+                history_record["positive_class"] = g0["positive_class"]
+        try:
+            history_record["data_fingerprint"] = data_fingerprint(raw_file)
+        except OSError as e:
+            sys.stderr.write(f"[WARN] 데이터 파일 지문 계산 실패 (보고서가 최고 버전을 다시 만들 수 있음): {e}\n")
+        if best_info:
+            history_record["best"] = True
+            history_record["best_source"] = best_info["best_source"]
+            history_record["target_recipes"] = {
+                t: {"features": [f for f in target_group[t]["features"] if f not in target_group[t]["created"]],
+                    "derived_evals": target_group[t]["evals"],
+                    "dtypes": target_group[t]["dtypes"],
+                    "positive_class": target_group[t]["positive_class"]}
+                for t in target_names
+            }
+            next_commands = build_best_next_commands(raw_file, guard.final_dir)
+        else:
+            next_commands = build_next_commands(
+                args=args, raw_file=raw_file, task=task, positive_class=g0["positive_class"],
+                feature_names=g0["features"], created_features=g0["created"], applied_evals=g0["evals"],
+                target_names=target_names, champion={**prim_champ, "weak_features": weak_feats}, schema=g0["schema"],
+                mean_score=min_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
+            )
         history_record["next_commands"] = next_commands
 
         # Commit Transaction: atomic rename .tmp_vX -> vX, then record it in the ledger.
@@ -1619,7 +1733,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         result = {
             "status": "ok",
             "version": current_version,
-            "tag": getattr(args, "tag", None) or "",
+            "tag": run_tag,
             "description": project_desc,
             "duration_sec": duration_sec,
             "data_root": data_root,
@@ -1635,6 +1749,12 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             "preview": preview,
             "agent_directive": agent_directive
         }
+        if best_info:
+            result["best_targets"] = {
+                t: {"task": task, "source_version": src.get("version"), "source_score": src.get("score"),
+                    "new_score": target_champions[t]["info"]["val_score"]}
+                for t, src in best_info["best_source"].items()
+            }
         if column_aliases:
             result["column_aliases"] = column_aliases
         if unverified:
@@ -1649,6 +1769,273 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         raise
     finally:
         run_lock.release()
+
+
+# ==============================================================================
+# 8-B. Best Version (--best): every target retrained with its best recipe, one version per task
+# ==============================================================================
+
+BEST_TAG = "best"
+TASK_ORDER = [TASK_REGRESSION, TASK_CLASSIFICATION]
+
+
+def build_best_next_commands(raw_file: str, final_dir: str) -> List[Dict[str, Any]]:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return [
+        {"purpose": "ML 결과 보고서(Word) 생성 (모든 타겟 1개 문서)",
+         "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -f {_q(raw_file)}",
+         "needs_input": False},
+        {"purpose": "새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
+         "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
+         "needs_input": True, "placeholder": "<새데이터.xlsx>"},
+    ]
+
+
+def _record_task(rec: Dict[str, Any]) -> str:
+    return rec.get("task", TASK_REGRESSION)
+
+
+def _target_score(rec: Dict[str, Any], target: str) -> Optional[float]:
+    champ = ((rec.get("targets_benchmark") or {}).get(target) or {}).get("champion") or {}
+    v = champ.get("val_score", champ.get(PRIMARY_METRIC.get(_record_task(rec), "val_r2")))
+    if v is None and len(rec.get("targets", [])) == 1:  # very old records: one target, run-level score
+        v = rec.get("mean_val_score", rec.get("mean_val_r2"))
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _target_recipe(rec: Dict[str, Any], target: str) -> Dict[str, Any]:
+    """Training conditions of one target in one ledger record (features before --eval, formulas, dtypes)."""
+    stored = (rec.get("target_recipes") or {}).get(target)
+    if stored:
+        return {"features": list(stored.get("features") or []), "derived_evals": list(stored.get("derived_evals") or []),
+                "dtypes": stored.get("dtypes"), "positive_class": stored.get("positive_class")}
+    evals = list(rec.get("derived_evals") or [])
+    derived = {e.split("=", 1)[0].strip() for e in evals if "=" in e}
+    pos = rec.get("positive_class")
+    if pos is None and _record_task(rec) == TASK_CLASSIFICATION:
+        champ = ((rec.get("targets_benchmark") or {}).get(target) or {}).get("champion") or {}
+        pos = (champ.get("decision_threshold") or {}).get("positive_class")
+    return {"features": [f for f in rec.get("features_used", []) if f not in derived], "derived_evals": evals,
+            "dtypes": rec.get("dtypes"), "positive_class": pos if _record_task(rec) == TASK_CLASSIFICATION else None}
+
+
+def _version_intact(data_root: str, rec: Dict[str, Any]) -> bool:
+    vdir = os.path.join(data_root, str(rec.get("version", "")))
+    if not rec.get("version") or not os.path.isdir(vdir):
+        return False
+    need = ["leaderboard.json", "model_dataset.csv"] + [f"model_{sanitize_filename(t)}.json" for t in rec.get("targets", [])]
+    return all(os.path.isfile(os.path.join(vdir, n)) for n in need)
+
+
+def _unique_records(records: List[Dict[str, Any]]) -> List[Tuple[int, Dict[str, Any]]]:
+    """(ledger index, record) with the last record per version (an --overwrite run replaces the folder)."""
+    last: Dict[str, int] = {}
+    for i, r in enumerate(records):
+        last[str(r.get("version"))] = i
+    return [(i, r) for i, r in enumerate(records) if last.get(str(r.get("version"))) == i]
+
+
+def select_best_recipes(records: List[Dict[str, Any]], data_root: str, task: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Per target: the record with the highest validation score (ties -> the later record) among versions
+    whose folder is intact. A best record's recipe traces back to its original version (best_source).
+    Returns {target: {recipe, selected_version, selected_score, source_version, source_score}} in
+    first-appearance order.
+    """
+    chosen: Dict[str, Dict[str, Any]] = {}
+    intact: Dict[str, bool] = {}
+    for _, rec in _unique_records(records):
+        if _record_task(rec) != task:
+            continue
+        ver = str(rec.get("version"))
+        if ver not in intact:
+            intact[ver] = _version_intact(data_root, rec)
+            if not intact[ver]:
+                sys.stderr.write(f"[WARN] 버전 폴더 {ver}이(가) 없거나 불완전해 최고 조건 후보에서 제외했습니다\n")
+        if not intact[ver]:
+            continue
+        for t in rec.get("targets", []):
+            s = _target_score(rec, t)
+            if s is None:
+                continue
+            if t not in chosen or s >= chosen[t]["selected_score"]:
+                src = (rec.get("best_source") or {}).get(t) if rec.get("best") else None
+                chosen[t] = {
+                    "recipe": _target_recipe(rec, t),
+                    "selected_version": ver, "selected_score": s,
+                    "source_version": (src or {}).get("version") or ver,
+                    "source_score": (src or {}).get("score") if src and src.get("score") is not None else s,
+                }
+    return chosen
+
+
+def _latest_layout(records: List[Dict[str, Any]], task: str) -> Dict[str, Any]:
+    for rec in reversed(records):
+        if _record_task(rec) == task:
+            return (rec.get("data_profile") or {}).get("layout") or {}
+    return {}
+
+
+def build_best_version(args: argparse.Namespace, task: str, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    raw_file = os.path.abspath(args.file)
+    data_root = os.path.join(os.path.dirname(raw_file), f"{os.path.splitext(os.path.basename(raw_file))[0]}_ml_data")
+    chosen = select_best_recipes(records, data_root, task)
+    if not chosen:
+        raise InputError(f"{task} 학습 기록 중 버전 폴더가 온전한 기록이 없어 최고 버전을 만들 수 없습니다. "
+                         f"먼저 ml_train.py로 학습하십시오.")
+    groups: Dict[str, Dict[str, Any]] = {}
+    for t, c in chosen.items():
+        r = c["recipe"]
+        key = dumps_json([r["features"], r["derived_evals"], r["dtypes"], r["positive_class"]])
+        g = groups.setdefault(key, {"features": r["features"], "targets": [], "eval": r["derived_evals"],
+                                    "dtypes": r["dtypes"], "positive_class": r["positive_class"]})
+        g["targets"].append(t)
+        sys.stderr.write(f"[INFO] 최고 조건: '{t}' <- {c['selected_version']} (점수 {c['selected_score']:.4f}, "
+                         f"원래 출처 {c['source_version']}), 피처 {len(r['features'])}개\n")
+    layout = _latest_layout(records, task)
+    run_args = argparse.Namespace(**vars(args))
+    for k, default in (("seed", 42), ("description", None), ("tag", None), ("encoding", None)):
+        if getattr(run_args, k, None) is None:
+            setattr(run_args, k, default)
+    for k in ("header_row", "unit_row", "data_row"):
+        if getattr(run_args, k, None) is None:
+            setattr(run_args, k, layout.get(k))
+    run_args.version, run_args.overwrite = None, False
+    best_source = {t: {"version": c["source_version"], "score": c["source_score"]} for t, c in chosen.items()}
+    for t, c in chosen.items():
+        if c["selected_version"] != c["source_version"]:
+            best_source[t]["selected_version"] = c["selected_version"]
+    log_progress(3, f"최고 버전 만들기 ({task}): 타겟 {len(chosen)}개, 학습 조건 {len(groups)}종을 현재 데이터로 다시 학습")
+    return train_version(run_args, task, list(groups.values()), best_info={"best_source": best_source})
+
+
+def _ledger_for(raw_file: str) -> Tuple[str, List[Dict[str, Any]]]:
+    data_root = os.path.join(os.path.dirname(raw_file), f"{os.path.splitext(os.path.basename(raw_file))[0]}_ml_data")
+    return data_root, load_history_ledger(os.path.join(data_root, "history.jsonl"))
+
+
+def _tasks_to_build(records: List[Dict[str, Any]], task: Optional[str], ledger_path: str) -> List[str]:
+    if not records:
+        raise InputError(f"학습 이력이 없습니다 ({ledger_path}). 먼저 ml_train.py로 학습한 뒤 다시 실행하십시오.")
+    present = [t for t in TASK_ORDER if any(_record_task(r) == t for r in records)]
+    if task:
+        if task not in present:
+            raise InputError(f"학습 이력에 {task} 기록이 없습니다. [추천] --task {present[0]}")
+        return [task]
+    return present
+
+
+def best_summary(version_result: Dict[str, Any]) -> Dict[str, Any]:
+    return {"task": version_result["task"], "version": version_result["version"],
+            "version_dir": version_result["version_dir"], "targets": version_result["targets"],
+            "mean_val_score": version_result.get("mean_val_score"), "made": True}
+
+
+def execute_make_best(args: argparse.Namespace) -> Dict[str, Any]:
+    """ml_train.py --best: builds one best version per task (always retrains)."""
+    raw_file = os.path.abspath(args.file)
+    if not os.path.exists(raw_file):
+        raise FileNotFoundError(f"입력 파일이 존재하지 않습니다: {raw_file}")
+    data_root, records = _ledger_for(raw_file)
+    tasks = _tasks_to_build(records, getattr(args, "task", None), os.path.join(data_root, "history.jsonl"))
+    built = []
+    for task in tasks:
+        built.append(build_best_version(args, task, records))
+        records = load_history_ledger(os.path.join(data_root, "history.jsonl"))
+    return combine_best_results(built)
+
+
+def combine_best_results(built: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Result JSON of --best: the first version's training keys plus best_* keys covering every task."""
+    result = dict(built[0])
+    summaries = [best_summary(b) for b in built]
+    best_targets: Dict[str, Any] = {}
+    for b in built:
+        best_targets.update(b.get("best_targets", {}))
+    unverified = [u for b in built for u in b.get("unverified", [])]
+    result.update({
+        "made_best": True,
+        "best_version": built[0]["version"],
+        "best_version_dir": built[0]["version_dir"],
+        "best_versions": summaries,
+        "best_targets": best_targets,
+        "verified": not unverified,
+    })
+    if unverified:
+        result["unverified"] = unverified
+    brief = "; ".join(f"{t}: {v['source_version']}({v['source_score']:.4f}) -> {v['new_score']:.4f}"
+                      for t, v in best_targets.items() if isinstance(v.get("source_score"), (int, float)))
+    vers = ", ".join(f"{s['version']}({s['task']}, 타겟 {len(s['targets'])}개)" for s in summaries)
+    result["preview"] = f"[최고 버전 완료] {vers} | 타겟별 출처 -> 이번 점수: {brief}"
+    multi = (f" 작업 유형이 {len(built)}가지라 최고 버전도 {len(built)}개입니다 (best_versions). 보고서도 {len(built)}개가 됩니다."
+             if len(built) > 1 else "")
+    head = (f"UNVERIFIED: 저장 결과를 확인하지 못했습니다 ({'; '.join(unverified)}). 재시도하지 말고 사용자에게 알리세요. "
+            if unverified else "VERIFIED: ")
+    result["agent_directive"] = (
+        head + f"타겟별 최고 학습 조건으로 모든 타겟을 다시 학습해 {vers}을(를) 만들었습니다.{multi} "
+        f"best_targets의 타겟별 출처 버전과 점수를 사용자에게 알리세요. 보고서는 next_commands[0], "
+        f"예측은 ml_predict.py -m <best_version_dir>을 사용하세요."
+    )
+    return result
+
+
+def best_is_fresh(records: List[Dict[str, Any]], data_root: str, raw_file: str, task: str) -> Optional[Dict[str, Any]]:
+    """
+    The latest best record of the task is reusable when no other training of that task was recorded after
+    it, its version folder is intact, and the data file content is unchanged (SHA-256, else size + mtime).
+    """
+    idx = next((i for i in range(len(records) - 1, -1, -1)
+                if records[i].get("best") and _record_task(records[i]) == task), None)
+    if idx is None:
+        return None
+    best = records[idx]
+    if any(_record_task(r) == task and not r.get("best") for r in records[idx + 1:]):
+        sys.stderr.write(f"[INFO] {best.get('version')} 이후 새 학습 기록이 있어 최고 버전을 다시 만듭니다 ({task})\n")
+        return None
+    if not _version_intact(data_root, best):
+        return None
+    fp_old = best.get("data_fingerprint") or {}
+    try:
+        fp_new = data_fingerprint(raw_file)
+    except OSError:
+        return None
+    same = (fp_old.get("sha256") == fp_new["sha256"]) if fp_old.get("sha256") else (
+        fp_old.get("size") == fp_new["size"] and fp_old.get("mtime") == fp_new["mtime"])
+    if not same:
+        sys.stderr.write(f"[INFO] 데이터 파일 내용이 {best.get('version')} 때와 달라 최고 버전을 다시 만듭니다 ({task})\n")
+        return None
+    return best
+
+
+def ensure_best_versions(args: argparse.Namespace) -> Dict[str, Any]:
+    """
+    For ml_report.py -f: reuses each task's up-to-date best version, otherwise builds it (in-process).
+    Returns {"made_best", "best_versions": [...], "best_targets": {...}, "built": [training results]}.
+    """
+    raw_file = os.path.abspath(args.file)
+    if not os.path.exists(raw_file):
+        raise FileNotFoundError(f"입력 파일이 존재하지 않습니다: {raw_file}")
+    data_root, records = _ledger_for(raw_file)
+    tasks = _tasks_to_build(records, getattr(args, "task", None), os.path.join(data_root, "history.jsonl"))
+    versions, best_targets, built = [], {}, []
+    for task in tasks:
+        rec = best_is_fresh(records, data_root, raw_file, task)
+        if rec is not None:
+            sys.stderr.write(f"[INFO] 최신 최고 버전 {rec['version']} ({task})을(를) 그대로 사용합니다\n")
+            versions.append({"task": task, "version": rec["version"],
+                             "version_dir": os.path.join(data_root, rec["version"]), "targets": rec.get("targets", []),
+                             "mean_val_score": rec.get("mean_val_score"), "made": False})
+            for t, src in (rec.get("best_source") or {}).items():
+                best_targets[t] = {"task": task, "source_version": src.get("version"), "source_score": src.get("score"),
+                                   "new_score": _target_score(rec, t)}
+            continue
+        res = build_best_version(args, task, records)
+        built.append(res)
+        versions.append(best_summary(res))
+        best_targets.update(res.get("best_targets", {}))
+        records = load_history_ledger(os.path.join(data_root, "history.jsonl"))
+    return {"made_best": bool(built), "best_versions": versions, "best_targets": best_targets, "built": built,
+            "data_root": data_root}
 
 
 # ==============================================================================
@@ -1695,6 +2082,8 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
         }
         if task == TASK_REGRESSION:
             row.update({"mean_val_r2": score, "delta_r2": delta})
+        if r.get("best"):
+            row["best"] = True  # built by --best (every target with its best recipe)
         rows.append(row)
 
         tag_s = tag if len(tag) <= 15 else tag[:13] + ".."
@@ -1759,14 +2148,29 @@ def main():
     parser.add_argument("--version", "-v", help="버전 수동 지정 (미지정 시 자동 계산 v1, v2...)")
     parser.add_argument("--overwrite", action="store_true",
                         help="--version으로 지정한 버전 폴더가 이미 있으면 교체 (사용자 확인 후에만 사용)")
-    parser.add_argument("--task", choices=[TASK_REGRESSION, TASK_CLASSIFICATION], default=TASK_REGRESSION,
-                        help="학습 유형: regression(기본값, 연속 수치 예측) 또는 classification(범주/라벨 예측)")
+    parser.add_argument("--task", choices=[TASK_REGRESSION, TASK_CLASSIFICATION], default=None,
+                        help="학습 유형: regression(기본값, 연속 수치 예측) 또는 classification(범주/라벨 예측). "
+                             "--best와 함께 쓰면 그 작업 유형만")
     parser.add_argument("--positive-class", dest="positive_class",
                         help="이진 분류의 양성 클래스 (예: 불량). 지정 시 양성 F1이 최대가 되도록 판정 기준 확률을 자동 조정")
     parser.add_argument("--seed", type=int, default=42, help="재현용 난수 시드 (기본값: 42)")
     parser.add_argument("--history", action="store_true", help="누적 실험 이력 조회 모드 (표는 stderr, 요약 JSON은 stdout)")
+    parser.add_argument("--best", action="store_true",
+                        help="이력에서 타겟별 최고 점수의 학습 조건으로 모든 타겟을 현재 데이터로 다시 학습해 새 버전 1개(작업 유형별)를 만듦")
 
     args = parser.parse_args()
+
+    if args.best and not args.history:
+        if not args.file:
+            parser.error("--best에는 --file(-f) 인자가 필요합니다.")
+        ignored = [flag for flag, val in (("-x", args.features), ("-y", args.targets), ("--eval", args.eval),
+                                          ("--version", args.version), ("--positive-class", args.positive_class),
+                                          ("--dtypes", args.dtypes)) if val]
+        if ignored:
+            sys.stderr.write(f"[WARN] --best는 이력의 학습 조건을 쓰므로 {ignored}을(를) 무시합니다\n")
+            args.features = args.targets = args.eval = args.version = args.positive_class = args.dtypes = None
+        run_cli(lambda: execute_make_best(args), hint="Train at least once with ml_train.py before --best.")
+        return
 
     if args.history:
         if not args.file:

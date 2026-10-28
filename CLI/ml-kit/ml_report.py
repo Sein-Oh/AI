@@ -10,8 +10,10 @@ training artifacts; an LLM may optionally override narrative paragraphs with --s
 Inputs (all written by ml_train.py 2.2.0+):
   <data_root>/history.jsonl, <version_dir>/leaderboard.json, model_<t>.json, oof_<t>.csv, correlation.csv
 
-Select the version with -m <version_dir>, or with -d <data_root> [-v vN] (without -v: the best
-version of the latest experiment, i.e. same task and target set as the latest training run).
+Select the version with -f <data file> (2.4.0: the best version of every target, built by
+ml_train.make_best when the history changed; one report per task), -m <version_dir>, or with
+-d <data_root> [-v vN] (without -v: the best version of the latest experiment, i.e. same task and
+target set as the latest training run).
 Requires python-docx and matplotlib (both in the standard environment).
 """
 
@@ -867,6 +869,31 @@ def chart_lineage(rows: List[Dict[str, Any]], current: str, label: str):
     return fig
 
 
+TREND_COLORS = [MPL_NAVY, MPL_ORANGE, "#059669", "#7C3AED", "#DC2626", "#0891B2", MPL_GRAY, "#4B5563"]
+
+
+def chart_target_trend(rows: List[Dict[str, Any]], names: List[str], current: str, label: str):
+    """Per-target validation score by version (best versions: targets were trained in different runs)."""
+    fig, ax = _fig(h_cm=6.5)
+    xs = [r["version"] for r in rows]
+    ys_all = []
+    for k, t in enumerate(names):
+        pts = [(i, r["scores"][t]) for i, r in enumerate(rows) if isinstance(r["scores"].get(t), (int, float))]
+        if not pts:
+            continue
+        ys_all += [y for _, y in pts]
+        ax.plot([i for i, _ in pts], [y for _, y in pts], color=TREND_COLORS[k % len(TREND_COLORS)], lw=1.4,
+                marker="o", ms=3.5, label=t)
+    if current in xs:
+        ax.axvline(xs.index(current), color=MPL_GRAY, lw=1, ls=":")
+    ax.set_xticks(range(len(xs)), xs)
+    ax.set_ylabel(label)
+    ax.set_ylim(min(ys_all + [CONDITIONAL_SCORE]) - 0.05, 1.02)
+    ax.legend(fontsize=7, frameon=False, loc="lower right", ncol=min(3, max(1, len(names))))
+    ax.grid(axis="x", visible=False)
+    return fig
+
+
 def chart_correlation(corr: pd.DataFrame):
     n = corr.shape[0]
     size = min(16.0, 3.5 + 0.75 * n)
@@ -962,8 +989,37 @@ def load_version(version_dir: str, target_filter: Optional[List[str]] = None) ->
             uniq.append(r)
     lineage = sorted(uniq, key=lambda r: r.get("timestamp", ""))
 
+    # Every training of the same task (a best version gathers targets trained in different runs)
+    last = {r.get("version"): i for i, r in enumerate(records)}
+    task_history = [r for i, r in enumerate(records) if last.get(r.get("version")) == i
+                    and r.get("task", "regression") == record.get("task", "regression")]
+    task_history = sorted(task_history, key=lambda r: r.get("timestamp", ""))
+
     return {"version_dir": vdir, "data_root": data_root, "version": version, "record": record,
-            "leaderboard": leaderboard, "targets": targets, "corr": corr, "lineage": lineage}
+            "leaderboard": leaderboard, "targets": targets, "corr": corr, "lineage": lineage,
+            "task_history": task_history}
+
+
+def merged_feature_info(targets: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], List[str]]:
+    """Union of feature schema / stats / required inputs over the targets (they differ in a best version)."""
+    schema: Dict[str, Any] = {"numeric": [], "categorical": {}, "datetime": {}}
+    stats: Dict[str, Any] = {}
+    dstats: Dict[str, Any] = {}
+    required: List[str] = []
+    for t in targets:
+        meta = t["meta"]
+        sc = meta.get("feature_schema") or {}
+        schema["numeric"] += [c for c in sc.get("numeric", []) if c not in schema["numeric"]]
+        for c, v in (sc.get("categorical") or {}).items():
+            schema["categorical"].setdefault(c, v)
+        for c, v in (sc.get("datetime") or {}).items():
+            schema["datetime"].setdefault(c, v)
+        for c, v in (meta.get("feature_stats") or {}).items():
+            stats.setdefault(c, v)
+        for c, v in (meta.get("datetime_stats") or {}).items():
+            dstats.setdefault(c, v)
+        required += [f for f in meta.get("features_required", []) if f not in required]
+    return schema, stats, dstats, required
 
 
 # ==============================================================================
@@ -1058,6 +1114,13 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     for t in targets:
         verdicts[t["name"]] = verdict_of(t["champ"].get("val_score"), t["champ"].get("overfit_gap"))
     overall = worst_verdict([v[0] for v in verdicts.values()])
+    best_src = (rec.get("best_source") or {}) if rec.get("best") else {}
+
+    def source_line(t: Dict[str, Any]) -> str:
+        src = best_src.get(t["name"]) or {}
+        old = src.get("score")
+        return (f"학습 조건 출처: {src.get('version', '-')} (당시 점수 {old:.4f}), 이번 점수 {t['champ']['val_score']:.4f}"
+                if isinstance(old, (int, float)) else f"학습 조건 출처: {src.get('version', '-')}, 이번 점수 {t['champ']['val_score']:.4f}")
     better = max((r for r in ctx["lineage"] if (r.get("mean_val_score") or -1) > rec["mean_val_score"] + 1e-9),
                  key=lambda r: r["mean_val_score"], default=None)
 
@@ -1090,6 +1153,8 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         ("학습 버전", f"{version}  ({rec.get('timestamp', '')[:19].replace('T', ' ')})"),
         ("작업 유형", task_ko),
         ("실험 메모", rec.get("tag") or "-"),
+    ] + ([("학습 방식", f"타겟별 최고 점수의 학습 조건으로 {len(best_src)}개 타겟을 현재 데이터로 다시 학습한 통합 버전")]
+         if best_src else []) + [
         ("작성일", datetime.now().strftime("%Y-%m-%d %H:%M")),
         ("작성 도구", "ml-kit ml_report.py (자동 생성)"),
     ])
@@ -1121,6 +1186,15 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         rows.append([t["name"], c["champion_model"], c.get("val_score"), err, verdicts[t["name"]][0], verdicts[t["name"]][1]])
     R.table(["타겟", "챔피언 모델", metric_label, "보조 지표", "판정", "근거"], rows, caption="타겟별 결과 요약",
             widths=[3.0, 3.9, 1.8, 2.4, 1.5, 4.4], align=["left", "left", "right", "right", "center", "left"], verdict_col=4)
+    if best_src:
+        srows = []
+        for t in targets:
+            src = best_src.get(t["name"]) or {}
+            srows.append([t["name"], src.get("version", "-"), src.get("score"), t["champ"].get("val_score"),
+                          len(t["meta"].get("features_required", []))])
+        R.table(["타겟", "학습 조건 출처", "당시 점수", "이번 점수", "피처 수"], srows,
+                caption="타겟별 학습 조건 출처 (출처 버전의 피처·파생변수로 현재 데이터에 다시 학습)",
+                widths=[4.6, 3.2, 3.0, 3.0, 3.2], align=["left", "center", "right", "right", "right"])
     recs = rec.get("recommendations") or []
     summary_default = "\n".join(
         [f"{t['name']}: {verdicts[t['name']][0]} - {t['champ']['champion_model']}, {metric_label} {t['champ']['val_score']:.4f}"
@@ -1142,9 +1216,7 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         ("결측 대치", f"피처 값 {prof.get('missing_imputed_cells', 0):,}칸 (수치=중앙값, 범주='__missing__')"),
         ("파생변수", "; ".join(rec.get("derived_evals") or []) or "없음"),
     ], caption="데이터 개요")
-    schema = targets[0]["meta"]["feature_schema"]
-    stats = targets[0]["meta"].get("feature_stats", {})
-    dstats = targets[0]["meta"].get("datetime_stats", {})
+    schema, stats, dstats, required_inputs = merged_feature_info(targets)
     miss = prof.get("feature_missing", {})
     frows = []
     for f in schema["numeric"]:
@@ -1195,6 +1267,9 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         R.h2(f"4.{i}. {t['name']}")
         v, why = verdicts[t["name"]]
         R.para(f"판정: {v}  ({why})", size=9.5, bold=True, color=VERDICT_STYLE[v][0])
+        if best_src:
+            R.para(source_line(t), size=9.5, color=C_INK)
+            R.para("입력 피처: " + ", ".join(t["meta"].get("features_required", [])), size=8.5, color=C_MUTED)
 
         R.h3(f"4.{i}.1. 모델 비교")
         if task == "regression":
@@ -1249,6 +1324,34 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     # -- 5. Lineage ------------------------------------------------------------
     R.h1("5. 버전 이력")
     lin = ctx["lineage"]
+    if best_src:
+        hist = [r for r in ctx.get("task_history", []) if r.get("targets")]
+        names = [t["name"] for t in targets]
+        trows = []
+        for r in hist:
+            scores = {}
+            for n in names:
+                ch = ((r.get("targets_benchmark") or {}).get(n) or {}).get("champion") or {}
+                if isinstance(ch.get("val_score"), (int, float)):
+                    scores[n] = ch["val_score"]
+            if scores:
+                trows.append({"version": r["version"], "date": (r.get("timestamp") or "")[:10],
+                              "tag": r.get("tag") or "-", "scores": scores})
+        R.para(f"이 버전은 타겟마다 점수가 가장 높았던 학습 조건(피처, 파생변수)을 골라 현재 데이터로 함께 다시 학습한 통합 버전입니다. "
+               f"같은 작업 유형으로 학습한 {len(trows)}개 버전의 타겟별 점수입니다.", size=9.5)
+        if len(trows) >= 2:
+            R.figure(chart_target_trend(trows, names, version, metric_label),
+                     f"버전별 타겟 {metric_label} 추이 (점선: 이 보고서 버전)")
+        cur_rows = [k for k, r in enumerate(trows) if r["version"] == version]
+        for c0 in range(0, len(names), 6):
+            chunk = names[c0:c0 + 6]
+            w_name = (17.0 - 6.0) / len(chunk)
+            R.table(["버전", "날짜", "메모"] + chunk,
+                    [[r["version"], r["date"], r["tag"]] + [r["scores"].get(n) for n in chunk] for r in trows],
+                    caption="버전별 타겟 점수 (빈칸: 그 버전에서 학습하지 않은 타겟)",
+                    widths=[1.4, 2.2, 2.4] + [w_name] * len(chunk),
+                    align=["center", "center", "left"] + ["right"] * len(chunk), highlight_rows=cur_rows,
+                    font_size=8)
     R.para(f"같은 작업 유형과 타겟 조합({', '.join(rec['targets'])})으로 학습한 {len(lin)}개 버전의 이력입니다.", size=9.5)
     if better:
         R.para(f"참고: 이 보고서 버전({version}, {rec['mean_val_score']:.4f})보다 점수가 높은 버전 "
@@ -1283,7 +1386,7 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         ("예측 명령 (파일)", f'python "{os.path.join(here, "ml_predict.py")}" -m "{ctx["version_dir"]}" -f "<새데이터.xlsx>"'),
         ("예측 명령 (단건)", f'python "{os.path.join(here, "ml_predict.py")}" -m "{ctx["version_dir"]}" -i "피처=값,피처=값"'),
         ("단독 배포", f"ml_predict.py 와 {version} 폴더 2가지만 복사 (numpy, pandas, scikit-learn, joblib 필요)"),
-        ("필수 입력", ", ".join(targets[0]["meta"]["features_required"])),
+        ("필수 입력", ", ".join(required_inputs)),
     ], caption="예측 실행 방법", widths=(3.4, 13.6))
     R.table(["경고 (예측 결과 JSON)", "의미", "조치"], [
         ["drift_warning (extrapolation_warnings)", "입력값이 학습 범위(표 3) 또는 학습 기간을 벗어남", "결과를 참고값으로만 사용, 반복되면 재학습"],
@@ -1454,12 +1557,76 @@ def execute_report(args: argparse.Namespace) -> Dict[str, Any]:
     target_filter = None
     if args.target and args.target.strip().lower() != "all":
         target_filter = [t.strip() for t in args.target.split(",") if t.strip()]
+    if getattr(args, "file", None) and not args.model and not args.data_dir:
+        return execute_best_report(args, target_filter)
     ctx = load_version(resolve_version_dir(args), target_filter)
     return build_report(ctx, parse_slots(args.slots), args.out, overwrite=args.overwrite)
 
 
+def _numbered_out(out: Optional[str], version: str, many: bool) -> Optional[str]:
+    if not out or not many:
+        return out
+    stem, ext = os.path.splitext(out)
+    return f"{stem}_{version}{ext or '.docx'}"
+
+
+def execute_best_report(args: argparse.Namespace, target_filter: Optional[List[str]]) -> Dict[str, Any]:
+    """
+    -f <data file>: one report per task covering EVERY target of that task. The best version (each target
+    retrained with its best recipe from the history) is reused when up to date, otherwise built first.
+    """
+    import ml_train  # heavy (scikit-learn); only this mode needs it
+    info = ml_train.ensure_best_versions(args)
+    slots = parse_slots(args.slots)
+    here = os.path.dirname(os.path.abspath(__file__))
+    versions = info["best_versions"]
+    reports: List[Dict[str, Any]] = []
+    for bv in versions:
+        flt = None
+        if target_filter:
+            flt = [f for f in target_filter if any(f == t or strip_unit(f) == strip_unit(t) for t in bv["targets"])]
+            if not flt:
+                continue
+        ctx = load_version(bv["version_dir"], flt)
+        reports.append(build_report(ctx, slots, _numbered_out(args.out, bv["version"], len(versions) > 1),
+                                    overwrite=args.overwrite))
+    if not reports:
+        all_targets = [t for bv in versions for t in bv["targets"]]
+        raise InputError(f"지정한 타겟 {target_filter}이(가) 최고 버전에 없습니다. [후보] {', '.join(all_targets[:10])}")
+
+    result = dict(reports[0])
+    result.update({
+        "made_best": info["made_best"],
+        "best_version": reports[0]["version"],
+        "best_version_dir": next(bv["version_dir"] for bv in versions if bv["version"] == reports[0]["version"]),
+        "best_versions": versions,
+        "best_targets": info["best_targets"],
+        "report_count": len(reports),
+        "best_reports": [{k: r[k] for k in ("report_file", "version", "task", "targets", "overall_verdict", "verdicts")}
+                    for r in reports],
+        "next_commands": [
+            {"purpose": f"새 데이터 예측 ({bv['task']}, <새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
+             "command": f'python "{os.path.join(here, "ml_predict.py")}" -m "{bv["version_dir"]}" -f "<새데이터.xlsx>"',
+             "needs_input": True, "placeholder": "<새데이터.xlsx>"} for bv in versions],
+    })
+    made = ("타겟별 최고 학습 조건으로 다시 학습한 " if info["made_best"] else "이미 최신인 ")
+    vers = ", ".join(f"{bv['version']}({bv['task']}, 타겟 {len(bv['targets'])}개)" for bv in versions)
+    files = ", ".join(os.path.basename(r["report_file"]) for r in reports)
+    result["preview"] = (f"[보고서 완료] {made}최고 버전 {vers} / 보고서 {len(reports)}개: {files} / "
+                         f"종합 판정 " + ", ".join(f"{r['version']} {r['overall_verdict']}" for r in reports))
+    multi = (f" 회귀와 분류 타겟이 섞여 있어 최고 버전과 보고서가 각각 {len(reports)}개입니다 (best_reports)."
+             if len(reports) > 1 else "")
+    predict = "; ".join(f"{bv['task']}: ml_predict.py -m \"{bv['version_dir']}\"" for bv in versions)
+    result["agent_directive"] = (
+        f"VERIFIED: {made}최고 버전 {vers}으로 ML 결과 보고서 {len(reports)}개를 저장했습니다 ({files}).{multi} "
+        f"report_file 링크, overall_verdict, best_targets의 타겟별 출처 버전과 점수를 사용자에게 알리세요. "
+        f"이후 예측에는 best_version_dir을 쓰세요 ({predict})."
+    )
+    return result
+
+
 def main():
-    parser = JsonArgumentParser(description="ML 결과 보고서 (Word) generator for one trained version")
+    parser = JsonArgumentParser(description="ML 결과 보고서 (Word) generator (-f: every target in one report per task)")
     parser.add_argument("--model", "-m",
                         help="보고서를 만들 학습 버전 폴더 (학습 결과 JSON의 version_dir, 예: data_ml_data\\v3)")
     parser.add_argument("--data-dir", "-d", "--history", "-H", dest="data_dir",
@@ -1471,9 +1638,16 @@ def main():
                         help="같은 이름의 보고서가 있으면 덮어쓰기 (생략 시 시각을 붙인 새 이름으로 저장)")
     parser.add_argument("--slots", help="소견 덮어쓰기 JSON 파일 또는 문자열: summary, data, performance, features, lineage, "
                                         "correlation, operation, targets.{타겟}.{performance|features}")
+    parser.add_argument("--file", "-f",
+                        help="학습한 데이터 파일. 모든 타겟을 타겟별 최고 학습 조건으로 묶은 최고 버전(필요하면 새로 학습)으로 보고서 작성")
+    parser.add_argument("--task", choices=["regression", "classification"],
+                        help="-f와 함께: 이 작업 유형의 보고서만 (생략 시 이력에 있는 유형마다 1개)")
+    parser.add_argument("--header-row", type=int, help="-f와 함께: 최고 버전을 새로 학습할 때 헤더 행 (생략 시 이력 값)")
+    parser.add_argument("--unit-row", type=int, help="-f와 함께: 단위 행 (생략 시 이력 값)")
+    parser.add_argument("--data-row", type=int, help="-f와 함께: 데이터 시작 행 (생략 시 이력 값)")
     args = parser.parse_args()
-    if not args.model and not args.data_dir:
-        parser.error("-m <version_dir> 또는 -d <data_root> 중 하나를 지정해야 합니다.")
+    if not args.model and not args.data_dir and not args.file:
+        parser.error("-f <데이터파일>, -m <version_dir>, -d <data_root> 중 하나를 지정해야 합니다.")
     run_cli(lambda: execute_report(args), hint="Check the version folder path (version_dir from the training result).")
 
 
