@@ -150,6 +150,8 @@ def _closed_pptx(target: str) -> Optional[str]:
     try:
         if off.win32com is not None and off.match_open("ppt", raw) is not None:
             return None
+    except rt.InputError:
+        return None   # 같은 이름의 열린 문서가 여럿: 파일을 읽지 않고 COM 경로에서 [후보] 오류로 안내
     except Exception:
         pass
     return raw

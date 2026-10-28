@@ -32,7 +32,7 @@ AI_WORK/
     │   ├── ml_report.py       # 3단계: Word 보고서
     │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.1.0)
+    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.2.0)
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일

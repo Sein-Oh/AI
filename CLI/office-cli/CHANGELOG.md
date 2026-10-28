@@ -2,6 +2,38 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.2.0] - 2026-10-28
+
+저장소 지침(AGENTS.md 2026-10-28) 반영 1차: 사용자 확인 없이 덮어쓰거나 추측하던 동작을 멈춥니다.
+근거 `docs/COMPLIANCE_REVIEW_2026-10-28.md` 2절, 구현 `CLI/README.md` R8(`[추천]`/`[후보]`).
+
+### 기능 (추가만, 기존 인자·키 유지)
+- 후보가 둘 이상이라 도구가 고를 수 없을 때의 오류 형식: `error_type: "ambiguous"`, `candidates`(최대 10개), message 끝 `[후보] a, b, c`,
+  directive `STOP_RETRY: 후보가 여러 개라 ... 재시도하지 말고 [후보]를 사용자에게 보여주고 고르게 한 뒤 ...`. SKILL.md 결과 처리 표에 추가.
+- `excel.py write --new-sheet`: 없는 시트를 새로 만들어 쓸 때만 붙입니다. 이미 있는 이름에 붙이면 만들지 않고 오류.
+- `word.py write --occurrence N`, `office.py transfer --occurrence N`: `--anchor`가 여러 단락에 있을 때 몇 번째 단락인지 (오류의 `[후보]` 번호).
+- `office.py transfer --to excel --overwrite`: `--sheet`로 준 시트가 이미 있을 때 그 시트에 덮어쓰기.
+
+### 수정 (동작 변경)
+- `excel.py write --sheet`(또는 `--range '시트'!A1`)에 없는 시트 이름을 주면 그 이름으로 새 시트를 조용히 만들던 문제. 오타가 새 시트가 되었습니다.
+  이제 만들지 않고 오류를 냅니다.
+  - 대소문자·공백·`_-.`만 다른 시트가 하나면 `[추천]` (예: `Sheet 1` -> `Sheet1`).
+  - 비슷하지만 다른 이름이면 `[후보]`로 사용자에게 고르게 합니다 (예: `Sheet2`를 `Sheet1`의 오타로 단정해 덮어쓰지 않음).
+  - 비슷한 것이 없으면 기존 시트 목록과 `--new-sheet` 안내.
+- `office.py transfer --to excel --sheet 이름`에 이미 있는 시트를 주면 A1부터 덮어쓰던 문제. 덮어쓰지 않고 비어 있는 이름을 `[추천]`합니다(`--overwrite`로 덮어쓰기). `--sheet`를 생략하면 지금처럼 새 시트(`Word 내용 2` 등).
+- `word.py write --anchor`가 여러 단락에 맞으면 첫 번째를 고르고, `--pos replace`면 그 단락을 지우던 문제. 아무것도 바꾸지 않고 `[후보]`(번호와 단락 앞부분 30자)로 오류를 냅니다. 같은 단락에 여러 번 나오면 한 곳으로 셉니다.
+  `office.py transfer --anchor`도 같습니다. 이 오류는 차트 전달 방식을 바꿔도 같으므로 다음 방식으로 넘어가지 않습니다.
+- `--anchor`를 찾지 못하면 문서에서 가장 비슷한 문구(그대로 다시 찾을 수 있는 원문 일부)를 안내합니다.
+  공백·대소문자만 다를 때, 또는 앵커 글자 사이에 2자 이하만 끼어들고(`2026 계획` -> `2026년 계획`) `--pos replace`가 아닐 때만 `[추천]`.
+  글자가 바뀌거나 빠진 문구(`Q2` -> `Q1`)는 뜻이 다를 수 있어 `[추천]` 없이 "비슷한 문구: ..."로만 알립니다.
+
+### 실기 테스트 러너
+- I그룹이 미리 만들지 않은 `I_DATA`, `I_BIG` 시트에 쓰던 첫 write에 `--new-sheet` 추가 (1.2.0 동작 변경으로 실패하던 문제).
+
+### 다음으로 미룸
+- `--save`(CSV/MD/텍스트)와 COM 내보내기가 기존 출력 파일을 덮어쓰는 문제는 공통 런타임 반영(R4) 때 함께 처리 (남은 할 일).
+- 열린 문서 이름(`--target 보고.xlsx`, `office.py focus --name`)이 여러 문서에 맞으면(다른 폴더의 같은 파일명, 다른 Excel 창의 `Book1`) 첫 번째를 고르던 문제. `[후보]`(전체 경로)로 오류를 냅니다. 전체 경로를 주면 그 문서로 정해집니다.
+
 ## [1.1.0] - 2026-10-27
 
 ### 구조 (이름 변경, 동작 불변)
@@ -95,8 +127,6 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
 상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
-- [ ] excel write/transfer에서 없는 `--sheet`를 새 시트로 자동 생성하지 않기, 비슷한 시트가 있으면 STOP_RETRY + `[추천]` (excel.py:426,430). 새 시트는 명시 플래그로만
-- [ ] word `--anchor`가 여러 곳에 맞으면 STOP_RETRY(후보 수 + `[추천]`), 못 찾으면 비슷한 단락 `[추천]` (word.py:378-388). `match_open` 같은 파일명 중복도 STOP_RETRY (_office.py:216)
 - [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
 - [ ] `run_cli`/`JsonArgumentParser.error`에서 `data/logs/errors.txt` 기록, `_runtime.VERSION` 추가 (기준: doc-classifier `write_error_log`). 러너의 `errors_<시각>.txt`는 별도 목적이라고 README에 명시
 - [ ] 결과 JSON `recovered` 배열: 잠금 새 이름 저장, transfer 방식 대체, 색인 재생성, 오래된 스냅샷 정리 (공통 수집기는 `_runtime`)
@@ -104,6 +134,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - [ ] COM 호출 거부(0x8001010A, 0x80010001) 재시도 `com_retry`를 `_office.py`에 (횟수·시간 상한, 넘으면 기존 office_busy STOP_RETRY)
 - [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)와 undo 복원 `shutil.copy2`(office.py:709,715,721)에 적용. retry_fs는 일시적 오류만 재시도
 - [ ] COM 내보내기(excel.py:781,802; word.py:577,584; ppt.py:741,750; office.py:124)를 `save_with_lock_fallback`으로, 기존 출력 파일은 새 이름 저장 + `recovered`
+- [ ] `--save`(read --save, export .csv/.md, `write_csv_rows`/`write_text`, `resolve_output_path`)가 기존 파일을 덮어쓰는 문제: R4대로 기존 파일이면 새 이름 저장 + `recovered`, `--overwrite`일 때만 덮어쓰기
 - [ ] `--dry-run`: excel replace/range clear·move/sheet delete/chart delete --all, word replace/write --pos replace, ppt replace/slide delete·clear. 스냅샷이 없는 쓰기는 `undo_available: false`
 - [ ] 빈 결과 `count: 0` + "찾은 항목 없음": excel read 빈 범위, word/ppt/reader read 0단위, reader list, outlook list, office windows, info --all, chart list, undo --list
 - [ ] 잘리는 결과에 `truncated` + 전체 결과 파일 경로: excel read --search(50), excel replace cells(30), reader search(--save도 전체 hits), reader list(100), undo --list(20), outlook list/search. `body_truncated` 옆에 `truncated`

@@ -120,6 +120,23 @@ def test_open_document_matched_by_name_is_not_closed(fake_com):
     assert wb.calls == []          # 저장도 닫기도 하지 않음 (사용자 문서)
 
 
+def test_same_name_documents_are_not_guessed(fake_com):
+    # 다른 폴더의 같은 파일명 두 개: 첫 번째를 고르지 않고 [후보](전체 경로)
+    pa, pb = os.path.abspath(os.path.join("x", "보고.xlsx")), os.path.abspath(os.path.join("y", "보고.xlsx"))
+    a, b = FakeWorkbook(pa), FakeWorkbook(pb)
+    fake_com["open"]["excel"] = [{"name": "보고.xlsx", "path": pa, "app": FakeExcelApp(), "doc": a},
+                                 {"name": "보고.xlsx", "path": pb, "app": FakeExcelApp(), "doc": b}]
+    with pytest.raises(rt.InputError) as ei:
+        with off.open_target("excel", "보고.xlsx", readonly=False, snapshot=False):
+            pass
+    assert ei.value.candidates == [pa, pb] and "[후보]" in str(ei.value)
+    payload = rt.error_payload(ei.value)
+    assert payload["error_type"] == "ambiguous" and payload["agent_directive"].startswith("STOP_RETRY:")
+    assert "재시도하지 말고" in payload["agent_directive"] and payload["candidates"] == [pa, pb]
+    assert a.calls == [] and b.calls == []
+    assert off.match_open("excel", pb, fake_com["open"]["excel"])["doc"] is b     # 전체 경로는 하나로 정해짐
+
+
 def test_sheet_lookup_rules(fake_com):
     wb = FakeWorkbook("C:/x/a.xlsx", sheets=("매출", "요약"))
     fake_com["active"]["excel"] = {"name": "a.xlsx", "path": "C:/x/a.xlsx", "app": FakeExcelApp(), "doc": wb}
@@ -131,6 +148,9 @@ def test_sheet_lookup_rules(fake_com):
         assert "[추천] 매출" in str(ei.value)
     with off.open_target("excel", readonly=False, snapshot=False) as t:
         assert t.sheet("신규", create=True).Name == "신규"
+        with pytest.raises(rt.InputError) as ei:
+            t.sheet("신규2")                          # 쓰기 세션이어도 create 없이는 만들지 않음
+        assert "--new-sheet" in str(ei.value)
 
 
 def test_read_session_never_moves_view_write_moves_to_changed_sheet(fake_com):

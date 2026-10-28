@@ -69,7 +69,25 @@ def debug(message: str) -> None:
 # ==============================================================================
 
 class InputError(ValueError):
-    """인자/대상/데이터 문제. 같은 인자로 재시도해도 소용없음 (STOP_RETRY)."""
+    """인자/대상/데이터 문제. 같은 인자로 재시도해도 소용없음 (STOP_RETRY).
+    candidates를 주면 '후보가 여러 개라 도구가 고를 수 없음'으로 응답합니다 (R8 [후보], 사용자가 고름)."""
+
+    def __init__(self, message: str = "", candidates: Optional[List[str]] = None, no_fallback: bool = False):
+        super().__init__(message)
+        self.candidates = list(candidates or [])
+        # 대상(문서, 앵커) 자체의 문제라 다른 방식으로 대체해도 소용없음 (transfer의 방식 자동 전환을 멈춤)
+        self.no_fallback = no_fallback or bool(self.candidates)
+
+
+MAX_CANDIDATES = 10
+
+
+def ambiguous(message: str, candidates: Iterable[str]) -> InputError:
+    """후보가 둘 이상이라 고를 수 없음. message 끝에 '[후보] a, b, c'(최대 10개)를 붙입니다."""
+    cands = [str(c) for c in candidates]
+    shown = cands[:MAX_CANDIDATES]
+    tail = f" [후보] {', '.join(shown)}" + (f" 외 {len(cands) - len(shown)}개" if len(cands) > len(shown) else "")
+    return InputError(message + tail, candidates=shown)
 
 
 class OfficeBusyError(RuntimeError):
@@ -181,6 +199,11 @@ def error_payload(exc: BaseException, tool: str = "", command: str = "") -> Dict
         return base
 
     msg = str(exc) or type(exc).__name__
+    if isinstance(exc, InputError) and exc.candidates:
+        base.update(error_type="ambiguous", message=msg, candidates=exc.candidates,
+                    agent_directive="STOP_RETRY: 후보가 여러 개라 도구가 고를 수 없습니다. 재시도하지 말고 message의 "
+                                    "[후보]를 사용자에게 보여주고 고르게 한 뒤, 사용자가 고른 값으로 실행하세요.")
+        return base
     if isinstance(exc, _STOP_RETRY_ERRORS):
         base.update(error_type="office_busy" if isinstance(exc, OfficeBusyError) else "input",
                     message=msg,

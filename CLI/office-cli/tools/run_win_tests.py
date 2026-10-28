@@ -1051,7 +1051,7 @@ def test_I(ctx):
     # --- 엑셀 쓰기/읽기 ------------------------------------------------------
     def i1():
         activate_xl("A.xlsx", "Sheet1")
-        d, c, r, e = run_cli("excel.py", "write", "--sheet", "I_DATA", "--range", "A1", "--file", csv_main)
+        d, c, r, e = run_cli("excel.py", "write", "--sheet", "I_DATA", "--new-sheet", "--range", "A1", "--file", csv_main)
         d2, c2, r2, e2 = run_cli("excel.py", "write", "--sheet", "I_DATA", "--range", "A1", "--file", csv_more, "--append")
         vals = com_retry(lambda: xl_sheet("I_DATA").Range("A1:C5").Value)
         expected = (("품목", "수량", "금액"), ("사과", 3.0, 1500.0), ("배", 2.0, 4000.0), ("포도", 5.0, 120.0), (None, None, None))
@@ -1080,7 +1080,7 @@ def test_I(ctx):
                f"일치={(d or {}).get('total_matches')}, CSV 첫 줄={first!r}, 읽은 뒤 활성 시트={active}", d2, c2, r2, e2)
 
     def i4():
-        run_cli("excel.py", "write", "--sheet", "I_BIG", "--range", "A1:A300", "--formula", "=ROW()")
+        run_cli("excel.py", "write", "--sheet", "I_BIG", "--new-sheet", "--range", "A1:A300", "--formula", "=ROW()")
         d, c, r, e = run_cli("excel.py", "read", "--sheet", "I_BIG", "--range", "A1:A300")
         nc = (d or {}).get("next_commands") or []
         rows = len((d or {}).get("values") or [])

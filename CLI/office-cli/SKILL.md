@@ -4,7 +4,7 @@ description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   platform: windows
 ---
 
@@ -19,11 +19,11 @@ stdout 의 **1줄 JSON** 만 읽는다 (stderr 의 `[PROGRESS]` 로그는 무시
 | 할 일 | 명령 |
 |---|---|
 | 엑셀 읽기 / 셀 찾기 | `excel.py read [--range A1:D20] [--search 글자] [--save]` |
-| 엑셀에 값/표/수식 쓰기 | `excel.py write --range A1 --file 표.csv` / `--values "[[\"이름\",\"값\"],[\"가\",1]]"` / `--range A2:B101 --formula "=..."` (`--header "x,y"`, `--append`, `--sheet 새시트`) |
+| 엑셀에 값/표/수식 쓰기 | `excel.py write --range A1 --file 표.csv` / `--values "[[\"이름\",\"값\"],[\"가\",1]]"` / `--range A2:B101 --formula "=..."` (`--header "x,y"`, `--append`, `--sheet 시트`, 새 시트는 `--sheet 이름 --new-sheet`) |
 | 엑셀 차트 | `excel.py chart --range A1:B101 --type line --title "제목"` (`--action list` / `--action delete --name 제목`) |
 | 엑셀 서식 | `excel.py style --range A1:E10 --theme navy` / `--bg yellow --bold` / `--highlight ">=100:pink"` |
 | 엑셀 기타 | `excel.py info`, `replace --find A --replace B`, `sheet --action add --name 이름`, `range --action merge --range A1:B1`, `export --save 결과.csv` |
-| 워드 읽기 / 쓰기 | `word.py read [--save]` / `word.py write --text "## 제목\n- 항목"` / `--file 내용.md` / `--image 그림.png` (`--anchor 글 --pos after`) |
+| 워드 읽기 / 쓰기 | `word.py read [--save]` / `word.py write --text "## 제목\n- 항목"` / `--file 내용.md` / `--image 그림.png` (`--anchor 글 --pos after`, 여러 곳이면 `--occurrence N`) |
 | 워드 기타 | `word.py info`, `replace --find A --replace B [--bold]`, `export --save 보고서.pdf [--page-number]` |
 | PPT 읽기 / 쓰기 | `ppt.py read [--slides 1-3]` / `ppt.py write --slide new --title 제목 --text "- 항목"` / `--file 내용.md` / `--image 그림.png` / `--cards "제목:내용|제목:내용"` |
 | PPT 기타 | `ppt.py info`, `replace --find A --replace B`, `slide --action move --slide 1 --to 3`, `export --save 발표.pdf` |
@@ -48,11 +48,13 @@ stdout 의 **1줄 JSON** 만 읽는다 (stderr 의 `[PROGRESS]` 로그는 무시
 | `agent_directive` 시작 | 할 일 |
 |---|---|
 | `VERIFIED:` | 완료. `preview` 를 사용자에게 보고. 같은 명령 재실행/결과 재조회 금지. |
+| `STOP_RETRY:` + message 에 `[후보]` 있음 | 재시도 금지. `[후보]` 를 사용자에게 보여주고 고르게 한 뒤, 고른 값으로 실행 (시트: `--sheet 이름` 또는 `--new-sheet`, 앵커: `--occurrence 번호`, 문서: `--target 전체경로`). |
 | `STOP_RETRY:` + message 에 `[추천]` 있음 | 추천된 이름으로 **1회만** 다시 실행. 또 실패하면 사용자에게 보고. |
 | `STOP_RETRY:` (추천 없음) | 재시도 금지. `message` 를 사용자에게 그대로 보고. |
 | `ERROR:` | 재시도 금지. `message` 를 사용자에게 그대로 보고. |
 
 - 메일은 기본으로 작성 창만 띄운다. `--send` 는 사용자가 **발송을 분명히 요청한 경우에만** 붙인다.
 - `ppt.py slide --action clear` 의 `--all-slides`, 시트/슬라이드 삭제는 사용자가 요청한 경우에만 쓴다.
+- `--new-sheet`(새 시트), `transfer --overwrite`(기존 시트에 덮어쓰기)는 사용자가 원한 경우에만 붙인다.
 - 잘못 고쳤으면 `office.py undo` 로 되돌린다.
 - 파일 경로는 `file:///C:/...` 형식 링크로 보고한다. 이모지 금지.

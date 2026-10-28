@@ -75,6 +75,50 @@ def test_write_after_anchor_goes_after_whole_paragraph(wd, capsys):
     assert paras(wd["doc"])[:4] == ["추진 배경", "2026년 계획입니다.", "추가 문단", "일정"]   # 단락 중간을 쪼개지 않음
 
 
+def test_anchor_in_several_paragraphs_is_not_guessed(wd, capsys):
+    wd["doc"] = FakeWordDocument("계획 개요\r본문\r세부 계획\r끝")
+    before = wd["doc"].text
+    code, out = run(capsys, "write", "--text", "새 문단", "--anchor", "계획", "--pos", "replace")
+    assert code == 1 and out["error_type"] == "ambiguous" and out["agent_directive"].startswith("STOP_RETRY:")
+    assert out["candidates"] == ["1: 계획 개요", "2: 세부 계획"] and "--occurrence" in out["message"]
+    assert wd["doc"].text == before                                       # 어느 단락도 지우지 않음
+    code, out = run(capsys, "write", "--text", "새 문단", "--anchor", "계획", "--pos", "replace", "--occurrence", "2")
+    assert code == 0 and paras(wd["doc"])[:4] == ["계획 개요", "본문", "새 문단", "끝"]
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "개요", "--occurrence", "5")
+    assert code == 1 and "1~1" in out["message"]
+
+
+def test_anchor_same_paragraph_twice_is_one_candidate(wd, capsys):
+    wd["doc"] = FakeWordDocument("계획과 계획\r끝")
+    code, out = run(capsys, "write", "--text", "추가", "--anchor", "계획")
+    assert code == 0 and paras(wd["doc"])[:3] == ["계획과 계획", "추가", "끝"]
+
+
+def test_anchor_not_found_recommends_similar_text(wd, capsys):
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "2026 계획")
+    assert code == 1 and out["error_type"] == "input" and out["message"].endswith("[추천] 2026년 계획")
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "2026년 계획")    # 추천대로 다시 하면 찾음
+    assert code == 0
+
+
+def test_anchor_not_found_does_not_recommend_different_text(wd, capsys):
+    """글자가 바뀐 문구('2027' -> '2026')는 뜻이 다를 수 있어 [추천]하지 않음. replace는 끼어든 글자도 [추천] 안 함."""
+    before = wd["doc"].text
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "2027년 계획")
+    assert code == 1 and "[추천]" not in out["message"] and "비슷한 문구: '2026년 계획'" in out["message"]
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "2026 계획", "--pos", "replace")
+    assert code == 1 and "[추천]" not in out["message"] and "비슷한 문구" in out["message"]
+    assert wd["doc"].text == before
+
+
+def test_safe_anchor_fix_rules():
+    assert word._safe_anchor_fix("2026년계획", "2026년 계획", "replace")       # 공백만 다름
+    assert word._safe_anchor_fix("2026 계획", "2026년 계획", "after")          # 끼어든 글자 1자
+    assert not word._safe_anchor_fix("2026 계획", "2026년 계획", "replace")
+    for anchor, similar in [("Q2 매출 보고", "Q1 매출 보고"), ("결론 분석", "결과 분석"),
+                            ("Sales 2025", "Sales 202"), ("3. 결과요약", "2. 결과")]:
+        assert not word._safe_anchor_fix(anchor, similar, "after"), (anchor, similar)
+
 def test_write_before_and_replace_anchor(wd, capsys):
     run(capsys, "write", "--text", "머리말", "--anchor", "추진", "--pos", "before")
     assert paras(wd["doc"])[0] == "머리말"

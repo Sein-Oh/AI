@@ -208,17 +208,47 @@ def get_active(kind: str) -> Dict[str, Any]:
 
 
 def match_open(kind: str, target: str, docs: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
-    """열린 문서 중 이름/파일명/전체 경로가 target과 같은 것 (대소문자 무시)."""
+    """열린 문서 중 이름/파일명/전체 경로가 target과 같은 것 (대소문자 무시).
+    전체 경로가 같으면 그 문서. 이름만 같은 문서가 둘 이상이면(다른 폴더의 같은 파일명, 다른 Excel 창의 Book1 등)
+    하나를 고르지 않고 [후보](전체 경로)와 함께 오류를 냅니다."""
     docs = list_open(kind) if docs is None else docs
     t = target.strip().strip('"')
     t_low = t.lower()
     t_abs = os.path.normcase(os.path.abspath(t)) if (os.sep in t or "/" in t or ":" in t) else None
-    for d in docs:
-        if d["name"].lower() == t_low or (d["path"] and os.path.basename(d["path"]).lower() == t_low):
-            return d
-        if t_abs and d["path"] and os.path.normcase(d["path"]) == t_abs:
-            return d
-    return None
+    if t_abs:
+        for d in docs:
+            if d["path"] and os.path.normcase(d["path"]) == t_abs:
+                return d
+    hits = [d for d in docs
+            if d["name"].lower() == t_low or (d["path"] and os.path.basename(d["path"]).lower() == t_low)]
+    if len(hits) > 1:
+        raise rt.ambiguous(
+            f"열린 {APP_LABEL[kind]} 문서 중 이름이 '{t}'인 문서가 {len(hits)}개입니다. "
+            "어느 문서인지 사용자에게 확인한 뒤 --target에 전체 경로를 지정하세요.",
+            [d["path"] or f"{d['name']} (저장 안 됨)" for d in hits])
+    return hits[0] if hits else None
+
+
+def _sheet_key(name: str) -> str:
+    """대소문자, 공백, _ - . 를 무시한 시트 이름 비교값."""
+    return re.sub(r"[\s_\-.]+", "", str(name)).lower()
+
+
+def missing_sheet(name: str, names: List[str]) -> "rt.InputError":
+    """쓰기 대상 시트가 없을 때의 오류. 새 시트는 만들지 않습니다.
+    - 표기만 다른 시트(대소문자·공백·_-. 차이)가 하나면 [추천]으로 그 이름 (바로 재시도 가능)
+    - 비슷한 이름만 있으면 [후보]: 다른 시트에 잘못 써서 데이터를 덮어쓰지 않도록 사용자가 고름
+    - 비슷한 것이 없으면 기존 시트 목록과 --new-sheet 안내"""
+    key = _sheet_key(name)
+    same = [n for n in names if _sheet_key(n) == key]
+    hint = " 새 시트로 만들려면 같은 명령에 --new-sheet를 붙이세요."
+    if len(same) == 1:
+        return rt.InputError(f"시트 '{name}'이(가) 없습니다.{hint} [추천] {same[0]}")
+    similar = same or rt.suggest(name, names)
+    if similar:
+        return rt.ambiguous(f"시트 '{name}'이(가) 없습니다. 비슷한 기존 시트에 쓸지, --new-sheet로 새 시트를 만들지 "
+                            "사용자에게 확인하세요.", similar + ["(새 시트 만들기: --new-sheet)"])
+    return rt.not_found("시트", name, names, extra=hint)
 
 
 def shape_box(obj: Any) -> Dict[str, float]:
@@ -392,7 +422,8 @@ class OfficeTarget:
 
     # --- Excel ---
     def sheet(self, name: Optional[str] = None, create: bool = False) -> Any:
-        """시트를 찾습니다 (대소문자 무시). 없으면 쓰기 세션 + create=True일 때만 만들고, 아니면 [추천]과 함께 오류."""
+        """시트를 찾습니다 (대소문자 무시). 없으면 쓰기 세션 + create=True일 때만 만들고, 아니면 [추천]과 함께 오류.
+        create는 사용자가 새 시트를 명시한 경우(--new-sheet, sheet add)에만 켭니다. 오타 난 이름으로 새 시트를 만들지 않도록."""
         sheets = self.doc.Worksheets
         if not name:
             try:
@@ -410,7 +441,9 @@ class OfficeTarget:
             ws.Name = name
             self.changed = True
             return ws
-        raise rt.not_found("시트", name, names)
+        if self.readonly:
+            raise rt.not_found("시트", name, names)
+        raise missing_sheet(name, names)
 
     def set_focus(self, sheet: Any = None, slide: Optional[int] = None) -> None:
         """쓰기 후 사용자 화면을 이동할 위치를 기록합니다 (세션 종료 시 적용)."""

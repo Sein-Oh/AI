@@ -17,7 +17,7 @@
 예:
     python excel.py write --range A1:B101 --header "x,sin(x)" --formula "=(ROW()-2)*4*PI()/99" "=SIN(A2)"
     python excel.py chart --range A1:B101 --type line --title "사인 2주기"
-    python excel.py write --file "결과.csv" --sheet "검색결과"
+    python excel.py write --file "결과.csv" --sheet "검색결과" --new-sheet
     python excel.py read --range A1:D20
 """
 import json
@@ -178,6 +178,8 @@ def is_closed_xlsx(target: str) -> Optional[str]:
     try:
         if off.win32com is not None and off.match_open("excel", raw) is not None:
             return None   # 열려 있으면 화면의 최신(미저장 포함) 내용을 읽음
+    except rt.InputError:
+        return None   # 같은 이름의 열린 문서가 여럿: 파일을 읽지 않고 COM 경로에서 [후보] 오류로 안내
     except Exception:
         pass
     return raw
@@ -407,6 +409,19 @@ def _last_used_row(ws: Any, col: int) -> int:
         return int(used.Row + used.Rows.Count - 1)
 
 
+def _write_sheet(t: Any, name: Optional[str], new: bool) -> Any:
+    """쓸 시트. 없는 이름은 --new-sheet가 있을 때만 새로 만듭니다 (오타로 새 시트가 생기지 않도록)."""
+    if new:
+        if not name:
+            raise rt.InputError("--new-sheet에는 새 시트 이름이 필요합니다. --sheet 이름 또는 --range '이름'!A1로 지정하세요.")
+        names = [str(t.doc.Worksheets(i).Name) for i in range(1, t.doc.Worksheets.Count + 1)]
+        existing = rt.find_name(name, names)
+        if existing is not None:
+            raise rt.InputError(f"시트 '{existing}'이(가) 이미 있어 새로 만들지 않았습니다. 기존 시트에 쓰려면 --new-sheet를 빼고, "
+                                "새 시트는 다른 이름을 지정하세요.")
+    return t.sheet(name, create=new)
+
+
 def cmd_write(args) -> Dict[str, Any]:
     sources = [x for x in (args.value is not None, args.values, args.file, args.formula) if x]
     if not sources:
@@ -423,11 +438,9 @@ def cmd_write(args) -> Dict[str, Any]:
     header = [h.strip() for h in args.header.split(",")] if args.header else None
 
     with write_session(args, "write") as t:
-        ws = t.sheet(args.sheet, create=True)
         start = args.range or "A1"
         sh, cells = split_sheet(start)
-        if sh:
-            ws = t.sheet(sh, create=True)
+        ws = _write_sheet(t, sh or args.sheet, args.new_sheet)
         parts = cells.replace("$", "").split(":")
         r1, c1 = parse_cell(parts[0])
         r2c2 = parse_cell(parts[1]) if len(parts) > 1 else None
@@ -1134,6 +1147,8 @@ def build_cli():
     p.add_argument("--formula", nargs="+", help="수식. 1개면 범위 전체, 여러 개면 열마다 (상대참조 자동 조정)")
     p.add_argument("--header", help="첫 행에 쓸 머리글 (쉼표 구분). 데이터/수식은 그 아래부터")
     p.add_argument("--append", action="store_true", help="기존 데이터 아래에 이어 쓰기 (같은 머리글은 생략)")
+    p.add_argument("--new-sheet", action="store_true",
+                   help="--sheet(또는 --range '이름'!A1)의 시트를 새로 만들어 쓰기. 없으면 없는 시트는 오류")
     p.add_argument("--no-autofit", action="store_true", help="열 너비 자동 맞춤 안 함")
 
     p = sub.add_parser("replace", help="찾아 바꾸기")
