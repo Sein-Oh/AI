@@ -459,3 +459,23 @@ def test_append_uses_lowest_row_of_all_columns_and_start_row_header(xl, capsys, 
     assert out["range_written"] == "C8:D8"                                                   # 머리글(5행)을 다시 쓰지 않음
     code, out = run(capsys, "write", "--file", str(f), "--range", "C5", "--append", "--header", "품목,수량")
     assert code == 0 and out["range_written"] == "C9:D9" and ws.values[(9, 3)] == "배"          # --header도 같은 머리글이면 생략
+
+
+def test_read_closed_xlsx_without_dimension_reads_all_rows(tmp_path, capsys, monkeypatch):
+    import re as _re
+    import zipfile
+    import openpyxl
+    src, dst = tmp_path / "src.xlsx", tmp_path / "nodim.xlsx"
+    wb = openpyxl.Workbook()
+    for r in [["a", "b", "c"], [1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]:
+        wb.active.append(r)
+    wb.save(str(src))
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:     # 다른 프로그램처럼 <dimension> 없이
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.startswith("xl/worksheets/sheet"):
+                data = _re.sub(rb"<dimension[^>]*/>", b"", data)
+            zout.writestr(item, data)
+    monkeypatch.setattr(off, "win32com", None)
+    code, out = run(capsys, "read", "--target", str(dst))
+    assert code == 0 and out["values"][-1] == [10, 11, 12] and len(out["values"]) == 5

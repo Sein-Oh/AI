@@ -68,6 +68,7 @@ metadata:
 
 - JSON에 `recovered`가 있으면 그 문장을 그대로 알린다.
 - 문서 검색 결과는 항목마다 근거를 붙여 알린다: `evidence`(예: `규격.pdf p.12, 1. SCOPE > 1.1. Scope (1.1)`)를 그대로 쓴다. `page`가 null인 형식(엑셀, HWP 등)은 장절(`section_text`)과 번호(`number`), 위치(`loc`)로 알린다.
+- `search` 결과가 `UNVERIFIED:`이면 `not_searched`(검색하지 못한 부분)를 그대로 알린다. 0건이어도 "근거 없음"이라고 단정하지 않는다.
 - `search`는 `--file`이 없으면 등록된 문서(캐시)만 찾는다. `--file`을 주면 그 파일/폴더의 새 문서를 먼저 등록한다(`indexed_now`를 사용자에게 알린다). `not_indexed` 오류면 사용자에게 폴더를 물어 `--file "<폴더>"`로 실행한다.
 - 메일은 기본으로 작성 창만 띄운다. `--send`는 사용자가 **발송을 분명히 요청한 경우에만** 붙인다.
 - 아래는 사용자가 요청한 경우에만 쓴다: 시트/슬라이드 삭제, `ppt.py slide --action clear --all-slides`, `--new-sheet`(새 시트), `--overwrite`(기존 시트·기존 노트를 덮어쓰기).

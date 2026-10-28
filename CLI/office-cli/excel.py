@@ -251,8 +251,14 @@ def _read_matrix_closed(path: str, sheet: Optional[str], address: Optional[str])
             r2, c2 = parse_cell(parts[-1])
         else:
             r1, c1 = 1, 1
-            r2, c2 = ws.max_row or 1, ws.max_column or 1
-        rows = [list(r) for r in ws.iter_rows(min_row=r1, max_row=r2, min_col=c1, max_col=c2, values_only=True)]
+            r2, c2 = ws.max_row, ws.max_column
+        if r2 is None or c2 is None:
+            # 크기 정보(<dimension>)가 없는 파일(다른 프로그램이 만든 xlsx): 1x1로 읽으면 데이터를 잃으므로 끝까지 읽음
+            rows = [list(r) for r in ws.iter_rows(min_row=r1, min_col=c1, values_only=True)]
+            width = max((len(r) for r in rows), default=0)
+            rows = [r + [None] * (width - len(r)) for r in rows]
+        else:
+            rows = [list(r) for r in ws.iter_rows(min_row=r1, max_row=r2, min_col=c1, max_col=c2, values_only=True)]
         if not address:   # 끝쪽 빈 행 제거
             while rows and all(v is None for v in rows[-1]):
                 rows.pop()

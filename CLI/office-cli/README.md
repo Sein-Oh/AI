@@ -149,7 +149,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 |---|---|
 | `index --folder 폴더 [--depth 3 \| --recursive] [--max-files 300]` | 폴더의 문서를 내용 출력 없이 캐시에 등록. 결과: `count`, `indexed`, `updated`, `unchanged`, `failed`, `failures`(20개까지), `remaining`, `truncated`, `skipped_types`(지원하지 않는 확장자별 개수) |
 | `index --file 파일` / `index --all` | 파일 하나 등록 / 등록된 문서 전체를 다시 확인(바뀐 파일, 이전 형식 캐시만 다시 읽음) |
-| `read --file 경로 [--pages 1-3 \| --units 57-120] [--format summary] [--save .md\|.csv\|.xlsx]` | 파일 하나 읽기(캐시에 등록). 단위마다 `page`, `section`, `number`, `kind` |
+| `read --file 경로 [--pages 1-3 \| --units 57-120] [--format summary] [--save .md\|.csv\|.xlsx]` | 파일 하나 읽기(캐시에 등록). 단위마다 `page`, `section`, `number`, `kind`. `--pages`는 쪽 정보가 있으면(PDF, PPTX, 쪽 경계가 저장된 DOCX/HWPX) 실제 쪽, 없으면 항목 번호(`pages_mode`: `page`/`item`) |
 | `search --query "A AND B" \| "A OR B" [--file 파일또는폴더] [--pages 3-7] [--section 장절일부] [--regex --top --full --max-files] [--save 근거.xlsx\|.csv\|.md]` | 캐시에서 검색 |
 | `list [--name 이름일부] [--folder 폴더]` | 캐시된 문서 목록: 파일, 경로, 형식, 단위 수, 쪽 수, 장절 수, `cached_at`, `stale`(원본 변경 또는 이전 형식), `missing`(원본 없음) |
 
@@ -158,8 +158,13 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 - DRM으로 암호화된 Office 파일은 라이브러리로 열 수 없으므로, `excel.py`/`word.py`/`ppt.py read --target 경로`로 Office에서 읽으라고 안내합니다.
 
 #### 검색과 캐시
-- `--file` 없음: 캐시에 등록된 문서 전체만 검색합니다(파일을 다시 읽지 않음). 등록된 문서가 없으면 `error_type: not_indexed`(STOP_RETRY).
-  원본이 바뀌었거나 이전 파서 형식인 캐시는 그대로 검색하고 `stale_cache_count`와 `index --all` 명령을 줍니다. 원본이 지워진 문서는 `file_missing: true`.
+- `--file` 없음: 캐시에 등록된 문서 전체만 검색합니다. 등록된 문서가 없으면 `error_type: not_indexed`(STOP_RETRY).
+  원본이 바뀌었거나 이전 파서 형식인 캐시는 그 자리에서 다시 읽고(20개까지, `recovered`로 알림) 검색합니다. 다시 읽지 못한 캐시(원본 없음, 한도 초과)는
+  옛 내용으로 검색하고 결과 항목에 `stale: true`, `stale_cache_count`와 `index --all` 명령. 원본이 지워진 문서는 `file_missing: true`.
+- 검색 범위가 불완전하면(등록하지 못한 파일, 읽지 못한 파일, 다시 읽지 못한 캐시, 글자 없는 스캔 PDF, 20,000행에서 자른 엑셀, 들어가지 않은 하위 폴더)
+  `not_searched` 목록과 함께 `UNVERIFIED:`로 응답합니다. 0건이어도 "근거 없음"으로 단정하지 않게 하기 위해서입니다.
+- 검색어: `A AND B`, `A OR B`(대소문자 무관, AND가 먼저 묶임), `"설계 기준"`(따옴표는 구문, 검색어에 넣지 않음), 연산자 없이 이어진 단어는 한 구문.
+  띄어쓰기와 줄바꿈은 무시하고 비교합니다(`설계기준` = `설계 기준`, PDF 줄바꿈으로 갈라진 글). `--regex`의 빈 일치는 일치로 보지 않습니다.
 - `--file 파일`: 캐시가 없거나 낡았으면(수정 시각/크기/파서 버전) 먼저 읽어 등록하고, 최신이면 캐시를 씁니다. `--file 폴더`: 폴더(기본 3단계 하위)의 미등록/변경 문서를 `--max-files`까지 등록한 뒤 그 폴더 문서만 검색합니다.
   결과에 `indexed_now`(새로 등록한 파일 이름, 20개까지), `indexed_now_count`, `from_cache`, 남은 파일이 있으면 `not_indexed_remaining`과 `index --folder` 명령.
 - 거르기: `--pages 3-7`(쪽 정보가 없는 단위는 빼고 `page_unknown_skipped`로 개수 보고), `--section "SCOPE"`(장절 경로 일부, 대소문자 무시).
@@ -168,7 +173,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 - `evidence` 형식: `규격서.pdf p.12, 1. SCOPE > 1.1. Scope (1.1)`. 쪽이 없으면 `loc`(예: `매출.xlsx 매출!12행`), Word 쪽을 쪽 나눔으로만 셌으면 `p.3(추정)`.
 - `--save`: `.xlsx`(머리글 굵게, 줄바꿈, 열 너비, 첫 행 고정), `.csv`, `.md`(기본). 열: 파일, 쪽, 장절, 번호, 위치, 내용(문장/단락), 문맥. `.md`에는 항목마다 `근거:` 줄. 저장 파일에는 `--top`과 관계없이 전체(최대 5,000건)를 담습니다.
 
-#### 캐시 형식 (모든 형식 공통, `PARSER_VERSION` 2)
+#### 캐시 형식 (모든 형식 공통, `PARSER_VERSION` 3)
 문서마다 `cache/docs/<해시>.json` = `{file, type, mtime, size, parser_version, parsed_at, meta, units}`, 색인 `cache/index.json`(경로별 형식, 단위 수, 쪽 수, 장절 수, 수정 시각, 크기, 파서 버전).
 
 | 단위 키 | 뜻 |
