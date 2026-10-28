@@ -72,7 +72,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 ## 오류 로그 저장
 - 실패한 실행은 자동으로 `<도구 데이터 폴더>/logs/errors.txt`에 덧붙인다. 사용자 중단(exit 130)은 기록하지 않는다.
   - exit 1은 `run_cli()`, 인자 오류 exit 2는 `JsonArgumentParser.error()`가 기록한다.
-  - 데이터 폴더 기본값은 `<도구폴더>/data`, 도구별 환경변수로 바꿀 수 있다 (예: `DOCCLS_DATA_DIR`, `OFFICE_CLI_DATA_DIR`). `data/`는 git에 올리지 않는다.
+  - 데이터 폴더 기본값은 `<도구폴더>/data`, 도구별 환경변수로 바꿀 수 있다 (예: `ML_KIT_DATA_DIR`, `OFFICE_CLI_DATA_DIR`). `data/`는 git에 올리지 않는다.
 - 항목 형식 (UTF-8, 항목 사이 빈 줄):
   ```text
   ===== <ISO 시각> | <도구> <버전> | Python <버전> | <OS>
@@ -86,7 +86,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 - 경로와 인자만 기록하고 문서 본문·개인정보는 기록하지 않는다.
 - JIT 복구에 성공한 실행은 기록하지 않는다 (stderr `[WARN]` + JSON `recovered`로 충분).
 - 로그 경로는 stdout JSON에 넣지 않는다. 사람과 개발 에이전트가 사후 분석용으로 읽는다.
-- 기준 구현: doc-classifier `_dc_runtime.py`의 `write_error_log`.
+- 기준 구현: `archive/doc-classifier/_dc_runtime.py`의 `write_error_log` (보관된 도구, 복사해서 사용).
 
 ## 문자 규칙
 - 이모지, 원문자(동그라미 숫자 등), 장식 기호(체크 표시, 별, 유니코드 화살표 등)는 저장소 전체에서 금지한다.
@@ -112,8 +112,8 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 - `ml_predict.py`는 다른 ml-kit 파일을 import하지 않는다 (모델 폴더와 함께 단독 배포). `ml_train.py`/`ml_report.py`가 `ml_predict.py`를 import한다.
 ### office-cli
 - 공통 런타임은 `_runtime.py`, Office COM 공통은 `_office.py`.
-### doc-classifier
-- 공통 런타임은 `_dc_runtime.py`.
+### 보관 도구 (`archive/`)
+- `archive/` 아래 도구는 수정하지 않는다. 지침 반영·검토·테스트 대상이 아니다 (doc-classifier: 다른 개발자 담당).
 
 ## 작업 절차
 1. 변경 전 `python -m pytest -q`로 기준선 확인.
