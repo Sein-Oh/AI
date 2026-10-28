@@ -67,6 +67,15 @@
 - `read --pages`: 쪽 정보가 있는 DOCX/HWPX에서도 실제 쪽으로 고릅니다(`search`의 근거 `p.12`를 그대로 읽을 수 있게). 결과에 `pages_mode`.
 - `excel.py read`(닫힌 xlsx): 크기 정보(`<dimension>`)가 없는 파일을 A1 한 칸만 읽고 성공으로 응답하던 문제.
 
+### 점검 반영 4: 실제 환경 견고성 (회사 PC 실기 확인 필요)
+- 닫힌 파일을 보이지 않는 Office로 열 때 암호 창이나 열기 매크로 창이 뜨면 끝나지 않던 문제:
+  Excel/Word는 틀린 암호를 넘겨 바로 "열기 암호가 걸린 문서" 오류(STOP_RETRY)가 나게 하고, 백그라운드 인스턴스의 매크로를 끕니다(`AutomationSecurity` 3).
+  Excel은 읽기 전용 권장 창도 띄우지 않습니다. PowerPoint와 DRM 인증 창은 아직 막지 못합니다(남은 할 일).
+- 쓰기 대상 파일을 다른 사람·프로그램이 열고 있어 읽기 전용으로 열리면, 고친 내용을 저장할 수 없으므로 쓰기 전에 멈춥니다(이전에는 저장 실패 또는 저장 안 된 채 성공 응답).
+- Office가 재계산·자동 저장으로 잠깐 바빠 호출을 거부하면 COM 메시지 필터가 15초까지 기다렸다 다시 부릅니다(`recovered`). 넘으면 기존 `office_busy` 오류.
+- Outlook `--folder`: `inbox\프로젝트`처럼 기본 폴더 별칭으로 시작하는 경로를 지원하고, 없는 하위 폴더의 후보를 전체 경로로 줍니다(일부만 주면 상위 폴더 전체를 검색함).
+- `office.py focus`: 창 전환이 실패해도 Alt 키가 눌린 채 남지 않습니다.
+
 ### 테스트 러너 (`tools/run_win_tests.py`)
 - K 그룹 추가(K1~K5): outline·장절, 쪽·단락 범위, 메모 달기·목록, 변경 추적 목록, PPT 노트. 가짜 COM 테스트로는 Word 쪽 계산(`GoTo`, `Information`)과 `Comments.Add`, 노트 개체틀이 실제와 같은지 확인할 수 없어 회사 PC 실기로 확인합니다.
 
@@ -299,6 +308,14 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 워드 그림/도형 -> PPT 전달 (`office_bridge` word->ppt), PPT -> 워드 전달.
 - Outlook 날짜 범위 검색 (`--since`).
 
+### 1.4.0 점검에서 남긴 것
+- R1 사후 확인: 기존 쓰기 명령(excel write/replace/style/sheet/range/chart, word write/replace/export, ppt write/replace/export, transfer, undo, outlook)이 다시 읽지 않고 `VERIFIED:`. 명령마다 다시 읽어 비교하거나 `ok_unverified`로.
+- PowerPoint 닫힌 파일의 열기 암호, DRM 인증 창이 뜨는 문서: 백그라운드에서 멈출 수 있음 (감시 시간 초과 후 정리 필요).
+- 엑셀: 열 전체 범위(`A:A`)를 사용 범위로 자르기, 조건부 강조 `포함:`의 상대참조(활성 셀 기준), 같은 이름 차트가 여러 시트에 있을 때 `[후보]`, `--map` 연쇄 치환, 보호된 시트 사전 확인, 잘못된 시트 이름 검사 전에 시트가 만들어지는 문제.
+- 워드: 열린 문서의 자동 번호 제목(`ListFormat.ListString`)이 `outline`/`--section`에 나오지 않음(닫힌 파일과 번호 체계 다름), 목차(TOC) 안의 앵커 후보 구별, 머리글 안 글상자 치환, `replace --find`만 준 경우.
+- reader: HWP(바이너리) 개요 번호, PDF `find_tables` 성능(선이 있는 쪽만), 색인 저장 일괄화, BOM 없는 UTF-16 판별.
+- transfer relay 실패 시 넣은 빈 단락 정리.
+
 ### 확인 필요
 - Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 회사 PC(Office 16) 1차(1.2.0)는 A5 정리가 A.xlsx를 닫아 중단, D1·D4(PDF)와 G1·G2·G4는 통과. 남은 것: 1.2.1로 회사 PC 전체 재실행(`errors_*.txt`의 정리 기록에서 A5가 두 번째 Excel PID만 끝냈는지 확인), 눈 확인 항목.
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증. 실제 규격서(PDF/Word/HWPX)로 장절·쪽 인식 확인 (1.3.0).
@@ -310,7 +327,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
 - [x] 결과 JSON `recovered` 배열과 `note_recovered` (1.4.0): 잠금·기존 파일 새 이름 저장, 낡은 캐시 다시 읽기. 남은 것: transfer 방식 대체, 오래된 스냅샷 정리도 `recovered`로
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
-- [ ] COM 호출 거부(0x8001010A, 0x80010001) 재시도 `com_retry`를 `_office.py`에 (횟수·시간 상한, 넘으면 기존 office_busy STOP_RETRY)
+- [x] COM 호출 거부(0x8001010A, 0x80010001) 재시도: `_office.BusyMessageFilter` (1.4.0, 실기 확인 필요)
 - [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)에 적용. (1.4.0: undo 복원 복사는 `retry_fs`, retry_fs는 일시적 오류만 재시도 완료)
 - [ ] COM 내보내기(excel.py, word.py, ppt.py export)의 잠금 대비 `save_with_lock_fallback`. (1.4.0: 기존 출력 파일은 새 이름 저장 + `recovered` 완료)
 - [x] `--save`가 기존 파일을 덮어쓰는 문제: 기존 파일이면 새 이름 저장 + `recovered` (1.4.0). 남은 것: 덮어쓰기를 원할 때의 `--overwrite` 인자

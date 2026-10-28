@@ -74,17 +74,27 @@ def resolve_folder(ns: Any, spec: Optional[str]) -> Any:
     parts = [p.strip() for p in re.split(r"\\|>", s) if p.strip()]
     stores = {str(f.Name): f for f in ns.Folders}
     found_store = rt.find_name(parts[0], stores)
+    alias = re.sub(r"\s+", "", parts[0]).lower()
     if found_store:
         cur = stores[found_store]
         parts = parts[1:]
+    elif alias in {re.sub(r"\s+", "", k).lower(): k for k in DEFAULT_FOLDERS}:
+        # 'inbox\프로젝트', '받은편지함\프로젝트': 첫 부분이 기본 폴더 별칭이면 그 폴더에서 시작
+        key = {re.sub(r"\s+", "", k).lower(): k for k in DEFAULT_FOLDERS}[alias]
+        cur = ns.GetDefaultFolder(DEFAULT_FOLDERS[key])
+        parts = parts[1:]
     else:
         cur = ns.GetDefaultFolder(6).Parent          # 기본 계정의 최상위
+    walked: List[str] = [str(cur.Name)]
     for part in parts:
         subs = {str(f.Name): f for f in cur.Folders}
         name = rt.find_name(part, subs)
         if name is None:
-            raise rt.not_found("메일 폴더", part, list(subs), extra=f" (경로: {s})")
+            # 후보도 전체 경로로 (일부만 주면 LLM이 상위 폴더 전체를 검색함)
+            raise rt.not_found("메일 폴더", "\\".join(walked + [part]), ["\\".join(walked + [n]) for n in subs],
+                               extra=f" (경로: {s})")
         cur = subs[name]
+        walked.append(name)
     return cur
 
 

@@ -304,3 +304,52 @@ def test_write_target_typo_of_open_document_does_not_create_new_file(tmp_path, f
         with off.open_target("word", "주간보고서.docx", readonly=False, create=True):
             pass
     assert "[후보] 주간보고.docx" in str(ei.value) and not (tmp_path / "주간보고서.docx").exists()
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영 4: 실환경 견고성 (암호 파일, 읽기 전용으로 열린 파일, Office 바쁨)
+# ---------------------------------------------------------------------------
+
+def test_background_open_passes_dummy_password_and_disables_macros(tmp_path, monkeypatch):
+    app = FakeExcelApp()
+    wb = off._open_file("excel", app, str(tmp_path / "a.xlsx"), readonly=True)
+    kw = app.Workbooks.open_kwargs
+    assert kw["Password"] == off._NO_PASSWORD and kw["IgnoreReadOnlyRecommended"] is True and wb is not None
+
+
+def test_password_error_becomes_input_error(tmp_path):
+    class _App:
+        class Workbooks:
+            @staticmethod
+            def Open(path, **kw):
+                raise Exception("입력한 암호가 잘못되었습니다.")
+    with pytest.raises(rt.InputError) as ei:
+        off._open_file("excel", _App(), str(tmp_path / "secret.xlsx"), readonly=True)
+    assert "열기 암호" in str(ei.value)
+
+
+def test_write_to_file_opened_read_only_stops_before_writing(tmp_path, fake_com, monkeypatch):
+    path = tmp_path / "공유.xlsx"
+    path.write_bytes(b"x")
+    real_open = off._open_file
+
+    def locked(kind, app, p, readonly):
+        doc = real_open(kind, app, p, readonly)
+        doc.ReadOnly = True                         # 다른 사람이 열고 있어 읽기 전용으로 열림
+        return doc
+    monkeypatch.setattr(off, "_open_file", locked)
+    monkeypatch.setattr(off, "_new_instance", lambda kind: FakeExcelApp())
+    with pytest.raises(rt.InputError) as ei:
+        with off.open_target("excel", str(path), readonly=False):
+            raise AssertionError("쓰기 본문까지 오면 안 됨")
+    assert "읽기 전용" in str(ei.value)
+
+
+def test_busy_message_filter_retries_then_gives_up(monkeypatch):
+    monkeypatch.setattr(rt, "RECOVERED", [])
+    monkeypatch.setattr(rt, "RECOVERY_ATTEMPTS", [])
+    f = off.BusyMessageFilter()
+    assert f.RetryRejectedCall(0, 100, 2) == f.RETRY_DELAY_MS
+    assert rt.RECOVERED == [f.NOTE]
+    assert f.RetryRejectedCall(0, f.BUSY_RETRY_MS + 1, 2) == -1
+    assert rt.RECOVERED == [] and rt.RECOVERY_ATTEMPTS

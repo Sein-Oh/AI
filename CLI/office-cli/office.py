@@ -72,8 +72,10 @@ def bring_to_front(hwnd: int) -> bool:
             win32gui.SetForegroundWindow(hwnd)
         except Exception:
             win32api.keybd_event(0x12, 0, 0, 0)                 # Alt를 눌렀다 떼면 포그라운드 제한이 풀림
-            win32gui.SetForegroundWindow(hwnd)
-            win32api.keybd_event(0x12, 0, 2, 0)
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            finally:
+                win32api.keybd_event(0x12, 0, 2, 0)             # 실패해도 Alt를 눌린 채로 두지 않음
         return True
     except Exception as e:
         rt.debug(f"창 앞으로 가져오기 실패: {e}")

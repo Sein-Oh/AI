@@ -731,9 +731,9 @@ def test_index_keys_differing_only_in_case_are_merged(tmp_path):
 
 
 def test_hwp_text_pairs_surrogates_and_replaces_lone_ones():
-    rec = "𠮷田".encode("utf-16-le") + b"\x00\xd8"        # 확장 한자 + 짝 없는 서로게이트
+    rec = "\U00020BB7田".encode("utf-16-le") + b"\x00\xd8"        # 확장 한자 + 짝 없는 서로게이트
     text = reader._hwp_para_text(rec)
-    assert text == "𠮷田�"
+    assert text == "\U00020BB7田\ufffd"
     text.encode("utf-8")
 
 

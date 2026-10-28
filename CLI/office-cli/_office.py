@@ -48,12 +48,50 @@ def require_com() -> None:
                             "Office 없이 파일만 읽으려면 reader.py read --file 을 쓰세요.")
 
 
+class BusyMessageFilter:
+    """COM 메시지 필터 (JIT 복구): Office가 재계산·자동 저장 등으로 잠깐 바빠 호출을 거부하면(RPC_E_SERVERCALL_RETRYLATER,
+    RPC_E_CALL_REJECTED) 바로 실패하지 않고 BUSY_RETRY_MS 동안 짧게 기다렸다 다시 부릅니다. 넘으면 기존 office_busy 오류."""
+    _public_methods_ = ["HandleInComingCall", "RetryRejectedCall", "MessagePending"]
+    BUSY_RETRY_MS = 15000
+    RETRY_DELAY_MS = 250
+    NOTE = "Office가 바빠 호출을 거부함 -> 기다렸다 다시 호출"
+
+    def HandleInComingCall(self, dwCallType, hTaskCaller, dwTickCount, lpInterfaceInfo):
+        return 0                                     # SERVERCALL_ISHANDLED
+
+    def RetryRejectedCall(self, hTaskCallee, dwTickCount, dwRejectType):
+        if dwRejectType in (1, 2) and dwTickCount < self.BUSY_RETRY_MS:   # SERVERCALL_REJECTED / RETRYLATER
+            if self.NOTE not in rt.RECOVERED:
+                rt.note_recovered(self.NOTE)
+            return self.RETRY_DELAY_MS
+        if self.NOTE in rt.RECOVERED:                # 한도까지 기다려도 안 됨: 복구가 아니므로 recovered에서 빼고 오류 로그에 남김
+            rt.RECOVERED.remove(self.NOTE)
+        rt.record_recovery_attempt(f"Office 호출 거부 {self.BUSY_RETRY_MS // 1000}초 동안 재시도 실패")
+        return -1                                    # 포기: 호출한 쪽이 오류를 받음 (office_busy)
+
+    def MessagePending(self, hTaskCallee, dwTickCount, dwPendingType):
+        return 2                                     # PENDINGMSG_WAITDEFPROCESS
+
+
+_FILTER_REGISTERED = [False]
+
+
 def init_com() -> None:
     if pythoncom is not None:
         try:
             pythoncom.CoInitialize()
         except Exception:
             pass
+        if not _FILTER_REGISTERED[0]:
+            try:
+                from win32com.server.util import wrap
+                filt = BusyMessageFilter()
+                filt._com_interfaces_ = [pythoncom.IID_IMessageFilter]
+                pythoncom.CoRegisterMessageFilter(wrap(filt))
+                _FILTER_REGISTERED[0] = True
+            except Exception as e:                   # 필터가 없어도 동작은 같음 (바쁠 때 바로 office_busy)
+                rt.debug(f"COM 메시지 필터 등록 실패: {e}")
+
 
 
 # ==============================================================================
@@ -533,6 +571,11 @@ def _new_instance(kind: str) -> Any:
             pass
     else:
         app.DisplayAlerts = 0
+    try:
+        # 보이지 않는 인스턴스에서 열기 매크로(Workbook_Open의 MsgBox 등)가 창을 띄우면 끝나지 않으므로 매크로를 끔
+        app.AutomationSecurity = 3                   # msoAutomationSecurityForceDisable
+    except Exception:
+        pass
     return app
 
 
@@ -544,12 +587,34 @@ def _ppt_running() -> bool:
         return False
 
 
+# 열기 암호가 걸린 파일: 보이지 않는 인스턴스에서 암호 창이 뜨면 끝나지 않으므로 틀린 암호를 넘겨 바로 오류가 나게 함
+# (암호가 없는 파일은 이 값을 무시함)
+_NO_PASSWORD = "office-cli-no-password"
+
+
 def _open_file(kind: str, app: Any, path: str, readonly: bool) -> Any:
-    if kind == "excel":
-        return app.Workbooks.Open(path, UpdateLinks=0, ReadOnly=readonly, AddToMru=False)
-    if kind == "word":
-        return app.Documents.Open(path, ConfirmConversions=False, ReadOnly=readonly, AddToRecentFiles=False, Visible=False)
-    return app.Presentations.Open(path, -1 if readonly else 0, 0, 0)   # ReadOnly, Untitled, WithWindow=False
+    try:
+        if kind == "excel":
+            return app.Workbooks.Open(path, UpdateLinks=0, ReadOnly=readonly, Password=_NO_PASSWORD,
+                                      IgnoreReadOnlyRecommended=True, Notify=False, AddToMru=False)
+        if kind == "word":
+            return app.Documents.Open(path, ConfirmConversions=False, ReadOnly=readonly, AddToRecentFiles=False,
+                                      PasswordDocument=_NO_PASSWORD, Visible=False)
+        return app.Presentations.Open(path, -1 if readonly else 0, 0, 0)   # ReadOnly, Untitled, WithWindow=False
+    except Exception as e:
+        info = rt._com_error_info(e)
+        text = (info[1] if info else str(e)).lower()
+        if "암호" in text or "password" in text:
+            raise rt.InputError(f"열기 암호가 걸린 문서라 열 수 없습니다: {os.path.basename(path)}. 사용자가 Office에서 직접 열어 둔 뒤 "
+                                "같은 요청을 하면 열린 문서로 작업합니다.", no_fallback=True)
+        raise
+
+
+def _opened_readonly(doc: Any) -> bool:
+    try:
+        return bool(doc.ReadOnly)                     # Excel/Word True/False, PowerPoint -1/0
+    except Exception:
+        return False
 
 
 def word_save_as(doc: Any, path: str, fmt: Optional[int] = None) -> None:
@@ -635,6 +700,11 @@ def open_target(kind: str, target: str = "active", readonly: bool = True, snapsh
                 doc = _open_file(kind, app, path, readonly) if exists else _create_file(kind, app, path)
                 owns_doc = True
                 t = OfficeTarget(kind, app, doc, "file" if exists else "new", readonly)
+                if exists and not readonly and _opened_readonly(doc):
+                    # 다른 사람·프로그램이 열고 있어 읽기 전용으로 열림: 고친 내용을 저장할 수 없으므로 쓰기 전에 멈춤
+                    raise rt.InputError(f"'{os.path.basename(path)}'을(를) 다른 사용자나 프로그램이 열고 있어 읽기 전용으로만 열립니다. "
+                                        "아무것도 바꾸지 않았습니다. 그 파일을 닫은 뒤 다시 실행하거나, 이 PC의 Office에서 열어 둔 뒤 요청하세요.",
+                                        no_fallback=True)
 
         if snapshot and not readonly:
             if t.source == "new":

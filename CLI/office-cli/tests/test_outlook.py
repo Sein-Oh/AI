@@ -173,4 +173,5 @@ def test_resolve_folder_paths_and_suggestion():
     assert outlook.resolve_folder(ns, "받은 편지함 > 프로젝트").Name == "프로젝트"
     with pytest.raises(rt.InputError) as ei:
         outlook.resolve_folder(ns, "받은 편지함\\프로젝")
-    assert "[후보] 프로젝트" in str(ei.value) and "[추천]" not in str(ei.value)
+    assert "[후보] 받은 편지함\\프로젝트" in str(ei.value) and "[추천]" not in str(ei.value)   # 후보도 전체 경로
+    assert outlook.resolve_folder(ns, "inbox\\프로젝트").Name == "프로젝트"                   # 기본 폴더 별칭으로 시작
