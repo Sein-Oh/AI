@@ -1,4 +1,4 @@
-"""reader.py 테스트: 실제 샘플 파일(docx/pptx/xlsx/pdf/eml/hwpx/csv/txt)로 파싱, 캐시, 검색, CLI 계약을 검증합니다."""
+"""reader.py 테스트: 실제 샘플 파일(docx/pptx/xlsx/pdf/hwpx/csv/txt)로 파싱, 캐시, 검색, CLI 계약을 검증합니다."""
 import json
 import os
 import subprocess
@@ -84,24 +84,6 @@ def make_pdf(path):
     doc.close()
 
 
-def make_eml(path):
-    body = "안녕하세요.\n\n견적 단가를 회신드립니다.".encode("cp949")
-    raw = (
-        b"Subject: =?ks_c_5601-1987?B?" + __import__("base64").b64encode("견적 회신".encode("cp949")) + b"?=\r\n"
-        b"From: " + "김팀장".encode("cp949") + b" <kim@example.com>\r\n"
-        b"To: lee@example.com\r\n"
-        b"Date: Tue, 27 Oct 2026 09:00:00 +0900\r\n"
-        b"MIME-Version: 1.0\r\n"
-        b"Content-Type: multipart/mixed; boundary=XX\r\n\r\n"
-        b"--XX\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: 8bit\r\n\r\n" + body + b"\r\n"
-        b"--XX\r\nContent-Type: message/rfc822\r\n\r\nSubject: old\r\n\r\nforwarded body should not appear\r\n"
-        b"--XX\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"a.xlsx\"\r\n\r\nAAAA\r\n"
-        b"--XX--\r\n"
-    )
-    with open(path, "wb") as f:
-        f.write(raw)
-
-
 def make_hwpx(path):
     ns = 'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"'
     sec0 = (f'<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="x" {ns}>'
@@ -134,10 +116,9 @@ class Samples(dict):
 def build_samples(tmp_path):
     files = {
         "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
-        "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        "pdf": tmp_path / "여행.pdf", "hwpx": tmp_path / "양식.hwpx",
     }
-    makers = {"docx": make_docx, "pptx": make_pptx, "xlsx": make_xlsx, "pdf": make_pdf, "eml": make_eml,
-              "hwpx": make_hwpx}
+    makers = {"docx": make_docx, "pptx": make_pptx, "xlsx": make_xlsx, "pdf": make_pdf, "hwpx": make_hwpx}
     broken = {}
     for kind, make in makers.items():
         try:
@@ -170,7 +151,7 @@ def test_drm_damaged_templates_docx_falls_back_pptx_skips(tmp_path, monkeypatch)
     out = tmp_path / "out"
     out.mkdir()
     s = build_samples(out)
-    assert set(s.keys()) == {"docx", "xlsx", "pdf", "eml", "hwpx"}
+    assert set(s.keys()) == {"docx", "xlsx", "pdf", "hwpx"}
     units, _ = reader.parse_docx(s["docx"])
     assert units[0]["text"] == "추진 배경"
     with pytest.raises(pytest.skip.Exception, match="DRM"):
@@ -188,9 +169,10 @@ def texts(units):
 def test_docx_order_heading_and_merged_cells(samples):
     units, meta = reader.parse_docx(samples["docx"])
     assert texts(units)[0] == "추진 배경"
-    table = [u for u in units if u["loc"] == "표 1"][0]
-    assert table["text"].splitlines()[0] == "병합 헤더 | 값"      # 병합 셀 중복 없음
-    assert table["heading"] == "추진 배경"
+    rows = [u for u in units if u["loc"].startswith("표 1")]
+    assert [u["kind"] for u in rows] == ["row"]                  # 1.3.0: 표는 행 단위 (첫 행은 머리글)
+    assert rows[0]["text"] == "병합 헤더: 가 | 병합 헤더: 나 | 값: 100"   # 가로 병합 머리글은 이어 씀
+    assert rows[0]["heading"] == "추진 배경"
     assert [u for u in units if u["text"] == "3분기 양산 적용"][0]["heading"] == "일정"
     assert meta["tables"] == 1
 
@@ -214,16 +196,6 @@ def test_pdf_pages(samples):
     units, meta = reader.parse_pdf(samples["pdf"])
     assert meta["pages"] == 2 and units[0]["loc"] == "p.1"
     assert "7.9km" in units[0]["text"]
-
-
-def test_eml_charset_headers_and_forwarded(samples):
-    units, meta = reader.parse_eml(samples["eml"])
-    assert meta["subject"] == "견적 회신"
-    assert meta["from"].startswith("김팀장")
-    joined = "\n".join(texts(units))
-    assert "견적 단가를 회신드립니다." in joined
-    assert "forwarded body" not in joined
-    assert "a.xlsx" in meta["attachments"]
 
 
 def test_hwpx_paragraphs_nested_tables_and_section_order(samples):
@@ -307,7 +279,7 @@ def test_cli_read_save_gives_write_commands(samples, env):
     assert code == 0 and os.path.exists(out["output_file"]) and out["output_file"].endswith(".md")
     assert "word.py" in out["next_commands"][0]["command"]
     text = open(out["output_file"], encoding="utf-8").read()
-    assert "## 표 1 - 추진 배경" in text
+    assert "## 표 1 2행 - 추진 배경" in text
 
 
 def test_cli_read_truncation_offers_next_page(tmp_path, env):
@@ -331,8 +303,9 @@ def test_cli_search_index_folder_save_and_no_match(samples, env, tmp_path):
     assert out["matched"] == 1 and os.path.exists(out["output_file"])
     assert "word.py" in out["next_commands"][0]["command"]
 
-    code, out = run(env, "search", "--query", "단가", "--file", str(tmp_path), "--save", "결과.csv")
+    code, out = run(env, "search", "--query", "양산", "--file", str(tmp_path), "--save", "결과.csv")
     assert out["total_matches"] >= 1 and out["output_file"].endswith("결과.csv")
+    assert out["from_cache"] >= 3                       # read로 등록한 문서는 다시 읽지 않음
     assert "excel.py" in out["next_commands"][0]["command"]
 
     code, out = run(env, "search", "--query", "존재하지않는단어")
@@ -345,9 +318,9 @@ def test_cli_search_without_index_is_stop_retry(env):
 
 
 def test_cli_list(samples, env):
-    run(env, "read", "--file", samples["eml"], "--format", "summary")
+    run(env, "read", "--file", samples["hwpx"], "--format", "summary")
     code, out = run(env, "list")
-    assert code == 0 and out["total"] == 1 and out["documents"][0]["file"] == "메일.eml"
+    assert code == 0 and out["total"] == 1 and out["documents"][0]["file"] == "양식.hwpx"
 
 
 def test_cli_missing_file_suggests(samples, env, tmp_path):

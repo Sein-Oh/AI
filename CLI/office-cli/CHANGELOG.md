@@ -2,6 +2,54 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.3.0] - 2026-10-28
+
+배경: 회사 PC에서 reader.py의 두 가지 쓰임새를 지원합니다.
+1. 작성 중인 문서(주로 Word/Excel, 가끔 PPT)가 규정·규격서(주로 PDF, Word)에 맞는지 확인.
+2. 여러 문서에서 키워드를 찾아 관련 정보를 근거와 함께 모으기. 근거는 쪽 번호, 장절 경로, 문항/조항 번호가 필수입니다.
+이전 캐시는 형식마다 단위 모양이 달랐고(PDF는 쪽 하나가 단위, 표는 통째로), 장절은 Word 제목 스타일만 알아서 근거를 댈 수 없었습니다.
+
+### 기능 (추가, 기존 인자·키 유지)
+- 공통 캐시 형식(`PARSER_VERSION` 2): 모든 형식의 단위가 같은 키 `id, kind, loc, page, page_source, section, number, heading, text`를 가집니다.
+  `heading`은 하위 호환용(`section`의 마지막 값). 다시 읽으면(`read`, `index`) 캐시가 새 형식으로 바뀝니다.
+- 장절/번호 인식: 번호 토큰을 계열(로마 숫자, 점 번호 `1.1.1`/`1.0#`, 가나다, `1)`, `(1)`, `가)`, `(가)`, `제N장/절/조`, `Chapter N`, `Annex A`, `부록 1`, 문항 `Q3` 등)로 나누고 문서에서 처음 나온 순서로 수준을 정합니다.
+  글머리 기호(`O`, `-`, 동그라미/네모 기호 등)는 번호도 제목도 아닙니다. 짧은 한 줄이고 문장 끝으로 끝나지 않을 때만 제목(오탐 방지).
+  PDF는 글자 크기/굵게(본문 크기 = 가장 흔한 크기)를 제목 신호로, DOCX는 제목 스타일·개요 수준과 Word 자동 번호(numbering.xml의 `lvlText`, 시작 값, decimal/로마/가나다 형식)를 씁니다.
+  자동 번호는 글 앞에 붙여(`3.2.1 세부 조건`) 검색과 근거에 나옵니다. 번호 해석이 실패하면 글의 번호 패턴으로 대신합니다. HWPX는 개요 수준과 개요 번호, HWP/TXT는 번호 패턴.
+- 쪽 번호: PDF는 쪽마다 단락/줄 묶음 단위로 정확한 쪽. DOCX는 `w:lastRenderedPageBreak`(Word가 저장한 쪽 경계, `word_saved_layout`)가 있으면 그것으로,
+  없으면 강제 쪽 나눔만 세어(`page_break`, 근거에 `(추정)`), 둘 다 없으면 null. PPTX는 슬라이드 번호(`slide`), HWPX는 문단 쪽 나눔이 있을 때만. XLSX/CSV/HWP/TXT는 null.
+- 표는 행 단위(`kind: row`): 첫 행이 머리글이면 `항목: 내전압 | 기준: 1.5 kV 1분 | 시험방법: KS C 1234`. 병합/빈 머리글은 앞 칸을 이어 쓰고 여러 줄 칸은 공백으로 잇습니다.
+  DOCX 표(`loc` `표 3 5행`), PDF 표(pymupdf `find_tables()`, `p.3 표 1 2행`, 표 영역의 글은 단락에서 뺌). 행 `number`는 첫 칸이 번호(`1`, `1.2`, `REQ-001`)일 때.
+- 새 명령 `reader.py index --folder 폴더 [--depth N | --recursive] [--max-files 300]`, `index --file 파일`, `index --all`: 내용 출력 없이 캐시에 등록.
+  결과 `count, indexed, updated, unchanged, failed, failures(20개), remaining, truncated, skipped_types, total_units`. `--max-files`는 새로 읽는 파일 수만 세므로 같은 명령을 다시 실행하면 이어서 등록합니다.
+- `search`: 결과마다 `page, page_source, section, section_text, number, evidence`(`규격서.pdf p.12, 1. SCOPE > 1.1. Scope (1.1)`). 새 인자 `--pages 3-7`, `--section "장절 일부"`, `--max-files`.
+  `--save`에 `.xlsx` 추가(머리글 굵게, 줄바꿈, 열 너비; 기본은 계속 `.md`). 열: 파일, 쪽, 장절, 번호, 위치, 내용(문장/단락), 문맥. `.md`는 항목마다 `근거:` 줄.
+  저장 파일에는 `--top`과 관계없이 전체 결과(최대 5,000건)를 담습니다(이전에는 표시한 건수만). R2 키 `count`, `shown`, `truncated` 추가, 잘리면 `--save "근거.xlsx"` 명령.
+- `search --file 파일/폴더`: 지금처럼 그 대상을 검색하되, 캐시가 없거나 낡은(수정 시각/크기/파서 버전) 파일만 읽어 등록하고 최신이면 캐시를 씁니다. 결과에 `indexed_now`(새로 등록한 파일, 20개까지), `indexed_now_count`, `from_cache`.
+  폴더는 `--max-files`(기본 300)까지 새로 읽고 남으면 `not_indexed_remaining`과 `index --folder` 명령.
+- `search`(`--file` 없음)는 캐시만 검색합니다. 이전 형식 캐시도 빈 키를 채워(`p.N`/`슬라이드 N`에서 쪽, `heading`에서 장절) 검색하고, 원본이 바뀌었거나 이전 형식이면 `stale_cache_count`와 `index --all` 명령을 줍니다.
+  등록된 문서가 없으면 `error_type: not_indexed`(STOP_RETRY: 사용자에게 폴더를 물어 `--file`로 실행).
+- `read`: 단위마다 `kind, page, section, number`. `--save`에 `.xlsx` 추가, `.md`에 `근거:` 줄. `read --pages`는 PDF에서 쪽 번호로 고릅니다(PDF 단위가 쪽에서 단락으로 바뀜). 새 인자 `--units`(단위 번호, 쪽 중간에서 잘렸을 때 이어 읽기 명령이 씀).
+- `list`: 캐시된 파일 조회. 문서마다 `type, units, pages, sections, cached_at, parser_version, cache(current|stale), stale, missing`. 새 인자 `--name 이름일부`, `--folder 폴더`. R2 키 `count, shown, truncated`, 100개를 넘으면 `full_result_file`(CSV).
+- 공통 런타임: `InputError(directive=, error_type=, fields=)`로 오류 응답에 전용 안내와 키(예: `next_commands`)를 붙일 수 있습니다.
+- PDF를 읽을 때 pymupdf의 안내/경고 출력(예: pymupdf_layout 권장 문구)이 stdout으로 나와 1줄 JSON 계약을 깨지 않게 stderr로 돌립니다.
+
+### 제거
+- EML 읽기 기능 제거 (Outlook 통합 도구에서 별도로 다룰 예정). `.eml`은 다른 미지원 확장자와 같은 "지원하지 않는 형식입니다" 오류이고, `index --folder`는 `skipped_types`에 셉니다.
+
+### 동작 변경
+- `search`(`--file` 없음)는 이제 캐시만 봅니다. 이전에는 색인된 문서를 검색할 때마다 원본이 바뀌었으면 다시 읽었습니다. 최신 내용이 필요하면 `index --all` 또는 `search --file`.
+- 표가 표 하나 = 단위 하나에서 행 하나 = 단위 하나로 바뀌었습니다 (`loc` `표 1` -> `표 1 2행`). PDF 단위는 쪽에서 단락으로 바뀌었습니다 (`loc`은 그대로 `p.N`).
+- `read`의 PDF `unit_name`이 `페이지`에서 `단락`으로 바뀌었습니다. `--pages`의 뜻(PDF 쪽, PPT 슬라이드, 그 밖은 항목 번호)은 그대로입니다.
+
+### 스킬
+- SKILL.md reader 행: 문서 등록(`index --folder`, `read --file`), 근거 검색(`--pages`, `--section`, `--save "근거.xlsx"`), 캐시된 파일 조회(`list --name`). 근거를 `evidence`(파일 p.N, 장절 (번호))로 알리고, page가 null이면 장절과 번호로 알리는 규칙.
+
+### 테스트
+- `tests/test_reader_evidence.py`: 번호 계열 분류, 글머리, 제목 오탐 방지, 세 가지 번호 체계 중첩(PDF, 글자 크기 포함), DOCX 제목 스타일·자동 번호·쪽 나눔·저장된 쪽 경계,
+  PPTX/XLSX/HWPX 장절과 쪽, 표 행 형식(병합 머리글, 여러 줄 칸), PDF 선 표, `index` 집계와 이어서 등록, 캐시 기준 검색과 자동 등록, `--pages`/`--section`, xlsx/md/csv 저장, 이전 캐시 정규화와 stale, `list` 필터, `.eml` 미지원.
+- `tests/test_reader.py`: EML 샘플과 테스트 제거, 표 행 단위와 폴더 검색의 `from_cache`에 맞춤.
+
 ## [1.2.2] - 2026-10-28
 
 사내 경량 LLM(Gemma, OpenCode + PowerShell)으로 `docs/opencode/SCENARIOS.md`를 실행한 시나리오 테스트 결과 반영 (시나리오 10, 12).
@@ -179,13 +227,13 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 샌드박스 가상 데스크톱 전환 (exebox, `SetThreadDesktop`).
 - `clean fix-env`, JIT 자가복구의 "유령 프로세스 정리".
 - 새 문서 만들기 / 파일 열기 (`office_window --new/--open`).
-- EML 마스터 JSON 빌드·병합·스레드 (`eml_read build/merge/thread`). 단일 EML 읽기는 `reader.py read`.
+- EML 읽기·마스터 JSON 빌드·스레드는 Outlook 통합 도구에서 별도로 다룸 (reader.py에서는 1.3.0에서 제거).
 - 워드 그림/도형 -> PPT 전달 (`office_bridge` word->ppt), PPT -> 워드 전달.
 - Outlook 날짜 범위 검색 (`--since`).
 
 ### 확인 필요
 - Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 회사 PC(Office 16) 1차(1.2.0)는 A5 정리가 A.xlsx를 닫아 중단, D1·D4(PDF)와 G1·G2·G4는 통과. 남은 것: 1.2.1로 회사 PC 전체 재실행(`errors_*.txt`의 정리 기록에서 A5가 두 번째 Excel PID만 끝냈는지 확인), 눈 확인 항목.
-- 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증.
+- 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증. 실제 규격서(PDF/Word/HWPX)로 장절·쪽 인식 확인 (1.3.0).
 - 회사 PC에서 `office.py transfer --probe` 결과 확인. (집 PC Office 2007: export, redraw 성공 / relay는 "워드에 붙여넣기 안 됨"으로 실패)
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
 
@@ -199,8 +247,8 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - [ ] COM 내보내기(excel.py:781,802; word.py:577,584; ppt.py:741,750; office.py:124)를 `save_with_lock_fallback`으로, 기존 출력 파일은 새 이름 저장 + `recovered`
 - [ ] `--save`(read --save, export .csv/.md, `write_csv_rows`/`write_text`, `resolve_output_path`)가 기존 파일을 덮어쓰는 문제: R4대로 기존 파일이면 새 이름 저장 + `recovered`, `--overwrite`일 때만 덮어쓰기
 - [ ] `--dry-run`: excel replace/range clear·move/sheet delete/chart delete --all, word replace/write --pos replace, ppt replace/slide delete·clear. 스냅샷이 없는 쓰기는 `undo_available: false`
-- [ ] 빈 결과 `count: 0` + "찾은 항목 없음": excel read 빈 범위, word/ppt/reader read 0단위, reader list, outlook list, office windows, info --all, chart list, undo --list
-- [ ] 잘리는 결과에 `truncated` + 전체 결과 파일 경로: excel read --search(50), excel replace cells(30), reader search(--save도 전체 hits), reader list(100), undo --list(20), outlook list/search. `body_truncated` 옆에 `truncated`
+- [ ] 빈 결과 `count: 0` + "찾은 항목 없음": excel read 빈 범위, word/ppt read 0단위, outlook list, office windows, info --all, chart list, undo --list
+- [ ] 잘리는 결과에 `truncated` + 전체 결과 파일 경로: excel read --search(50), excel replace cells(30), undo --list(20), outlook list/search. `body_truncated` 옆에 `truncated`
 - [ ] next_commands: excel write 자리표시 `--title 차트` 제거(excel.py:509), word.py:136·ppt.py:183 transfer 명령에 `--from-target`
 - [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
 - [ ] tools/run_win_tests.py `--agent` 모드: JsonArgumentParser와 최상위 예외 처리, 로그 태그 `[준비]` `[주의]` `[확인]` -> `[INFO]` `[WARN]`

@@ -1,10 +1,10 @@
 ---
 name: office-cli
-description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표/수식/차트/서식, 본문/표/그림, 슬라이드), 앱 사이로 차트·표·내용을 옮기고(office.py transfer), Outlook 메일을 조회·작성하고, PDF/HWP/EML/Office 파일을 Office 없이 읽고 검색한다(reader.py). 작업 전 자동 스냅샷으로 되돌리기(office.py undo)를 지원한다. 엑셀 표/그래프 만들기, 보고서·발표자료 작성, 문서 내용 검색 후 다른 문서에 넣기, 메일 답장 작성 요청 시 사용.
+description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표/수식/차트/서식, 본문/표/그림, 슬라이드), 앱 사이로 차트·표·내용을 옮기고(office.py transfer), Outlook 메일을 조회·작성하고, PDF/HWP/Office 파일을 Office 없이 읽고 등록(캐시)해 쪽·장절·번호 근거와 함께 검색한다(reader.py). 작업 전 자동 스냅샷으로 되돌리기(office.py undo)를 지원한다. 엑셀 표/그래프 만들기, 보고서·발표자료 작성, 문서 내용 검색 후 다른 문서에 넣기, 규격/규정 근거 찾기, 메일 답장 작성 요청 시 사용.
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.2.2"
+  version: "1.3.0"
   platform: windows
 ---
 
@@ -37,8 +37,9 @@ metadata:
 | 차트를 워드/PPT에 그림으로 | `office.py transfer --from excel --chart "차트이름" --to word,ppt` |
 | 엑셀 범위를 워드/PPT 표로 | `office.py transfer --from excel --range A1:D10 --to word` |
 | 워드/PPT 내용을 엑셀로 | `office.py transfer --from word --what text --to excel` (`--what table --table 1`) |
-| 파일 읽기 (PDF/HWP/EML/Office) | `reader.py read --file "경로" [--pages 1-3] [--save]` |
-| 읽은 문서에서 검색 | `reader.py search --query "A AND B" [--file 파일또는폴더] [--save]` |
+| 문서 등록 (PDF/HWP/Office) | 폴더: `reader.py index --folder "<폴더>"` / 파일 하나 읽기: `reader.py read --file "<파일>" [--pages 1-3] [--save]` |
+| 문서 검색 (근거 포함) | `reader.py search --query "A AND B" [--file 파일또는폴더] [--pages 3-7] [--section "장절 일부"] --save "근거.xlsx"` |
+| 캐시된 파일 조회 | `reader.py list [--name 이름일부] [--folder 폴더]` |
 | 메일 | `outlook.py current`, `search --query 말 [--from 이름]`, `read --id <id>`, `reply --body "내용"`, `new --to 주소 --subject 제목 --body 내용` |
 | 되돌리기 / 창 | `office.py undo` (`--list`, `--pick N`), `office.py windows`, `office.py focus --app excel` |
 | 결과 배치 확인 | `ppt.py info --detail --slides N`, `excel.py info --detail`, `word.py info --detail` (`layout_warnings`가 0이 아니면 `warnings`를 알림) |
@@ -63,6 +64,8 @@ metadata:
 | `ERROR:` | 다시 실행하지 않는다. message를 그대로 알린다. |
 
 - JSON에 `recovered`가 있으면 그 문장을 그대로 알린다.
+- 문서 검색 결과는 항목마다 근거를 붙여 알린다: `evidence`(예: `규격.pdf p.12, 1. SCOPE > 1.1. Scope (1.1)`)를 그대로 쓴다. `page`가 null인 형식(엑셀, HWP 등)은 장절(`section_text`)과 번호(`number`), 위치(`loc`)로 알린다.
+- `search`는 `--file`이 없으면 등록된 문서(캐시)만 찾는다. `--file`을 주면 그 파일/폴더의 새 문서를 먼저 등록한다(`indexed_now`를 사용자에게 알린다). `not_indexed` 오류면 사용자에게 폴더를 물어 `--file "<폴더>"`로 실행한다.
 - 메일은 기본으로 작성 창만 띄운다. `--send`는 사용자가 **발송을 분명히 요청한 경우에만** 붙인다.
 - 아래는 사용자가 요청한 경우에만 쓴다: 시트/슬라이드 삭제, `ppt.py slide --action clear --all-slides`, `--new-sheet`(새 시트), `--overwrite`(기존 시트에 덮어쓰기).
 - 잘못 고쳤으면 `office.py undo`로 되돌린다. 저장한 적 없는 문서도 그 문서를 되돌린다 (결과 `preview`를 그대로 알린다).

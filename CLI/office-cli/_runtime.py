@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.2.2"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.3.0"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -81,9 +81,15 @@ class InputError(ValueError):
     """인자/대상/데이터 문제. 같은 인자로 재시도해도 소용없음 (STOP_RETRY).
     candidates를 주면 '후보가 여러 개라 도구가 고를 수 없음'으로 응답합니다 (R8 [후보], 사용자가 고름)."""
 
-    def __init__(self, message: str = "", candidates: Optional[List[str]] = None, no_fallback: bool = False):
+    def __init__(self, message: str = "", candidates: Optional[List[str]] = None, no_fallback: bool = False,
+                 *, directive: Optional[str] = None, error_type: Optional[str] = None,
+                 fields: Optional[Dict[str, Any]] = None):
         super().__init__(message)
         self.candidates = list(candidates or [])
+        # 선택: STOP_RETRY: 뒤에 붙일 전용 안내, 전용 error_type, 응답에 더할 키 (예: next_commands)
+        self.directive = directive
+        self.error_type = error_type
+        self.fields = dict(fields or {})
         # 대상(문서, 앵커) 자체의 문제라 다른 방식으로 대체해도 소용없음 (transfer의 방식 자동 전환을 멈춤)
         self.no_fallback = no_fallback or bool(self.candidates)
 
@@ -227,6 +233,12 @@ def error_payload(exc: BaseException, tool: str = "", command: str = "") -> Dict
         base.update(error_type="ambiguous", message=msg, candidates=exc.candidates,
                     agent_directive="STOP_RETRY: 후보가 여러 개라 도구가 고를 수 없습니다. 재시도하지 말고 message의 "
                                     "[후보]를 사용자에게 보여주고 고르게 한 뒤, 사용자가 고른 값으로 실행하세요.")
+        return base
+    if isinstance(exc, InputError) and (exc.directive or exc.error_type or exc.fields):
+        base.update(error_type=exc.error_type or "input", message=msg,
+                    agent_directive="STOP_RETRY: " + (exc.directive or "인자나 대상 확인에 실패했습니다. message를 사용자에게 그대로 보고하세요."))
+        for k, v in exc.fields.items():
+            base.setdefault(k, v)
         return base
     if isinstance(exc, _STOP_RETRY_ERRORS):
         base.update(error_type="office_busy" if isinstance(exc, OfficeBusyError) else "input",
