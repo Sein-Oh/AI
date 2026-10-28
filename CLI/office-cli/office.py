@@ -684,22 +684,91 @@ def _word_from_flat_xml(app: Any, xml_path: str, dest: str) -> Any:
     return doc
 
 
+def _open_snapshot_untitled(kind: str, app: Any, data: str) -> Any:
+    """스냅샷 내용을 '제목 없는 새 문서'로 엽니다 (캐시 파일 자체를 열지 않음)."""
+    if kind == "excel":
+        return app.Workbooks.Add(os.path.normpath(data))
+    if kind == "ppt":
+        return app.Presentations.Open(os.path.normpath(data), 0, -1, -1)
+    return app.Documents.Add(Template=os.path.normpath(data))
+
+
+def _doc_name(doc: Any, default: str = "") -> str:
+    try:
+        return str(doc.Name)
+    except Exception:
+        return default
+
+
+def _word_replace_content(doc: Any, data: str, fmt: str) -> None:
+    """열린 워드 문서의 내용을 스냅샷 내용으로 바꿉니다 (같은 창 유지).
+    flat_xml(WordOpenXML) 스냅샷은 InsertXML로 넣어 스타일을 살리고, 그 밖에는 InsertFile."""
+    if fmt == "flat_xml":
+        doc.Range().InsertXML(rt.read_text_file(data))
+    else:
+        doc.Content.Delete()
+        doc.Content.InsertFile(os.path.normpath(data))
+
+
+def _restore_untitled(snap: Dict[str, Any]) -> Dict[str, Any]:
+    """저장한 적 없는 문서 되돌리기 (시나리오 12: 새 워드 문서에 차트를 넣은 뒤 undo).
+    - 바뀐 문서가 하나 열려 있으면: 워드는 같은 창에서 내용을 바꾸고(restored_in_place),
+      엑셀/PPT는 되돌린 내용을 새 문서로 연 뒤 바뀐 문서를 저장하지 않고 닫는다(replaced_untitled_document).
+      어느 쪽이든 되돌리기 직전 상태를 pre_undo_backup에 먼저 보관한다.
+    - 바뀐 문서가 닫혔거나 같은 이름의 저장 안 된 문서가 둘 이상이면: 고르지 않고 새 문서로만 연다(new_untitled_document)."""
+    kind, name, data = snap["app"], snap.get("name", ""), snap["snapshot_file"]
+    label = off.APP_LABEL[kind]
+    hits = off.open_untitled(kind, name) if name else []
+    if len(hits) == 1:
+        app, doc = hits[0]["app"], hits[0]["doc"]
+        if kind == "word":
+            backup = _backup_path(kind, ".xml")
+            with open(backup, "w", encoding="utf-8") as f:
+                f.write(doc.WordOpenXML)
+            _word_replace_content(doc, data, snap.get("snapshot_format", ""))
+            try:
+                doc.Activate()
+            except Exception:
+                pass
+            return {"restored_as": "restored_in_place", "pre_undo_backup": backup, "restored_name": _doc_name(doc, name),
+                    "detail": f"'{name}'을(를) 같은 창에서 되돌렸습니다 (저장하지 않은 문서라 저장은 하지 않았습니다)"}
+        backup = _backup_path(kind, ".xlsx" if kind == "excel" else ".pptx")
+        doc.SaveCopyAs(backup)
+        new = _open_snapshot_untitled(kind, app, data)
+        if kind == "excel":
+            doc.Close(SaveChanges=False)
+        else:
+            try:
+                doc.Saved = -1                     # 닫을 때 저장할지 묻지 않도록 (내용은 pre_undo_backup에 보관)
+            except Exception:
+                pass
+            doc.Close()
+        try:
+            new.Activate()
+        except Exception:
+            pass
+        new_name = _doc_name(new)
+        return {"restored_as": "replaced_untitled_document", "pre_undo_backup": backup, "restored_name": new_name,
+                "detail": f"저장한 적 없는 {label} 문서라 되돌린 내용을 새 창 '{new_name}'(으)로 열고, "
+                          f"바뀐 '{name}'은(는) 저장하지 않고 닫았습니다"}
+    if len(hits) > 1:
+        reason = f"이름이 '{name}'인 저장 안 된 {label} 문서가 {len(hits)}개라 어느 것인지 정할 수 없어"
+    else:
+        reason = f"'{name}'이(가) 열려 있지 않아"
+    app = hits[0]["app"] if hits else off.get_active(kind)["app"]
+    new_name = _doc_name(_open_snapshot_untitled(kind, app, data))
+    return {"restored_as": "new_untitled_document", "pre_undo_backup": "", "restored_name": new_name,
+            "detail": f"{reason} 되돌린 내용을 새 창 '{new_name}'(으)로 열었습니다"
+                      + (" (바뀐 문서는 그대로 열려 있습니다)" if hits else "")}
+
+
 def restore_snapshot(snap: Dict[str, Any]) -> Dict[str, Any]:
     import shutil
     kind = snap["app"]
     orig = snap.get("original_path", "")
     data = snap["snapshot_file"]
     if not orig:
-        # 저장된 적 없는 문서: 스냅샷 내용을 '제목 없는 새 문서'로 연다 (캐시 파일 자체를 열지 않음)
-        info = off.get_active(kind)
-        app = info["app"]
-        if kind == "excel":
-            app.Workbooks.Add(os.path.normpath(data))
-        elif kind == "ppt":
-            app.Presentations.Open(os.path.normpath(data), 0, -1, -1)
-        else:
-            app.Documents.Add(Template=os.path.normpath(data))
-        return {"restored_as": "new_untitled_document", "pre_undo_backup": ""}
+        return _restore_untitled(snap)
     if not os.path.isdir(os.path.dirname(orig)):
         raise rt.InputError(f"원본 폴더가 없습니다: {os.path.dirname(orig)}")
     ext = os.path.splitext(orig)[1]
@@ -762,8 +831,14 @@ def cmd_undo(args) -> Dict[str, Any]:
     off.init_com()
     info = restore_snapshot(snap)
     off.delete_snapshot(snap["meta_file"])                 # 사용한 스냅샷은 소비 -> 다음 undo는 그 이전으로
-    return rt.ok(TOOL, "undo", f"'{snap['name']}'을(를) '{snap.get('by') or '이전 작업'}' 이전 상태로 되돌렸습니다 ({info['restored_as']})",
-                 "VERIFIED: 되돌리기 완료. 되돌리기 직전 상태는 pre_undo_backup에 보관했습니다.",
+    detail = info.pop("detail", "")
+    preview = f"'{snap['name']}'을(를) '{snap.get('by') or '이전 작업'}' 이전 상태로 되돌렸습니다 ({info['restored_as']})"
+    if detail:
+        preview += f". {detail}"
+    directive = "VERIFIED: 되돌리기 완료. " + (f"{detail}. " if detail else "") + (
+        "되돌리기 직전 상태는 pre_undo_backup에 보관했습니다. preview를 사용자에게 그대로 알리세요."
+        if info.get("pre_undo_backup") else "preview를 사용자에게 그대로 알리세요.")
+    return rt.ok(TOOL, "undo", preview, directive,
                  restored=True, app=off.APP_LABEL[snap["app"]], name=snap["name"], original_path=snap.get("original_path", ""), **info)
 
 

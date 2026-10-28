@@ -3,11 +3,14 @@
 사내 PC(Windows 11, 폐쇄망, OpenCode + 26B~30B 모델)에 도구 스킬과 전역 지침을 놓는 방법입니다.
 저장소는 반입 후 `C:\CLI`에 `ml-kit`, `office-cli`가 있는 상태를 기준으로 합니다.
 
-## 1. 스킬 연결 (한 번만)
+## 1. 도구와 스킬 배치
 
-스킬 폴더에 복사하는 대신 `C:\CLI`를 가리키는 연결(junction)을 만들면, 다음 반입 때 `C:\CLI`만 바꾸면 스킬도 함께 바뀝니다.
-cmd에서 실행합니다.
+도구는 **`C:\CLI\ml-kit`, `C:\CLI\office-cli`** 에 둡니다. 모든 SKILL.md와 전역 AGENTS.md의 명령 경로가 이 위치를 기준으로 적혀 있습니다.
+반입할 때는 `C:\CLI`만 바꾸면 됩니다. 실기 테스트(`C:\CLI\run_all_tests.py`)도 같은 도구를 시험합니다.
 
+OpenCode 스킬 폴더에는 둘 중 하나로 SKILL.md를 보이게 합니다.
+
+**방법 A: 연결(junction), 권장.** 파일이 `C:\CLI` 한 곳에만 있어 SKILL.md를 따로 복사할 일이 없습니다. cmd에서 한 번만 실행합니다.
 ```bat
 mkdir "%USERPROFILE%\.config\opencode\skills"
 mklink /J "%USERPROFILE%\.config\opencode\skills\ml-kit"          "C:\CLI\ml-kit"
@@ -15,14 +18,16 @@ mklink /J "%USERPROFILE%\.config\opencode\skills\office-cli"      "C:\CLI\office
 mklink /J "%USERPROFILE%\.config\opencode\skills\office-cli-test" "C:\CLI\office-cli\tools\office-cli-test"
 ```
 
-- `office-cli-test`(실기 테스트 스킬)는 `office-cli` **옆**에 있어야 합니다. 위 연결로 그렇게 됩니다.
-- 복사로 배치해도 됩니다. 그때는 반입할 때마다 다시 복사해야 합니다.
-- 도구 오류 로그는 `C:\CLI\<도구>\data\logs\errors.txt`에 쌓이고, `C:\CLI\run_all_tests.py --only diag`가 결과 파일에 붙여 줍니다.
+**방법 B: SKILL.md만 복사.** 스킬 폴더에 `ml-kit`, `office-cli`, `office-cli-test` 폴더를 만들고 각 SKILL.md만 넣습니다.
+SKILL.md가 바뀐 반입 때는 다시 복사해야 합니다 (`C:\CLI\ml-kit\SKILL.md`, `C:\CLI\office-cli\SKILL.md`, `C:\CLI\office-cli\tools\office-cli-test\SKILL.md`).
+
+- 도구 오류 로그는 `C:\CLI\<도구>\data\logs\errors.txt`에 쌓이고, `python C:\CLI\run_all_tests.py --only diag`가 결과 파일에 붙여 줍니다.
+- 이전처럼 스킬 폴더에 도구 전체를 복사해 두었다면 그 폴더는 지우고(SKILL.md만 남기거나 연결로 바꾸고) `C:\CLI`만 쓰세요. 두 곳에 도구가 있으면 어느 쪽이 쓰였는지 헷갈립니다.
 
 ## 2. 전역 지침 (AGENTS.md)
 
 1. 이 폴더의 `AGENTS.md`를 `C:\Users\<사용자이름>\.config\opencode\AGENTS.md`로 복사합니다.
-2. 파일 안의 `<사용자이름>`을 실제 Windows 사용자 이름으로 바꿉니다 (3장 2번).
+2. 고쳐 쓸 곳은 없습니다. 도구 경로는 `C:\CLI` 기준으로 적혀 있습니다.
 
 이미 넣어 두신 내용은 아래처럼 반영했습니다.
 

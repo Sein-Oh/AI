@@ -24,7 +24,7 @@ AI_WORK/
 │   └── doc-classifier/        # 폴더 파일 목록화/분류 0.9.2 (다른 개발자 담당으로 보관)
 └── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
-    ├── ml-kit/                # 회귀·분류 ML 툴킷 (2.3.2)
+    ├── ml-kit/                # 회귀·분류 ML 툴킷 (2.4.0)
     │   ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
     │   ├── README.md          # 상세 설명서
     │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
@@ -34,7 +34,7 @@ AI_WORK/
     │   ├── ml_report.py       # 3단계: Word 보고서
     │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.2.1)
+    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.2.2)
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일

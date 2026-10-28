@@ -150,7 +150,8 @@ def test_sheet_lookup_rules(fake_com):
         assert t.sheet("신규", create=True).Name == "신규"
         with pytest.raises(rt.InputError) as ei:
             t.sheet("신규2")                          # 쓰기 세션이어도 create 없이는 만들지 않음
-        assert "--new-sheet" in str(ei.value)
+        assert ei.value.candidates == ["신규"] and "--new-sheet" not in str(ei.value)   # 새 시트 여부는 사용자에게 (시나리오 10)
+        assert isinstance(ei.value, rt.UserDecisionError) and "--new-sheet" in ei.value.directive
 
 
 def test_read_session_never_moves_view_write_moves_to_changed_sheet(fake_com):

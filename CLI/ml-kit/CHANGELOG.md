@@ -2,11 +2,62 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.4.0] - 2026-10-28
+
+실제 사용(회사 PC, OpenCode + 26B Gemma)에서 입력 3개·회귀 타겟 6개 데이터를 LLM이 타겟 하나씩, 조건을 바꿔 가며 학습해
+v1~v7이 타겟별로 흩어졌고 보고서도 버전마다 따로 나왔습니다. 사용자는 항상 모든 타겟이 들어간 보고서 1개를 원하고,
+LLM이 타겟·버전을 고르기를 원하지 않습니다. 사용자와 정한 설계("make_best"):
+타겟마다 검증 점수가 가장 좋았던 기록의 학습 조건을 가져와 **현재 데이터 파일**로 모든 타겟을 함께 다시 학습하고,
+평범한 새 버전 1개(태그 `best`)에 담은 뒤 그 버전으로 보고서를 만듭니다.
+
+### 기능 (추가만)
+- `ml_train.py -f <데이터> --best [--task regression|classification]`: 최고 버전 만들기.
+  - 타겟별 선택: 회귀 `val_r2`, 분류 `val_f1_macro`가 가장 높은 기록, 같은 점수면 나중 기록. 버전 폴더가 없거나 불완전한 기록은 제외.
+    `--overwrite`로 같은 버전 기록이 2개면 마지막 기록만 봄.
+  - 학습 조건(피처, `--eval` 수식, `--dtypes`, 양성 클래스)은 타겟마다 다를 수 있고, 모델 종류는 평소처럼 5개 모델 경쟁으로 다시 고름.
+  - 작업 유형마다 버전 1개 (회귀와 분류가 섞이면 2개, 결과에 명시). `--task`로 하나만.
+  - 헤더/단위/데이터 행은 주지 않으면 그 유형의 마지막 기록 값. 이력이 없으면 `STOP_RETRY`(먼저 학습).
+  - 점수 하락 경고는 하지 않고, 타겟별 원래 점수(출처 버전)와 이번 점수를 결과 JSON과 보고서 표에 함께 적음.
+- `ml_report.py -f <데이터> [--task ...] [--header-row ...]`: 작업 유형마다 최고 버전으로 보고서 1개.
+  최고 버전이 최신이면(그 뒤에 같은 유형의 학습 기록 없음, 폴더 온전, 데이터 파일 SHA-256 동일) 그대로 쓰고, 아니면 같은 프로세스에서 먼저 만듦.
+  `-m`, `-d` 동작은 그대로.
+- 결과 JSON 새 키: `made_best`, `best_version_dir`, `best_versions`, `best_targets`(`{타겟: {task, source_version, source_score, new_score}}`),
+  보고서 `-f`는 `report_count`, `best_reports`도. 기존 키(`report_file`, `version`, `best_version` 등)는 첫 번째 보고서 기준으로 뜻이 같음.
+  (`reports`는 2.2.0에서 없앤 옛 키라 다른 뜻으로 다시 쓰지 않고 `best_reports`로 이름 지음.)
+- 원장 새 키: 모든 학습 `data_fingerprint`(`size`, `mtime`, `sha256`), 지정 시 `dtypes`, `positive_class`.
+  최고 버전 기록은 `best: true`, `best_source`(`{타겟: {version, score[, selected_version]}}`), `target_recipes`.
+  이전 최고 버전의 조건이 다시 뽑히면 `best_source`는 원래(최고 버전이 아닌) 버전을 가리켜 출처를 끝까지 추적.
+  `model_<타겟>.json`에도 `best_source`. `--history`의 `records`에 `best: true`.
+- 보고서(최고 버전): 표지 "학습 방식", 요약 "타겟별 학습 조건 출처" 표, 타겟마다 "학습 조건 출처: vK (당시 점수 x.xxxx), 이번 점수 y.yyyy"와 입력 피처,
+  버전 이력에 "버전별 타겟 점수" 표와 타겟별 추이 그림. 입력 피처 구성과 예측 필수 입력은 모든 타겟의 합집합 (일반 버전은 이전과 같음).
+- 학습 목표 달성 시 `next_commands`의 보고서 명령을 `ml_report.py -m <vN>`에서 `ml_report.py -f <데이터>`로 바꿈.
+
+### 구조
+- `ml_train.py`의 학습 본체를 `train_version(args, task, groups, best_info)`로 분리. 그룹 = 학습 조건 1개(피처, 수식, dtypes, 양성 클래스)와 그 타겟들.
+  일반 학습은 그룹 1개라 산출물이 이전과 같고, `--best`는 조건마다 그룹을 만들어 한 스테이징 폴더(한 `TransactionGuard`)에 모든 타겟을 학습.
+  `correlation.csv`, `model_dataset.csv`, 원장 `features_used`·`feature_types`는 그룹들의 합집합(같은 이름 컬럼은 첫 그룹 값).
+- `ml_report.py -f`는 `ml_train`을 그때만 import (보고서 `-m`/`-d`는 scikit-learn을 불러오지 않음).
+
+### 스킬
+- 5단계 보고서를 `ml_report.py -f "<데이터파일>"` 한 줄로. LLM은 타겟·버전을 고르지 않음. `-m` 안내 제거 (도구에서는 계속 동작).
+- 4단계 예측은 보고서를 만들었으면 `best_version_dir`, 아니면 마지막 학습의 `version_dir`.
+- 2단계: 여러 타겟을 `-y`에 함께 넣는 것은 권장으로 두고, 따로 학습해도 보고서가 합친다고 안내. `split_targets_detected` 안내 삭제(기능 없음).
+
+### 테스트
+- `tests/test_best_v240.py`: 단일 타겟 학습 4회(한 타겟은 최고 점수가 최신 기록이 아님) -> `--best`가 타겟 3개 버전 1개, 타겟별 피처·수식, `best_source`, 새 점수;
+  합친 피처로 `ml_predict -i` 예측; `--history`; `ml_report -f` 재사용(`made_best: false`) -> 새 학습 후 재생성 -> 데이터 변경 후 재생성;
+  회귀+분류 혼합 시 버전·보고서 2개와 `--task`; 이력 없음 `STOP_RETRY`; `-m` 결과에 새 키 없음.
+
+### 호환
+- 기존 CLI 인자·JSON 키 삭제나 뜻 변경 없음. `ml_train.py --task` 기본값을 `None`으로 바꿨지만 학습에서는 그대로 `regression`.
+- 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/`)은 그대로. 2.4.0 이전 기록도 `--best` 후보 (`dtypes`가 기록되지 않아 자동 판별로 다시 학습).
+
 ## [2.3.2] - 2026-10-28
 
 회사 PC 2차 실기(2.3.1, 실기 M1~M14 모두 통과) 결과 반영. 오프라인 테스트 3건 실패 수정.
 
 ### 스킬
+- 도구 위치를 `C:\CLI\ml-kit`으로 고정: SKILL.md 명령 경로를 `<SKILL_DIR>` 대신 실제 경로로 적음 (스킬 폴더에는 연결 또는 SKILL.md만).
 - SKILL.md를 PowerShell 기준으로 정리: 전역 지침의 인코딩 줄 사용, 시간 제한 600000, 실행 전에 물어볼 값(파일, 타겟, 피처), 컬럼 이름 확인 방법, `version_dir`을 모를 때 `--history`로 찾기, 파일은 파일 쓰기 도구로 UTF-8 저장.
 
 ### 수정
@@ -220,6 +271,9 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
   동시 학습 잠금, 학습 강제 종료 뒤 복구, 오류/출력 계약.
 - [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
 - [ ] 260자 넘는 긴 경로
+- [ ] `--best`: 2.4.0 이전 기록은 `--dtypes`가 원장에 없어 자동 판별로 다시 학습함 (필요하면 `feature_types`로 복원)
+- [ ] `--best`: 조건이 다른 타겟들이 같은 이름의 파생변수를 다른 수식으로 만들면 `model_dataset.csv`·`correlation.csv`에는 첫 수식 값만 들어감 (모델은 타겟별로 정확)
+- [ ] 회사 PC에서 6타겟 실제 데이터로 `ml_report.py -f` 소요 시간 확인
 
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
 상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.

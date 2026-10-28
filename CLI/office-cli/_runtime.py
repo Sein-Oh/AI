@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.2.1"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.2.2"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -97,6 +97,16 @@ def ambiguous(message: str, candidates: Iterable[str]) -> InputError:
     shown = cands[:MAX_CANDIDATES]
     tail = f" [후보] {', '.join(shown)}" + (f" 외 {len(cands) - len(shown)}개" if len(cands) > len(shown) else "")
     return InputError(message + tail, candidates=shown)
+
+
+class UserDecisionError(InputError):
+    """도구가 대신 정하면 안 되는 일 (예: 없는 시트를 새로 만들지). 재시도하지 않고 사용자에게 묻게 합니다.
+    message에는 사실만 적고, 할 일(directive)은 사용자 동의를 조건으로 적습니다. 경량 LLM이 message의 명령문을 그대로 따르기 때문."""
+
+    def __init__(self, message: str, directive: str, candidates: Optional[List[str]] = None):
+        cands = [str(c) for c in (candidates or [])][:MAX_CANDIDATES]
+        super().__init__(message + (f" [후보] {', '.join(cands)}" if cands else ""), candidates=cands, no_fallback=True)
+        self.directive = directive
 
 
 class OfficeBusyError(RuntimeError):
@@ -208,6 +218,11 @@ def error_payload(exc: BaseException, tool: str = "", command: str = "") -> Dict
         return base
 
     msg = str(exc) or type(exc).__name__
+    if isinstance(exc, UserDecisionError):
+        base.update(error_type="needs_user_decision", message=msg, agent_directive=f"STOP_RETRY: {exc.directive}")
+        if exc.candidates:
+            base["candidates"] = exc.candidates
+        return base
     if isinstance(exc, InputError) and exc.candidates:
         base.update(error_type="ambiguous", message=msg, candidates=exc.candidates,
                     agent_directive="STOP_RETRY: 후보가 여러 개라 도구가 고를 수 없습니다. 재시도하지 말고 message의 "

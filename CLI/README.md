@@ -8,7 +8,7 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 | [`office-cli/`](office-cli/) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/EML 읽기와 검색 | [`office-cli/SKILL.md`](office-cli/SKILL.md) |
 
 에이전트 런타임은 **OpenCode** 입니다. 각 도구 폴더가 그대로 OpenCode 스킬 폴더이며, 폴더 이름 = 스킬 이름
-(소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 설치 위치: `C:\Users\<사용자>\.config\opencode\skills\<tool>\`.
+(소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 사내 PC 배치: 도구는 `C:\CLI\<tool>\`에 두고, OpenCode 스킬 폴더(`C:\Users\<사용자>\.config\opencode\skills\<tool>\`)는 연결(junction)하거나 SKILL.md만 둡니다 ([`docs/opencode/README.md`](../docs/opencode/README.md)). SKILL.md의 명령 경로는 `C:\CLI\<tool>` 기준입니다.
 
 ## Windows 통합 테스트 (`run_all_tests.py`)
 

@@ -20,7 +20,7 @@ CLI/office-cli/
 ├── _runtime.py  공통 런타임 (응답 계약, 경로, 입출력, 마크다운 해석)
 ├── _office.py   Office COM 공통 (세션, 스냅샷, 색/테마)
 ├── tools/run_win_tests.py  Windows 실기 테스트 러너
-├── tools/office-cli-test/SKILL.md  실기 테스트를 에이전트가 돌리는 스킬 (스킬 폴더에 office-cli 옆으로 복사)
+├── tools/office-cli-test/SKILL.md  실기 테스트를 에이전트가 돌리는 스킬 (스킬 폴더 office-cli-test에 연결하거나 SKILL.md만 복사)
 └── tests/       오프라인 테스트 (가짜 COM + 실제 샘플 파일)
 ```
 
@@ -55,12 +55,22 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 - **쓰기는 고친 시트/슬라이드로만 이동합니다.** `--no-focus`를 주면 이동하지 않습니다.
 - **쓰기 전 스냅샷을 자동으로 만듭니다**(문서별 5개 보관, 50MB 초과 문서는 생략). 같은 경로에 다른 문서를 새로 만들면 이전 문서의 스냅샷은 되돌리기 대상에서 빠집니다(파일 속 만든 시각으로 판별).
   - 원본 문서는 저장하거나 경로를 바꾸지 않습니다.
-  - `office.py undo`로 되돌립니다.
+  - `office.py undo`로 되돌립니다. 결과 `restored_as`:
+    | 경우 | `restored_as` | 동작 |
+    |---|---|---|
+    | 저장된 문서, 열려 있음 | `reopened_in_office` | 현재 상태를 `pre_undo_backup`에 보관, 닫고 스냅샷으로 바꾼 뒤 다시 엶 |
+    | 저장된 문서, 닫혀 있음 | `file_replaced` | 파일을 스냅샷으로 바꿈 (기존 파일은 `pre_undo_backup`) |
+    | 저장한 적 없는 워드 문서, 열려 있음 | `restored_in_place` | 같은 창에서 내용만 스냅샷으로 바꿈 (현재 내용은 `pre_undo_backup` .xml, 문서는 저장하지 않음) |
+    | 저장한 적 없는 엑셀/PPT 문서, 열려 있음 | `replaced_untitled_document` | 현재 상태를 `pre_undo_backup`에 보관, 스냅샷을 새 제목 없는 문서로 열고 바뀐 문서는 저장하지 않고 닫음 (문서 수 그대로, 창 이름은 바뀜) |
+    | 저장한 적 없는 문서가 닫혔거나 같은 이름의 저장 안 된 문서가 둘 이상 | `new_untitled_document` | 고르지 않고 스냅샷을 새 제목 없는 문서로만 엶. `preview`에 이유를 적음 |
+  - 저장한 적 없는 문서는 스냅샷 때의 문서 이름(`문서1`, `Book1`)으로 찾습니다(1.2.2, 시나리오 12). 이전에는 항상 새 문서로 열어 바뀐 문서가 그대로 남았습니다.
 - **읽기는 아무것도 만들거나 저장하지 않습니다.** 없는 시트나 파일을 지정하면 `[추천]`과 함께 오류를 냅니다.
 - **추측해서 쓰지 않습니다.** 쓰기 위치가 확실하지 않으면 아무것도 바꾸지 않고 오류를 냅니다.
-  - 엑셀 쓰기에서 없는 시트: 새로 만들지 않습니다. 표기만 다른 시트(`Sheet 1`과 `Sheet1`)가 있으면 `[추천]`, 비슷한 다른 시트(`Sheet2`와 `Sheet1`)면 `[후보]`, 없으면 `--new-sheet` 안내. 새 시트는 `--new-sheet`로만 만듭니다.
+  - 엑셀 쓰기에서 없는 시트: 새로 만들지 않습니다. 표기만 다른 시트(`Sheet 1`과 `Sheet1`)가 있으면 `[추천]`. 그 밖에는 `error_type: "needs_user_decision"`으로 있는 시트 목록을 알리고, 비슷한 기존 시트(`Sheet2`와 `Sheet1`)가 있으면 그 이름만 `[후보]`에 넣습니다. 새 시트는 `--new-sheet`로만 만듭니다.
+    - message와 `[후보]`에는 `--new-sheet`나 "만드세요" 같은 명령문을 넣지 않습니다. 경량 LLM이 그 문장을 따라 사용자에게 묻지 않고 새 시트를 만들었기 때문입니다(1.2.2, 시나리오 10). `--new-sheet`는 `agent_directive`에만 "사용자가 만들라고 답한 경우에만"이라는 조건과 함께 적습니다.
+    - 예: `시트 'Sheet9'이(가) 없습니다 (있는 시트: Sheet1). 새 시트를 만들지 않았고 아무 데도 쓰지 않았습니다. 이름이 비슷한 기존 시트에 쓸지, 새 시트를 만들지 사용자에게 물어보세요. [후보] Sheet1`
   - 워드 `--anchor`가 여러 단락에 있으면 `[후보]`(번호와 단락 앞부분)로 오류. `--occurrence N`으로 고릅니다. 찾지 못하면 비슷한 문구를 안내합니다 (공백·대소문자 차이 등 확실할 때만 `[추천]`, `--pos replace`에서는 더 엄격).
-  - `office.py transfer --to excel --sheet 이름`은 새 시트 이름입니다. 이미 있으면 덮어쓰지 않고 비어 있는 이름을 `[추천]`, 덮어쓰기는 `--overwrite`.
+  - `office.py transfer --to excel --sheet 이름`은 새 시트 이름입니다(transfer는 항상 새 시트에 받습니다). 이미 있으면 덮어쓰지 않고 비어 있는 이름을 `[추천]`, 덮어쓰기는 `--overwrite`.
 - **메일**: 기본은 작성 창만 띄웁니다. `--send`는 명시했을 때만 쓰고, 수신자 주소를 확인한 뒤 발송합니다.
 
 ### 파일과 폴더
@@ -180,5 +190,5 @@ python CLI/office-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세
   `errors_*.txt`에는 러너의 자동 복구(닫힌 A 문서 다시 열기), 창/프로세스 정리 기록(어떤 PID에 Quit/WM_CLOSE를 보냈고 무엇을 보호했는지), 도구 오류 로그가 함께 들어 있습니다.
 - 러너는 테스트 문서(A.xlsx/A.docx/A.pptx)가 열린 프로세스를 끝내지 않습니다. 정리 판단 규칙은 `tools/win_test_rules.py`(오프라인 테스트 `tests/test_win_runner.py`).
 - DRM PC에서 python-pptx 기본 템플릿(`pptx/templates/default.pptx`)이 암호화돼 있으면 그 템플릿이 필요한 오프라인 테스트만 "python-pptx 기본 템플릿이 손상됨 (DRM 추정)"으로 건너뜁니다. python-docx는 폴더 템플릿으로 대신 만듭니다. 도구 코드는 기본 템플릿을 쓰지 않습니다.
-- OpenCode 에이전트에게 실기 테스트를 맡기려면 `tools/office-cli-test` 폴더를 스킬 폴더의 `office-cli` 옆에 복사합니다. 에이전트는 `--agent`로 실행해 결과 JSON 1줄만 읽습니다.
+- 도구는 `C:\CLI\office-cli`에 둡니다 (SKILL.md의 명령 경로 기준). OpenCode 에이전트에게 실기 테스트를 맡기려면 스킬 폴더 `office-cli-test`를 `C:\CLI\office-cli\tools\office-cli-test`에 연결하거나 그 SKILL.md만 복사합니다. 에이전트는 `--agent`로 실행해 결과 JSON 1줄만 읽습니다.
 - 대상은 Office 16.0(2016/2019/2021/365)입니다. Word 2007의 `SaveAs2` 부재는 `SaveAs`로 대체하므로 Office 2007에서도 실기 테스트가 돕니다. 다만 PDF 추가 기능이 없으면 PDF 내보내기 항목은 `ENV-SKIP`으로 기록됩니다.

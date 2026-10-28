@@ -197,6 +197,24 @@ def list_open(kind: str) -> List[Dict[str, Any]]:
     return docs
 
 
+def open_untitled(kind: str, name: str) -> List[Dict[str, Any]]:
+    """열린 문서 중 저장한 적 없고 이름이 name인 문서 [{name, app, doc}].
+    list_open과 달리 이름으로 중복을 없애지 않습니다 (다른 Excel 창의 Book1 둘을 하나로 보지 않도록)."""
+    hits: List[Dict[str, Any]] = []
+    key = str(name).strip().lower()
+    for app in find_apps(kind):
+        try:
+            coll = _collection(app, kind)
+            for i in range(1, coll.Count + 1):
+                doc = coll(i)
+                full = str(getattr(doc, "FullName", "") or "")
+                if not os.path.isabs(full) and str(doc.Name).strip().lower() == key:
+                    hits.append({"name": str(doc.Name), "app": app, "doc": doc})
+        except Exception as e:
+            rt.debug(f"{APP_LABEL[kind]} 저장 안 된 문서 찾기 예외: {e}")
+    return hits
+
+
 def get_active(kind: str) -> Dict[str, Any]:
     """사용자가 보고 있는 문서. 포그라운드 앱의 활성 문서를 우선합니다."""
     for app in find_apps(kind):
@@ -237,18 +255,30 @@ def _sheet_key(name: str) -> str:
 def missing_sheet(name: str, names: List[str]) -> "rt.InputError":
     """쓰기 대상 시트가 없을 때의 오류. 새 시트는 만들지 않습니다.
     - 표기만 다른 시트(대소문자·공백·_-. 차이)가 하나면 [추천]으로 그 이름 (바로 재시도 가능)
-    - 비슷한 이름만 있으면 [후보]: 다른 시트에 잘못 써서 데이터를 덮어쓰지 않도록 사용자가 고름
-    - 비슷한 것이 없으면 기존 시트 목록과 --new-sheet 안내"""
+    - 그 밖에는 needs_user_decision: 새 시트를 만들지(또는 비슷한 기존 시트에 쓸지) 사용자가 정함.
+      message에는 사실만 적고 --new-sheet나 '만드세요' 같은 명령문을 넣지 않습니다
+      (경량 LLM이 message의 명령문이나 [후보]의 '새 시트' 항목을 그대로 골라 묻지 않고 만든 사례: 시나리오 10).
+      --new-sheet는 agent_directive에만, 사용자가 만들라고 답한 경우라는 조건과 함께 적습니다."""
     key = _sheet_key(name)
     same = [n for n in names if _sheet_key(n) == key]
-    hint = " 새 시트로 만들려면 같은 명령에 --new-sheet를 붙이세요."
     if len(same) == 1:
-        return rt.InputError(f"시트 '{name}'이(가) 없습니다.{hint} [추천] {same[0]}")
+        return rt.InputError(f"시트 '{name}'이(가) 없습니다. 표기(대소문자·공백·_-.)만 다른 기존 시트가 있습니다. [추천] {same[0]}",
+                             no_fallback=True)
+    shown = ", ".join(names[:15]) + (" ..." if len(names) > 15 else "")
     similar = same or rt.suggest(name, names)
     if similar:
-        return rt.ambiguous(f"시트 '{name}'이(가) 없습니다. 비슷한 기존 시트에 쓸지, --new-sheet로 새 시트를 만들지 "
-                            "사용자에게 확인하세요.", similar + ["(새 시트 만들기: --new-sheet)"])
-    return rt.not_found("시트", name, names, extra=hint)
+        return rt.UserDecisionError(
+            f"시트 '{name}'이(가) 없습니다 (있는 시트: {shown}). 새 시트를 만들지 않았고 아무 데도 쓰지 않았습니다. "
+            "이름이 비슷한 기존 시트에 쓸지, 새 시트를 만들지 사용자에게 물어보세요.",
+            "다시 실행하지 마세요. message를 사용자에게 그대로 보여 주고, [후보]의 기존 시트에 쓸지 "
+            f"새 시트 '{name}'을(를) 만들지 물어보세요. 사용자가 기존 시트를 고르면 --sheet를 그 이름으로 바꿔 실행하고, "
+            "사용자가 새 시트를 만들라고 답한 경우에만 같은 명령에 --new-sheet를 붙여 실행하세요.",
+            candidates=similar)
+    return rt.UserDecisionError(
+        f"시트 '{name}'이(가) 없습니다 (있는 시트: {shown}). 새 시트를 만들지 않았고 아무 데도 쓰지 않았습니다. "
+        "새 시트를 만들지 사용자에게 물어보세요.",
+        f"다시 실행하지 마세요. message를 사용자에게 그대로 보여 주고, 새 시트 '{name}'을(를) 만들지 물어보세요. "
+        "사용자가 만들라고 답한 경우에만 같은 명령에 --new-sheet를 붙여 실행하세요.")
 
 
 def shape_box(obj: Any) -> Dict[str, float]:
@@ -327,7 +357,8 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
             return None
         meta = {"app": kind, "name": name, "original_path": path, "snapshot_file": data_file,
                 "snapshot_format": fmt, "created_at": stamp, "by": f"{tool} {command}".strip(),
-                "doc_created": doc_identity(path)}
+                "doc_created": doc_identity(path),
+                "untitled": not path}   # 저장한 적 없는 문서: undo가 열린 문서 중 같은 이름의 '저장 안 된' 문서를 찾아 되돌림
         rt.safe_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
         _rotate_snapshots(kind, key)
         rt.debug(f"스냅샷 저장: {os.path.basename(data_file)}")

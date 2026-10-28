@@ -59,15 +59,11 @@ data/logs/errors.txt        # 실패한 실행의 오류 로그 (자동 생성, 
 
 ### 1-B) OpenCode 스킬 설치
 
-OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이름(`ml-kit`)과 같아야** 합니다. 이 폴더(`CLI/ml-kit/`)를 그대로 복사합니다.
+도구는 `C:\CLI\ml-kit`에 둡니다. `SKILL.md`의 명령 경로가 이 위치 기준으로 적혀 있습니다 (사내 PC 배치 안내: `docs/opencode/README.md`).
+OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이름(`ml-kit`)과 같아야** 합니다.
 
-| 범위 | 설치 위치 (Windows) |
-|---|---|
-| 전체 프로젝트 공용 (권장) | `C:\Users\<사용자>\.config\opencode\skills\ml-kit\` |
-| 특정 프로젝트 전용 | `<프로젝트>\.opencode\skills\ml-kit\` |
-
-1. 위 위치에 `ml-kit` 폴더째 복사합니다 (`SKILL.md`, `ml_*.py` 포함, `tests\`는 생략 가능).
-2. **권장**: 복사한 `SKILL.md` 안의 `<SKILL_DIR>` 를 실제 절대 경로(예: `C:\Users\hong\.config\opencode\skills\ml-kit`)로 모두 바꿔 저장합니다. 경량 LLM이 경로를 추론할 필요가 없어집니다.
+1. 스킬 폴더 `C:\Users\<사용자>\.config\opencode\skills\ml-kit\`를 `C:\CLI\ml-kit`에 연결(`mklink /J`)하거나, 그 폴더에 `SKILL.md`만 복사합니다.
+2. 도구를 다른 위치에 두면 `SKILL.md` 안의 `C:\CLI\ml-kit`을 그 경로로 모두 바꿉니다.
 3. 권한을 제한하는 경우 `opencode.json` 에 `"permission": {"skill": {"ml-kit": "allow"}}` 를 추가합니다.
 4. OpenCode에서 에이전트가 `skill({ name: "ml-kit" })` 로 스킬을 불러오는지 확인합니다.
 
@@ -218,10 +214,11 @@ python ml_train.py -f "공정.xlsx" -x "반응온도,촉매비율,수분함량" 
 | `--version` | `-v` | 선택 | 버전 폴더 수동 지정 (미지정 시 `v1`, `v2`, ... 자동 채번). 이미 있는 버전이면 `STOP_RETRY` + `[추천] --version v<다음>` |
 | `--overwrite` | - | 선택 | `--version` 폴더가 이미 있을 때 교체 (사용자 확인 후에만). 새 버전이 원장에 기록될 때까지 기존 폴더를 `.bak_vX`로 보관했다가 실패하면 되돌림 |
 | `--encoding` | - | 선택 | 산출물 CSV 저장 인코딩 (기본값: Windows Excel 호환 `cp949`) |
-| `--task` | - | 선택 | 학습 유형 `regression`(기본값) / `classification` |
+| `--task` | - | 선택 | 학습 유형 `regression`(기본값) / `classification`. `--best`와 함께 쓰면 그 유형의 최고 버전만 |
 | `--positive-class` | - | 선택 | 이진 분류 양성 클래스. 지정 시 판정 기준 확률 자동 조정 |
 | `--seed` | - | 선택 | 교차검증 난수 시드 (기본값: 42) |
 | `--history` | - | 선택 | 누적 실험 원장 조회 (요약 표는 stderr, 버전별 요약 JSON은 stdout) |
+| `--best` | - | 선택 | 최고 버전 만들기 (2.4.0, 아래 8) 참고). `-f`만 필요. `-x`, `-y`, `--eval`, `--dtypes`, `--version`, `--positive-class`는 무시 |
 
 ### 7) 실행 예시
 
@@ -255,6 +252,38 @@ python ml_train.py \
   -y "압축압력(bar),촉매비율(wt%),인장강도(MPa),생산효율(%)" \
   --tag "4대타겟_독립경쟁"
 ```
+
+### 8) 최고 버전 (`--best`, 2.4.0)
+
+실제 사용에서 경량 LLM이 타겟을 하나씩, 조건을 바꿔 가며 학습해 v1~v7이 타겟별로 흩어졌습니다. 사용자는 항상 모든 타겟이 들어간
+보고서 1개를 원하고, LLM이 타겟·버전을 고르기를 원하지 않습니다. `--best`는 이 정리를 도구가 합니다.
+
+```bat
+python ml_train.py -f sample.xlsx --best
+python ml_train.py -f sample.xlsx --best --task classification
+```
+
+1. 원장(`history.jsonl`)에서 타겟마다 검증 점수(회귀 `val_r2`, 분류 `val_f1_macro`)가 가장 높은 기록을 고릅니다. 같은 점수면 나중 기록.
+   버전 폴더가 없거나 불완전한(`leaderboard.json`, `model_dataset.csv`, `model_<타겟>.json` 없음) 기록은 제외합니다.
+2. 그 기록의 학습 조건(피처, `--eval` 수식, `--dtypes`, 양성 클래스)으로 **현재 데이터 파일**에서 모든 타겟을 다시 학습해
+   새 버전 1개(`vN`, 태그 `best`)에 담습니다. 모델 종류는 평소처럼 5개 모델 경쟁으로 다시 고릅니다.
+   타겟마다 피처가 달라도 됩니다: `model_<타겟>.json`의 `features_required`, `feature_schema`, `derived_evals`가 타겟별이므로
+   `ml_predict.py -m vN`은 모든 타겟의 피처를 합친 입력으로 그대로 예측합니다.
+3. 작업 유형마다 버전 1개입니다. 이력에 회귀와 분류가 모두 있으면 최고 버전도 2개가 됩니다 (`best_versions`).
+4. 헤더/단위/데이터 행은 주지 않으면 그 유형의 마지막 기록 값을 씁니다.
+5. 이력이 없으면 `STOP_RETRY`(먼저 학습). 점수가 내려가도 경고하지 않고, 타겟별 원래 점수와 이번 점수를 함께 보고합니다.
+
+결과 JSON에는 평소 학습 키(첫 번째 버전 기준)에 더해 다음이 들어갑니다.
+
+| 키 | 의미 |
+|---|---|
+| `made_best` | 이번 실행에서 다시 학습했는지 (`--best`는 항상 `true`) |
+| `best_version`, `best_version_dir` | 최고 버전 (유형이 2개면 회귀 쪽) |
+| `best_versions` | `[{task, version, version_dir, targets, mean_val_score, made}]` |
+| `best_targets` | `{타겟: {task, source_version, source_score, new_score}}` 학습 조건 출처 버전, 그때 점수, 이번 점수 |
+
+원장 기록에는 `best: true`, `best_source: {타겟: {"version", "score"[, "selected_version"]}}`, `target_recipes`(타겟별 조건)가 추가됩니다.
+이전 최고 버전의 조건이 다시 뽑히면 `best_source`는 원래 버전을 가리킵니다 (`selected_version`에 실제로 고른 최고 버전).
 
 ---
 
@@ -341,7 +370,10 @@ python ml_predict.py \
 
 | 옵션 | 설명 |
 |---|---|
-| `--model`, `-m` | 버전 폴더 (학습 결과의 `version_dir`). **권장** |
+| `--file`, `-f` | 데이터 파일 (2.4.0, **권장**). 이력의 모든 타겟을 담은 최고 버전(`ml_train.py --best`와 같음)으로 작업 유형마다 보고서 1개 |
+| `--task` | `-f`와 함께: 이 작업 유형의 보고서만 |
+| `--header-row`, `--unit-row`, `--data-row` | `-f`와 함께: 최고 버전을 새로 학습할 때 표 구조 (생략 시 이력 값) |
+| `--model`, `-m` | 버전 폴더 (학습 결과의 `version_dir`). 그 버전 그대로 |
 | `--data-dir`, `-d` (`--history`, `-H`) | 데이터 폴더. `-v`가 없으면 가장 최근 학습과 같은 task·타겟 조합 중 최고 점수 버전 |
 | `--version`, `-v` | `-d`와 함께 쓸 버전 (`v2` 또는 `2`) |
 | `--target`, `-t` | 문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 `all` = 전체) |
@@ -350,9 +382,19 @@ python ml_predict.py \
 | `--overwrite` | 같은 이름의 보고서가 있으면 덮어쓰기 (사용자 확인 후에만) |
 
 ```bat
+python ml_report.py -f sample.xlsx
 python ml_report.py -m sample_ml_data\v3
 python ml_report.py -d sample_ml_data --slots slots.json
 ```
+
+`-f` 동작 (2.4.0): 작업 유형마다 마지막 최고 버전(`best: true` 기록)을 확인해 아래가 모두 맞으면 그대로 쓰고(`made_best: false`),
+아니면 먼저 최고 버전을 새로 만듭니다(`made_best: true`, 같은 프로세스 안에서 학습하므로 몇 분 걸릴 수 있음).
+- 그 최고 버전 뒤에 같은 유형의 다른 학습 기록이 없다.
+- 버전 폴더가 온전하다.
+- 데이터 파일 내용이 그때와 같다 (원장 `data_fingerprint`의 SHA-256, 없으면 크기와 수정 시각).
+
+최고 버전 보고서에는 표지 "학습 방식", 요약의 "타겟별 학습 조건 출처" 표, 타겟마다 "학습 조건 출처: vK (당시 점수 x.xxxx), 이번 점수 y.yyyy"와
+입력 피처, 버전 이력에 "버전별 타겟 점수" 표와 추이 그림이 추가됩니다. 입력 피처 구성과 예측 필수 입력은 모든 타겟의 합집합입니다.
 2.2.0 이전에 학습한 버전(`oof_<타겟>.csv` 없음)은 다시 학습해야 보고서를 만들 수 있습니다 (`STOP_RETRY`로 안내).
 
 ### 2) 문서 구성
@@ -446,6 +488,9 @@ python ml_report.py -d sample_ml_data --slots slots.json
   "correlation_matrix": { ... }
 }
 ```
+
+2.4.0부터 기록에 `data_fingerprint`(`size`, `mtime`, `sha256`)와, 지정했을 때 `dtypes`, `positive_class`가 추가됩니다 (`--best`가 학습 조건을 다시 쓰기 위함).
+`--best` 기록에는 `best: true`, `best_source`, `target_recipes`가 더 있습니다. `--history`의 `records`에서는 `best: true`로 표시됩니다.
 
 ---
 
@@ -605,7 +650,12 @@ python ml_report.py -d sample_ml_data --slots slots.json
   "agent_directive": "VERIFIED: ML result report for v3 (2 target(s)) saved to 'ML결과보고서_sample_v3.docx'. Overall verdict=적합. Next step: report the file path to the user."
 }
 ```
-`best_version`은 문서에 사용한 버전입니다 (`version`과 같음). 2.1 이전의 타겟별 키(`target`, `metrics`, `slots_filled`, `reports`, `target_count`)는 문서가 하나로 합쳐지면서 2.2.0에서 없어졌습니다.
+`best_version`은 문서에 사용한 버전입니다 (`version`과 같음).
+
+`-f`(2.4.0)로 만들면 위 키는 첫 번째 보고서(회귀가 있으면 회귀) 기준이고, 다음 키가 추가됩니다:
+`made_best`, `best_version_dir`(예측에 쓸 폴더), `best_versions`, `best_targets`(`--best`와 같은 형식), `report_count`,
+`best_reports`(`[{report_file, version, task, targets, overall_verdict, verdicts}]`, 회귀와 분류가 섞이면 2개), `next_commands`(최고 버전 예측 명령).
+`agent_directive`에 `ml_predict.py -m <best_version_dir>`이 들어갑니다. 2.1 이전의 타겟별 키(`target`, `metrics`, `slots_filled`, `reports`, `target_count`)는 문서가 하나로 합쳐지면서 2.2.0에서 없어졌습니다.
 
 보고서 서식 템플릿 (2.3.1): python-docx의 `templates/default-docx-template` 폴더(XML 파일)를 먼저 쓰고, 없으면 `default.docx`를 씁니다.
 폴더에서 일부 파일이 빠져 있으면(회사 PC: `docProps/thumbnail.jpeg`) 그 파일을 가리키는 관계만 빼고 엽니다 (2.3.2).
