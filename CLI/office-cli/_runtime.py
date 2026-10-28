@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.3.0"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.4.0"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -119,8 +119,9 @@ class OfficeBusyError(RuntimeError):
     """Office가 편집 중이거나 대화상자가 떠 있어 응답하지 않음 (STOP_RETRY, 사용자 조치 필요)."""
 
 
-_STOP_RETRY_ERRORS = (InputError, OfficeBusyError, ValueError, KeyError, FileNotFoundError,
-                      NotADirectoryError, IsADirectoryError, PermissionError)
+# R5: 일반 ValueError/KeyError는 코드 버그일 수 있어 ERROR:(내부 오류, traceback 기록). 입력 문제는 경계에서 InputError로 바꿉니다.
+_STOP_RETRY_ERRORS = (InputError, OfficeBusyError, FileNotFoundError, NotADirectoryError, IsADirectoryError,
+                      PermissionError)
 
 # COM HRESULT -> 사용자 안내 (pywintypes.com_error 해석용)
 _COM_HINTS = {
@@ -198,11 +199,45 @@ def ok(tool: str, command: str, preview: str, directive: str = "", **fields: Any
     elif not directive.startswith("VERIFIED:"):
         directive = "VERIFIED: " + directive
     payload["agent_directive"] = directive
+    _attach_recovered(payload)
+    return payload
+
+
+RECOVERED: List[str] = []
+
+
+def note_recovered(msg: str) -> None:
+    """JIT 복구로 결과가 달라진 일을 알립니다 (R3): stderr [WARN] + 응답의 recovered 목록."""
+    text = str(msg)[:200]
+    log("WARN", text)
+    if text not in RECOVERED:
+        RECOVERED.append(text)
+
+
+def _attach_recovered(payload: Dict[str, Any]) -> None:
+    if RECOVERED:
+        payload["recovered"] = list(RECOVERED)
+
+
+def ok_unverified(tool: str, command: str, preview: str, unverified: List[str], **fields: Any) -> Dict[str, Any]:
+    """실행은 됐지만 결과를 다시 읽어 확인하지 못한 성공 응답 (R1). LLM은 재시도하지 않고 unverified를 그대로 알립니다."""
+    payload: Dict[str, Any] = {"status": "ok", "tool": tool, "command": command, "preview": preview}
+    payload.update(fields)
+    payload.update(verified=False, unverified=list(unverified))
+    payload["agent_directive"] = ("UNVERIFIED: 실행했지만 확인하지 못했습니다: " + "; ".join(unverified)
+                                  + ". 다시 실행하지 말고 사용자에게 그대로 알리세요.")
+    _attach_recovered(payload)
     return payload
 
 
 def error_payload(exc: BaseException, tool: str = "", command: str = "") -> Dict[str, Any]:
     """예외를 표준 오류 응답으로 바꿉니다."""
+    base = _error_payload(exc, tool, command)
+    _attach_recovered(base)
+    return base
+
+
+def _error_payload(exc: BaseException, tool: str = "", command: str = "") -> Dict[str, Any]:
     base: Dict[str, Any] = {"status": "error", "tool": tool, "command": command}
     if isinstance(exc, KeyboardInterrupt):
         base.update(error_type="interrupted",
@@ -336,6 +371,12 @@ class JsonArgumentParser(argparse.ArgumentParser):
         CURRENT_ARGV = [str(a) for a in args] if args is not None else sys.argv[1:]
         return super().parse_args(args, namespace)
 
+    def print_help(self, file=None) -> None:  # type: ignore[override]
+        """R7: 도움말 텍스트는 stderr로, stdout에는 JSON 1줄 (argparse가 이어서 exit 0)."""
+        super().print_help(sys.stderr)
+        emit_json({"status": "ok", "tool": self.tool_name, "command": "help", "verified": True,
+                   "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 사용하세요."})
+
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
         payload = {
@@ -461,11 +502,12 @@ def resolve_input_path(path: str, kind: str = "입력 파일") -> str:
     raise not_found(kind, os.path.basename(raw), names, extra=f" (찾은 위치: {', '.join(candidates)})")
 
 
-def resolve_output_path(path: Optional[str], default_stem: str, ext: str) -> str:
+def resolve_output_path(path: Optional[str], default_stem: str, ext: str, overwrite: bool = False) -> str:
     """출력 파일 경로를 정합니다.
     - 생략하면 작업 폴더에 '<default_stem>_<시각><ext>'로 만듭니다.
     - 파일명만 주면 data 폴더 아래에 만듭니다.
     - 확장자가 없거나 다르면 ext로 맞춥니다.
+    - 그 파일이 이미 있으면 덮어쓰지 않고 시각을 붙인 새 이름으로 바꿉니다 (R4, recovered로 알림). overwrite=True면 그대로.
     """
     ext = ext if ext.startswith(".") else "." + ext
     if not path:
@@ -479,6 +521,10 @@ def resolve_output_path(path: Optional[str], default_stem: str, ext: str) -> str
         raw = os.path.join(get_data_dir(), raw)
     raw = os.path.abspath(raw)
     os.makedirs(os.path.dirname(raw), exist_ok=True)
+    if os.path.exists(raw) and not overwrite:
+        alt = _timestamped(raw)
+        note_recovered(f"{os.path.basename(raw)} 이미 있음 -> 덮어쓰지 않고 {os.path.basename(alt)}로 저장")
+        raw = alt
     return raw
 
 
@@ -513,6 +559,11 @@ def read_csv_rows(path: str) -> List[List[str]]:
     return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter)]
 
 
+def _transient_fs_error(e: OSError) -> bool:
+    """잠깐 기다리면 풀릴 수 있는 오류: 접근 거부, 공유 위반, 잠금 위반 (winerror 5/32/33)."""
+    return isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32, 33)
+
+
 def retry_fs(fn: Callable[[], Any], attempts: int = 6, delay: float = 0.5) -> Any:
     """백신/동기화 프로그램의 일시적 잠금에 대비해 파일 작업을 재시도합니다.
     한도를 넘기면 오류 로그의 '복구 시도:' 줄에 남기고 마지막 예외를 올립니다."""
@@ -520,7 +571,9 @@ def retry_fs(fn: Callable[[], Any], attempts: int = 6, delay: float = 0.5) -> An
     for i in range(attempts):
         try:
             return fn()
-        except (PermissionError, OSError) as e:
+        except OSError as e:
+            if not _transient_fs_error(e):
+                raise                       # 없는 파일, 디스크 가득 참 등은 기다려도 소용없음
             last = e
             time.sleep(delay * (i + 1))
     assert last is not None
@@ -538,21 +591,31 @@ def safe_write_text(path: str, text: str, encoding: str = "utf-8") -> None:
     retry_fs(lambda: os.replace(tmp, path))
 
 
+_STAMP_RE = re.compile(r"_\d{8}_\d{6}$")
+
+
 def _timestamped(path: str) -> str:
+    """'<이름>_<YYYYMMDD_HHMMSS><확장자>'. 이미 시각이 붙은 이름이면 바꿔 붙이고, 같은 이름이 있으면 번호를 더합니다."""
     base, ext = os.path.splitext(path)
-    return f"{base}_{timestamp()}{ext}"
+    base = _STAMP_RE.sub("", base)
+    cand = f"{base}_{timestamp()}{ext}"
+    n = 2
+    while os.path.exists(cand):
+        cand = f"{base}_{timestamp()}_{n}{ext}"
+        n += 1
+    return cand
 
 
 def save_with_lock_fallback(path: str, writer: Callable[[str], None], what: str = "파일") -> str:
-    """writer(path)로 저장합니다. 파일이 Excel/Word 등에서 열려 있어 잠겨 있으면
-    시각을 붙인 새 이름으로 저장하고 그 경로를 반환합니다."""
+    """writer(path)로 저장합니다 (R4). 잠겨 있으면 retry_fs로 기다려 보고, 그래도 Excel/Word 등에서 열려 있으면
+    시각을 붙인 새 이름으로 저장하고 recovered로 알립니다. 실제 저장 경로를 반환합니다."""
     try:
-        writer(path)
+        retry_fs(lambda: writer(path), attempts=3)
         return path
     except PermissionError:
         alt = _timestamped(path)
         writer(alt)
-        log("WARN", f"{what}이(가) 다른 프로그램에서 열려 있어 새 이름으로 저장했습니다: {os.path.basename(alt)}")
+        note_recovered(f"{os.path.basename(path)} 잠김({what}) -> {os.path.basename(alt)}로 저장")
         return alt
 
 
@@ -608,13 +671,30 @@ def find_name(name: str, candidates: Iterable[str]) -> Optional[str]:
     return None
 
 
-def not_found(kind: str, name: str, candidates: Iterable[str], extra: str = "") -> InputError:
-    """'찾을 수 없음' InputError. 비슷한 이름이 있으면 [추천]을, 없으면 전체 목록 일부를 붙입니다."""
+def _same_name_key(s: Any) -> str:
+    return re.sub(r"[\s_\-]+", "", str(s)).casefold()
+
+
+def not_found(kind: str, name: str, candidates: Iterable[str], extra: str = "", vocab: bool = False) -> InputError:
+    """'찾을 수 없음' InputError (R8).
+    - 표기만 다른(대소문자·공백·_-) 이름이 하나뿐이면 [추천]: 뜻이 같아 LLM이 바로 1회 재시도해도 됩니다.
+    - 부분·유사 일치는 뜻이 다를 수 있어(2024 -> 2024_1분기, 견적서.pdf -> 견적서_구버전.pdf) [후보]: 사용자가 고릅니다.
+    - vocab=True(도구가 정한 옵션 값: 색 이름, 테마 등): 오타로 보이는 가까운 값 하나도 [추천] (사용자 데이터가 아니라 뜻이 바뀌지 않음).
+    - 비슷한 것도 없으면 사용 가능한 이름 일부."""
     cands = [str(c) for c in candidates]
-    hints = suggest(name, cands)
+    key = _same_name_key(name)
+    same = [c for c in cands if key and _same_name_key(c) == key]
+    if vocab and not same:
+        close = difflib.get_close_matches(key, [_same_name_key(c) for c in cands], n=2, cutoff=0.75)
+        if len(close) == 1:
+            same = [c for c in cands if _same_name_key(c) == close[0]][:1]
+    if len(same) == 1:
+        return InputError(f"{kind} '{name}'을(를) 찾을 수 없습니다.{extra} 표기만 다른 이름이 있습니다. [추천] {same[0]}")
+    hints = same or suggest(name, cands)
     if hints:
-        tail = f" [추천] {hints[0]}" + (f" (그 외 후보: {', '.join(hints[1:])})" if len(hints) > 1 else "")
-    elif cands:
+        return ambiguous(f"{kind} '{name}'을(를) 찾을 수 없습니다.{extra} 비슷한 이름이 있지만 같은 것인지 도구가 정할 수 없습니다. "
+                         "사용자에게 고르게 하세요.", hints)
+    if cands:
         shown = ", ".join(cands[:15]) + (" ..." if len(cands) > 15 else "")
         tail = f" 사용 가능한 {kind}: {shown}"
     else:

@@ -20,7 +20,7 @@
 ## 3. 스킬을 먼저 쓴다
 | 요청 | 스킬 |
 |---|---|
-| Excel, Word, PowerPoint, Outlook 작업 / PDF, HWP, EML, Office 파일 읽기와 검색 | `office-cli` |
+| Excel, Word, PowerPoint, Outlook 작업 / PDF, HWP, Office 파일 읽기와 검색 / 워드 목차·메모·변경 추적, PPT 노트 | `office-cli` |
 | 표(Excel/CSV) 데이터로 예측 모델 학습, 새 데이터 예측, ML 결과 보고서 | `ml-kit` |
 
 1. 위 작업은 스킬 명령으로만 한다. openpyxl, python-docx, win32com 등으로 파이썬 코드를 직접 짜서 하지 않는다.

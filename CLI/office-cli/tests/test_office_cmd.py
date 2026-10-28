@@ -341,3 +341,43 @@ def test_windows_reports_office_version_and_missing_pdf(monkeypatch, capsys):
     code, out = run(capsys, "windows")
     assert code == 0 and out["office"]["Word"]["pdf_export"] is False
     assert "Office 12.0" in out["preview"] and "PDF 내보내기 불가: Word" in out["preview"]
+
+
+# --- 점검 반영: 되돌릴 지점이 없는 직전 작업, 지점 뒤에 다시 저장된 파일 ---
+
+def _undo_env(tmp_path, monkeypatch):
+    fake, _ = make_win32com()
+    monkeypatch.setattr(off, "win32com", fake)
+    monkeypatch.setattr(off, "pythoncom", None)
+    monkeypatch.setattr(off, "match_open", lambda kind, target, docs=None: None)
+    orig = tmp_path / "a.xlsx"
+    orig.write_bytes(b"current")
+    return orig
+
+
+def test_undo_stops_at_write_without_snapshot(tmp_path, monkeypatch, capsys):
+    orig = _undo_env(tmp_path, monkeypatch)
+    off.save_snapshot("excel", FakeWorkbook(str(orig)), "excel", "write")          # 월요일의 지점
+    off.save_barrier("excel", FakeWorkbook(str(orig)), "스냅샷 실패", "excel", "write")  # 금요일: 지점 없음
+    code, out = run(capsys, "undo")
+    assert code == 1 and out["error_type"] == "needs_user_decision" and orig.read_bytes() == b"current"
+    code, out = run(capsys, "undo", "--list")
+    assert out["snapshots"][0]["undo_available"] is False and "undo_available" not in out["snapshots"][1]
+    code, out = run(capsys, "undo", "--pick", "1")
+    assert code == 1 and orig.read_bytes() == b"current"
+    code, out = run(capsys, "undo", "--pick", "2")                                 # 사용자가 고른 앞 지점
+    assert code == 0 and orig.read_bytes() == b"snapshot-of-a.xlsx"
+
+
+def test_undo_refuses_when_file_saved_after_snapshot(tmp_path, monkeypatch, capsys):
+    orig = _undo_env(tmp_path, monkeypatch)
+    off.save_snapshot("excel", FakeWorkbook(str(orig)), "excel", "write")
+    later = os.path.getmtime(orig) + 3600
+    os.utime(orig, (later, later))                                               # 한 시간 뒤 사용자가 저장
+    meta = off.list_snapshots()[0]
+    assert meta["created_ts"] < later
+    code, out = run(capsys, "undo")
+    assert code == 1 and out["error_type"] == "needs_user_decision" and "--overwrite" in out["agent_directive"]
+    assert orig.read_bytes() == b"current"
+    code, out = run(capsys, "undo", "--overwrite")
+    assert code == 0 and orig.read_bytes() == b"snapshot-of-a.xlsx"

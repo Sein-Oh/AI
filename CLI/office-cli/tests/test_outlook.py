@@ -108,7 +108,7 @@ def test_attach_resolves_data_dir_and_missing_is_suggested(capsys, monkeypatch):
     code, out = run(capsys, monkeypatch, mail, "new", "--attach", "보고서_최종.pdf")
     assert code == 0 and mail.Attachments.added == [os.path.join(data, "보고서_최종.pdf")]
     code, out = run(capsys, monkeypatch, Mail(), "new", "--attach", "보고서_최종.docx")
-    assert code == 1 and "[추천] 보고서_최종.pdf" in out["message"]
+    assert code == 1 and "[후보] 보고서_최종.pdf" in out["message"] and "[추천]" not in out["message"]   # 다른 파일을 첨부해 발송하지 않게
 
 
 def test_search_filter_has_single_prefix_and_grouping():
@@ -173,4 +173,5 @@ def test_resolve_folder_paths_and_suggestion():
     assert outlook.resolve_folder(ns, "받은 편지함 > 프로젝트").Name == "프로젝트"
     with pytest.raises(rt.InputError) as ei:
         outlook.resolve_folder(ns, "받은 편지함\\프로젝")
-    assert "[추천] 프로젝트" in str(ei.value)
+    assert "[후보] 받은 편지함\\프로젝트" in str(ei.value) and "[추천]" not in str(ei.value)   # 후보도 전체 경로
+    assert outlook.resolve_folder(ns, "inbox\\프로젝트").Name == "프로젝트"                   # 기본 폴더 별칭으로 시작

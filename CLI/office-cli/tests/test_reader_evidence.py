@@ -493,10 +493,8 @@ def test_search_truncated_offers_full_save(docs):
     assert "--save" in out["next_commands"][-1]["command"]
 
 
-def test_old_cache_is_normalized_and_reported_stale(tmp_path, isolated_dirs):
-    """parser_version 1 캐시(쪽/장절 키 없음)도 검색되고, stale로 보고되며 index --all로 갱신됨."""
-    src = tmp_path / "old.txt"
-    src.write_text("옛날 단락 내용", encoding="utf-8")
+def _old_cache(src, text="옛날 단락 내용"):
+    src.write_text(text, encoding="utf-8")
     st = os.stat(src)
     path = os.path.abspath(str(src))
     old = {"file": path, "type": "pdf", "mtime": st.st_mtime, "size": st.st_size, "parser_version": 1,
@@ -507,15 +505,32 @@ def test_old_cache_is_normalized_and_reported_stale(tmp_path, isolated_dirs):
         json.dump(old, f, ensure_ascii=False)
     with open(reader._index_path(), "w", encoding="utf-8") as f:
         json.dump({path: {"type": "txt", "units": 2, "parsed_at": "20261001_000000"}}, f, ensure_ascii=False)
+    return path
+
+
+def test_old_cache_is_normalized_and_marked_stale_when_original_is_gone(tmp_path, isolated_dirs):
+    """parser_version 1 캐시(쪽/장절 키 없음)도 검색되고, 원본이 없어 다시 읽을 수 없으면 stale로 표시하고 UNVERIFIED."""
+    src = tmp_path / "old.txt"
+    _old_cache(src)
+    os.remove(src)
     code, out = run("search", "--query", "검증")
     assert code == 0 and out["total_matches"] == 2 and out["stale_cache_count"] == 1
     assert out["matches"][0]["page"] == 3 and out["matches"][0]["page_source"] == "pdf"
     assert out["matches"][1]["section"] == ["제목"] and out["matches"][1]["page"] == 2
-    assert any(c["command"].endswith("index --all") for c in out["next_commands"])
+    assert out["matches"][0]["stale"] is True and out["agent_directive"].startswith("UNVERIFIED:")
     code, out = run("list")
-    assert out["documents"][0]["stale"] is True and out["documents"][0]["cache"] == "stale"
-    code, out = run("index", "--all")
-    assert out["updated"] == 1
+    assert out["documents"][0]["stale"] is True and out["documents"][0]["missing"] is True
+
+
+def test_stale_cache_is_reread_during_search(tmp_path, isolated_dirs):
+    """원본이 있는 낡은 캐시는 검색할 때 그 자리에서 다시 읽어 새 내용으로 찾습니다 (recovered로 알림)."""
+    src = tmp_path / "old.txt"
+    _old_cache(src, "보증 기간 3년. 새 내용의 검증 문장")
+    code, out = run("search", "--query", "검증")
+    assert code == 0 and out["total_matches"] == 1 and "stale_cache_count" not in out
+    assert out["matches"][0]["snippet"].startswith("보증 기간 3년") and "stale" not in out["matches"][0]
+    assert out["recovered"] == ["원본이 바뀐 캐시 1개 -> 다시 읽고 검색"]
+    assert out["agent_directive"].startswith("VERIFIED:")
     code, out = run("list")
     assert out["documents"][0]["stale"] is False and out["stale_count"] == 0
 
@@ -552,3 +567,183 @@ def test_eml_is_unsupported_like_any_unknown_type(tmp_path):
         assert code == 1 and out["agent_directive"].startswith("STOP_RETRY:")
         assert "지원하지 않는 형식입니다: .eml" in out["message"] and ".pdf" in out["message"]
     assert not hasattr(reader, "parse_eml") and ".eml" not in reader.SUPPORTED
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영: PDF 머리글/바닥글, 2단 편집
+# ---------------------------------------------------------------------------
+
+def make_pdf_at(path, pages):
+    """pages: [[(x, y, 글, 크기)], ...] 위치를 정해 글을 넣습니다 (A4 595x842)."""
+    import pymupdf
+    doc = pymupdf.open()
+    for items in pages:
+        page = doc.new_page()
+        for x, y, text, size in items:
+            page.insert_text((x, y), text, fontname="korea", fontsize=size)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_pdf_repeated_header_and_page_number_do_not_break_sections(tmp_path):
+    p = tmp_path / "hdr.pdf"
+    head = (72, 40, "제2장 시스템 요구사항", 9)
+    make_pdf_at(p, [
+        [head, (72, 120, "2.1 전기 요구사항", 14), (72, 150, "2.1.1 정격", 12), (72, 180, "정격 전압은 220 V로 한다.", 10),
+         (290, 815, "- 1 -", 9)],
+        [head, (72, 120, "정격 전류는 10 A 이하로 한다.", 10), (72, 150, "10.5 kV 이하 기기는 별도로 시험한다.", 10),
+         (290, 815, "- 2 -", 9)],
+        [head, (72, 120, "2.2 기계 요구사항", 14), (72, 150, "기계 본문입니다.", 10), (290, 815, "- 3 -", 9)],
+    ])
+    units, meta = reader.parse_pdf(str(p))
+    assert meta["header_footer_removed"] == 6
+    assert not [u for u in units if "시스템 요구사항" in u["text"] or u["text"].startswith("- ")]
+    cur = by_text(units, "정격 전류는")
+    assert cur["section"] == ["2.1 전기 요구사항", "2.1.1 정격"] and cur["page"] == 2      # 머리글이 장절을 끊지 않음
+    kv = by_text(units, "10.5 kV")
+    assert kv["kind"] != "heading" and kv["section"] == ["2.1 전기 요구사항", "2.1.1 정격"]   # 수치 줄은 제목 아님
+    assert by_text(units, "기계 본문")["section"] == ["2.2 기계 요구사항"]
+
+
+def test_pdf_two_columns_read_left_column_first(tmp_path):
+    p = tmp_path / "col.pdf"
+    make_pdf_at(p, [[
+        (72, 80, "보고서 제목 전체 폭으로 길게 쓴 줄입니다 가나다라마바사아자차카타파하", 12),
+        (60, 130, "1. 왼쪽 장", 13), (60, 160, "왼쪽 본문 첫째 문장이다.", 10), (60, 190, "왼쪽 본문 둘째 문장이다.", 10),
+        (320, 130, "3. 오른쪽 장", 13), (320, 160, "오른쪽 본문 첫째 문장이다.", 10), (320, 190, "오른쪽 본문 둘째 문장이다.", 10),
+    ]])
+    units, _ = reader.parse_pdf(str(p))
+    texts = [u["text"] for u in units]
+    assert texts.index("1. 왼쪽 장") < texts.index("왼쪽 본문 둘째 문장이다.") < texts.index("3. 오른쪽 장")
+    assert by_text(units, "왼쪽 본문 첫째")["section"] == ["1. 왼쪽 장"]
+    assert by_text(units, "오른쪽 본문 둘째")["section"] == ["3. 오른쪽 장"]
+
+
+@pytest.mark.parametrize("line", ["10.5 kV 이하", "1.5 kV 1분", "3 mm 이상", "2 개월", "1.2 설계 기준 ........ 12",
+                                  "1. 사업 개요 ······ 3", "2.1 범위\t5"])
+def test_measurements_and_toc_lines_are_not_headings(line):
+    assert reader.heading_title(reader.classify_number(line), line, strong=True) is None
+
+
+@pytest.mark.parametrize("line", ["1. A형 시험", "2.1 개요", "3. 분석 방법", "1 일반 사항"])
+def test_real_headings_still_detected(line):
+    assert reader.heading_title(reader.classify_number(line), line, strong=True) == line
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영: DOCX 변경 추적·콘텐츠 컨트롤·여러 쪽 표·빈 번호 단락
+# ---------------------------------------------------------------------------
+
+def test_docx_tracked_insertions_content_controls_and_table_row_pages(tmp_path):
+    from docx.oxml import parse_xml
+    d = new_docx()
+    p = d.add_paragraph("납기는 ")
+    p._p.append(parse_xml(f'<w:ins {W_NS} w:id="1" w:author="a"><w:r><w:t>30일 이내</w:t></w:r></w:ins>'))
+    p._p.append(parse_xml(f'<w:del {W_NS} w:id="2" w:author="a"><w:r><w:delText>60일</w:delText></w:r></w:del>'))
+    body = d.element.body
+    body.insert(len(body) - 1, parse_xml(
+        f'<w:sdt {W_NS}><w:sdtContent><w:p><w:r><w:t>콘텐츠 컨트롤 안의 보증 기간 조항</w:t></w:r></w:p></w:sdtContent></w:sdt>'))
+    t = d.add_table(rows=4, cols=2)
+    for i, row in enumerate([["번호", "요구사항"], ["R-1", "첫째"], ["R-2", "둘째"], ["R-3", "셋째"]]):
+        for j, v in enumerate(row):
+            t.cell(i, j).text = v
+    # R-3 행 앞에서 쪽이 바뀜 (Word가 저장한 쪽 경계)
+    t.cell(3, 0).paragraphs[0].runs[0]._r.insert(0, parse_xml(f'<w:lastRenderedPageBreak {W_NS}/>'))
+    path = tmp_path / "trk.docx"
+    d.save(str(path))
+    units, _ = reader.parse_docx(str(path))
+    assert by_text(units, "납기는")["text"] == "납기는 30일 이내"                   # 지운 글(60일)은 없음
+    assert by_text(units, "콘텐츠 컨트롤 안의")
+    rows = {u["number"]: u for u in units if u["kind"] == "row"}
+    assert rows["R-1"]["page"] == 1 and rows["R-3"]["page"] == 2
+
+
+def test_docx_empty_numbered_paragraph_keeps_counting(tmp_path):
+    d = new_docx()
+    add_numbering(d)
+    numbered(d, "일반 사항", 0)          # 3.
+    numbered(d, "", 0)                   # 4. (빈 줄이어도 Word는 번호를 매김)
+    numbered(d, "시험 방법", 0)          # 5.
+    path = tmp_path / "num.docx"
+    d.save(str(path))
+    units, _ = reader.parse_docx(str(path))
+    assert by_text(units, "5. 시험 방법")
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영: 검색 문법, 검색 범위, 색인 복구
+# ---------------------------------------------------------------------------
+
+def test_parse_query_quotes_case_insensitive_operators():
+    assert reader.parse_query('"설계 기준" and 온도 OR 습도') == [["설계 기준", "온도"], ["습도"]]
+    assert reader.parse_query("A AND B or C D") == [["A", "B"], ["C D"]]
+    assert reader.parse_query('""') == []
+
+
+def test_matcher_ignores_spacing_and_empty_regex():
+    m = reader.build_matcher("설계기준", False, False)
+    assert m("본 설계 기준에 따른다") == ["설계기준"] and m("설계기\n준") == ["설계기준"]
+    assert reader.build_matcher('"설계 기준"', False, False)("설계기준을 따른다")
+    assert reader.build_matcher("a*", True, False)("xyz") is None
+    assert "**설계 기준**" in reader.make_snippet("본 설계 기준에 따른다", ["설계기준"], 20, False)
+
+
+def test_zero_hits_with_unindexed_files_is_unverified(tmp_path):
+    d = tmp_path / "d"
+    d.mkdir()
+    for i in range(4):
+        (d / f"f{i}.txt").write_text("하자 보수" if i == 3 else f"일반 문서 {i}", encoding="utf-8")
+    code, out = run("search", "--query", "하자", "--file", str(d), "--max-files", "2")
+    assert code == 0 and out["count"] == 0 and out["not_indexed_remaining"] == 2
+    assert out["agent_directive"].startswith("UNVERIFIED:") and "등록하지 못한 파일 2개" in out["agent_directive"]
+    assert out["verified"] is False
+
+
+def test_folder_search_reports_excluded_subfolders(tmp_path):
+    d = tmp_path / "d"
+    (d / "_보관").mkdir(parents=True)
+    (d / "a.txt").write_text("일반", encoding="utf-8")
+    (d / "_보관" / "b.txt").write_text("하자", encoding="utf-8")
+    code, out = run("search", "--query", "하자", "--file", str(d))
+    assert code == 0 and out["count"] == 0 and any("하위 폴더 1개" in g for g in out["not_searched"])
+
+
+def test_index_is_repaired_when_cache_exists_but_index_entry_is_missing(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("보증 기간 조항", encoding="utf-8")
+    run("index", "--file", str(f))
+    os.remove(reader._index_path())                      # 캐시는 있는데 색인만 없음 (저장 전 중단)
+    code, out = run("index", "--file", str(f))
+    assert code == 0 and out["unchanged"] == 1
+    code, out = run("search", "--query", "보증")
+    assert code == 0 and out["count"] == 1
+
+
+def test_index_keys_differing_only_in_case_are_merged(tmp_path):
+    a, b = str(tmp_path / "A.txt"), str(tmp_path / "A.txt").lower()
+    with open(reader._index_path(), "w", encoding="utf-8") as fp:
+        json.dump({a: {"parsed_at": "1"}, b: {"parsed_at": "2"}}, fp)
+    idx = reader.load_index()
+    if os.path.normcase(a) == os.path.normcase(b):          # Windows: 같은 파일 -> 최근 것 하나
+        assert list(idx) == [b]
+    else:
+        assert len(idx) == 2
+
+
+def test_hwp_text_pairs_surrogates_and_replaces_lone_ones():
+    rec = "\U00020BB7田".encode("utf-16-le") + b"\x00\xd8"        # 확장 한자 + 짝 없는 서로게이트
+    text = reader._hwp_para_text(rec)
+    assert text == "\U00020BB7田\ufffd"
+    text.encode("utf-8")
+
+
+def test_read_pages_on_docx_uses_real_pages(tmp_path):
+    from docx.enum.text import WD_BREAK
+    d = new_docx()
+    d.add_paragraph("1쪽 문단")
+    d.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+    d.add_paragraph("2쪽 문단")
+    path = tmp_path / "p.docx"
+    d.save(str(path))
+    code, out = run("read", "--file", str(path), "--pages", "2")
+    assert code == 0 and out["pages_mode"] == "page" and [u["text"] for u in out["units"]] == ["2쪽 문단"]

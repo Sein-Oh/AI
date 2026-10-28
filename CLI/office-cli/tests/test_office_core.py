@@ -145,7 +145,7 @@ def test_sheet_lookup_rules(fake_com):
         assert t.sheet().Name == "매출"
         with pytest.raises(rt.InputError) as ei:
             t.sheet("매출2", create=True)            # 읽기 세션은 만들지 않음
-        assert "[추천] 매출" in str(ei.value)
+        assert "[후보] 매출" in str(ei.value) and "[추천]" not in str(ei.value)
     with off.open_target("excel", readonly=False, snapshot=False) as t:
         assert t.sheet("신규", create=True).Name == "신규"
         with pytest.raises(rt.InputError) as ei:
@@ -283,3 +283,73 @@ def test_require_com_message(monkeypatch):
     with pytest.raises(rt.InputError) as ei:
         off.require_com()
     assert "reader.py" in str(ei.value)
+
+
+def test_write_session_without_snapshot_leaves_barrier(tmp_path, fake_com, monkeypatch):
+    wb = FakeWorkbook(str(tmp_path / "보고.xlsx"))
+    (tmp_path / "보고.xlsx").write_bytes(b"x")
+    fake_com["active"]["excel"] = {"name": wb.Name, "path": wb.FullName, "app": FakeExcelApp(), "doc": wb}
+    monkeypatch.setattr(off, "SNAPSHOT_MAX_BYTES", 0)                    # 스냅샷 실패
+    with off.open_target("excel", readonly=False, tool="excel", command="write"):
+        pass
+    snaps = off.list_snapshots("excel")
+    assert len(snaps) == 1 and snaps[0]["barrier"] is True and "스냅샷" in snaps[0]["reason"]
+
+
+def test_write_target_typo_of_open_document_does_not_create_new_file(tmp_path, fake_com, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(off, "list_open", lambda kind: [{"name": "주간보고.docx", "path": "C:/x/주간보고.docx"}])
+    monkeypatch.setattr(off, "match_open", lambda kind, target, docs=None: None)
+    with pytest.raises(rt.InputError) as ei:
+        with off.open_target("word", "주간보고서.docx", readonly=False, create=True):
+            pass
+    assert "[후보] 주간보고.docx" in str(ei.value) and not (tmp_path / "주간보고서.docx").exists()
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영 4: 실환경 견고성 (암호 파일, 읽기 전용으로 열린 파일, Office 바쁨)
+# ---------------------------------------------------------------------------
+
+def test_background_open_passes_dummy_password_and_disables_macros(tmp_path, monkeypatch):
+    app = FakeExcelApp()
+    wb = off._open_file("excel", app, str(tmp_path / "a.xlsx"), readonly=True)
+    kw = app.Workbooks.open_kwargs
+    assert kw["Password"] == off._NO_PASSWORD and kw["IgnoreReadOnlyRecommended"] is True and wb is not None
+
+
+def test_password_error_becomes_input_error(tmp_path):
+    class _App:
+        class Workbooks:
+            @staticmethod
+            def Open(path, **kw):
+                raise Exception("입력한 암호가 잘못되었습니다.")
+    with pytest.raises(rt.InputError) as ei:
+        off._open_file("excel", _App(), str(tmp_path / "secret.xlsx"), readonly=True)
+    assert "열기 암호" in str(ei.value)
+
+
+def test_write_to_file_opened_read_only_stops_before_writing(tmp_path, fake_com, monkeypatch):
+    path = tmp_path / "공유.xlsx"
+    path.write_bytes(b"x")
+    real_open = off._open_file
+
+    def locked(kind, app, p, readonly):
+        doc = real_open(kind, app, p, readonly)
+        doc.ReadOnly = True                         # 다른 사람이 열고 있어 읽기 전용으로 열림
+        return doc
+    monkeypatch.setattr(off, "_open_file", locked)
+    monkeypatch.setattr(off, "_new_instance", lambda kind: FakeExcelApp())
+    with pytest.raises(rt.InputError) as ei:
+        with off.open_target("excel", str(path), readonly=False):
+            raise AssertionError("쓰기 본문까지 오면 안 됨")
+    assert "읽기 전용" in str(ei.value)
+
+
+def test_busy_message_filter_retries_then_gives_up(monkeypatch):
+    monkeypatch.setattr(rt, "RECOVERED", [])
+    monkeypatch.setattr(rt, "RECOVERY_ATTEMPTS", [])
+    f = off.BusyMessageFilter()
+    assert f.RetryRejectedCall(0, 100, 2) == f.RETRY_DELAY_MS
+    assert rt.RECOVERED == [f.NOTE]
+    assert f.RetryRejectedCall(0, f.BUSY_RETRY_MS + 1, 2) == -1
+    assert rt.RECOVERED == [] and rt.RECOVERY_ATTEMPTS

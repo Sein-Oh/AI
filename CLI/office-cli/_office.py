@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
@@ -47,12 +48,50 @@ def require_com() -> None:
                             "Office 없이 파일만 읽으려면 reader.py read --file 을 쓰세요.")
 
 
+class BusyMessageFilter:
+    """COM 메시지 필터 (JIT 복구): Office가 재계산·자동 저장 등으로 잠깐 바빠 호출을 거부하면(RPC_E_SERVERCALL_RETRYLATER,
+    RPC_E_CALL_REJECTED) 바로 실패하지 않고 BUSY_RETRY_MS 동안 짧게 기다렸다 다시 부릅니다. 넘으면 기존 office_busy 오류."""
+    _public_methods_ = ["HandleInComingCall", "RetryRejectedCall", "MessagePending"]
+    BUSY_RETRY_MS = 15000
+    RETRY_DELAY_MS = 250
+    NOTE = "Office가 바빠 호출을 거부함 -> 기다렸다 다시 호출"
+
+    def HandleInComingCall(self, dwCallType, hTaskCaller, dwTickCount, lpInterfaceInfo):
+        return 0                                     # SERVERCALL_ISHANDLED
+
+    def RetryRejectedCall(self, hTaskCallee, dwTickCount, dwRejectType):
+        if dwRejectType in (1, 2) and dwTickCount < self.BUSY_RETRY_MS:   # SERVERCALL_REJECTED / RETRYLATER
+            if self.NOTE not in rt.RECOVERED:
+                rt.note_recovered(self.NOTE)
+            return self.RETRY_DELAY_MS
+        if self.NOTE in rt.RECOVERED:                # 한도까지 기다려도 안 됨: 복구가 아니므로 recovered에서 빼고 오류 로그에 남김
+            rt.RECOVERED.remove(self.NOTE)
+        rt.record_recovery_attempt(f"Office 호출 거부 {self.BUSY_RETRY_MS // 1000}초 동안 재시도 실패")
+        return -1                                    # 포기: 호출한 쪽이 오류를 받음 (office_busy)
+
+    def MessagePending(self, hTaskCallee, dwTickCount, dwPendingType):
+        return 2                                     # PENDINGMSG_WAITDEFPROCESS
+
+
+_FILTER_REGISTERED = [False]
+
+
 def init_com() -> None:
     if pythoncom is not None:
         try:
             pythoncom.CoInitialize()
         except Exception:
             pass
+        if not _FILTER_REGISTERED[0]:
+            try:
+                from win32com.server.util import wrap
+                filt = BusyMessageFilter()
+                filt._com_interfaces_ = [pythoncom.IID_IMessageFilter]
+                pythoncom.CoRegisterMessageFilter(wrap(filt))
+                _FILTER_REGISTERED[0] = True
+            except Exception as e:                   # 필터가 없어도 동작은 같음 (바쁠 때 바로 office_busy)
+                rt.debug(f"COM 메시지 필터 등록 실패: {e}")
+
 
 
 # ==============================================================================
@@ -356,7 +395,7 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
         if not os.path.exists(data_file):
             return None
         meta = {"app": kind, "name": name, "original_path": path, "snapshot_file": data_file,
-                "snapshot_format": fmt, "created_at": stamp, "by": f"{tool} {command}".strip(),
+                "snapshot_format": fmt, "created_at": stamp, "created_ts": time.time(), "by": f"{tool} {command}".strip(),
                 "doc_created": doc_identity(path),
                 "untitled": not path}   # 저장한 적 없는 문서: undo가 열린 문서 중 같은 이름의 '저장 안 된' 문서를 찾아 되돌림
         rt.safe_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
@@ -366,6 +405,24 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
     except Exception as e:
         rt.log("WARN", f"되돌리기용 스냅샷을 만들지 못했습니다 (작업은 계속): {e}")
         return None
+
+
+def save_barrier(kind: str, doc: Any, reason: str, tool: str = "", command: str = "") -> None:
+    """되돌릴 지점을 만들지 못한 쓰기를 기록합니다. undo가 이 작업을 건너뛰고 더 오래된 지점으로 되돌려
+    그 사이 작업까지 사라지게 하지 않도록 합니다 (기록 실패는 무시)."""
+    try:
+        name = str(doc.Name)
+        full = str(getattr(doc, "FullName", "") or "")
+        path = full if os.path.isabs(full) else ""
+        key = hashlib.sha1((path or name).lower().encode("utf-8")).hexdigest()[:10]
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = os.path.join(_snapshot_dir(), f"{kind}_{key}_{stamp}")
+        meta = {"app": kind, "name": name, "original_path": path, "barrier": True, "reason": reason,
+                "created_at": stamp, "created_ts": time.time(), "by": f"{tool} {command}".strip()}
+        rt.safe_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
+        _rotate_snapshots(kind, key)
+    except Exception:
+        pass
 
 
 def delete_snapshot(meta_file: str) -> None:
@@ -394,7 +451,7 @@ def list_snapshots(kind: Optional[str] = None) -> List[Dict[str, Any]]:
     for mf in sorted(files, key=lambda f: os.path.basename(f).split("_", 2)[-1], reverse=True):  # 문서 무관 시각 순
         try:
             meta = json.loads(rt.read_text_file(mf))
-            if not os.path.exists(meta.get("snapshot_file", "")):
+            if not meta.get("barrier") and not os.path.exists(meta.get("snapshot_file", "")):
                 continue
             orig, recorded = meta.get("original_path", ""), meta.get("doc_created")
             if orig and recorded:
@@ -514,6 +571,11 @@ def _new_instance(kind: str) -> Any:
             pass
     else:
         app.DisplayAlerts = 0
+    try:
+        # 보이지 않는 인스턴스에서 열기 매크로(Workbook_Open의 MsgBox 등)가 창을 띄우면 끝나지 않으므로 매크로를 끔
+        app.AutomationSecurity = 3                   # msoAutomationSecurityForceDisable
+    except Exception:
+        pass
     return app
 
 
@@ -525,12 +587,34 @@ def _ppt_running() -> bool:
         return False
 
 
+# 열기 암호가 걸린 파일: 보이지 않는 인스턴스에서 암호 창이 뜨면 끝나지 않으므로 틀린 암호를 넘겨 바로 오류가 나게 함
+# (암호가 없는 파일은 이 값을 무시함)
+_NO_PASSWORD = "office-cli-no-password"
+
+
 def _open_file(kind: str, app: Any, path: str, readonly: bool) -> Any:
-    if kind == "excel":
-        return app.Workbooks.Open(path, UpdateLinks=0, ReadOnly=readonly, AddToMru=False)
-    if kind == "word":
-        return app.Documents.Open(path, ConfirmConversions=False, ReadOnly=readonly, AddToRecentFiles=False, Visible=False)
-    return app.Presentations.Open(path, -1 if readonly else 0, 0, 0)   # ReadOnly, Untitled, WithWindow=False
+    try:
+        if kind == "excel":
+            return app.Workbooks.Open(path, UpdateLinks=0, ReadOnly=readonly, Password=_NO_PASSWORD,
+                                      IgnoreReadOnlyRecommended=True, Notify=False, AddToMru=False)
+        if kind == "word":
+            return app.Documents.Open(path, ConfirmConversions=False, ReadOnly=readonly, AddToRecentFiles=False,
+                                      PasswordDocument=_NO_PASSWORD, Visible=False)
+        return app.Presentations.Open(path, -1 if readonly else 0, 0, 0)   # ReadOnly, Untitled, WithWindow=False
+    except Exception as e:
+        info = rt._com_error_info(e)
+        text = (info[1] if info else str(e)).lower()
+        if "암호" in text or "password" in text:
+            raise rt.InputError(f"열기 암호가 걸린 문서라 열 수 없습니다: {os.path.basename(path)}. 사용자가 Office에서 직접 열어 둔 뒤 "
+                                "같은 요청을 하면 열린 문서로 작업합니다.", no_fallback=True)
+        raise
+
+
+def _opened_readonly(doc: Any) -> bool:
+    try:
+        return bool(doc.ReadOnly)                     # Excel/Word True/False, PowerPoint -1/0
+    except Exception:
+        return False
 
 
 def word_save_as(doc: Any, path: str, fmt: Optional[int] = None) -> None:
@@ -594,6 +678,12 @@ def open_target(kind: str, target: str = "active", readonly: bool = True, snapsh
                 if not exists and (readonly or not create):
                     raise rt.not_found(f"{APP_LABEL[kind]} 문서", target, [d["name"] for d in docs],
                                        extra=" (열린 문서 이름도 아니고 파일도 없음)")
+                if not exists and not os.path.isabs(target.strip('"')):
+                    # 열린 문서 이름의 오타로 새 파일이 생기고 거기에 쓰는 것을 막음 (새 파일은 전체 경로일 때만 바로 만듦)
+                    similar = rt.suggest(os.path.basename(target), [d["name"] for d in docs])
+                    if similar:
+                        raise rt.ambiguous(f"'{target}'은(는) 열린 문서도 파일도 아닙니다. 이름이 비슷한 열린 문서가 있어 새 파일을 만들지 "
+                                           "않았습니다. 사용자에게 고르게 하고, 새 파일이 맞으면 전체 경로로 다시 실행하세요.", similar)
                 ext = os.path.splitext(path)[1].lower()
                 if ext not in EXTENSIONS[kind]:
                     raise rt.InputError(f"{APP_LABEL[kind]} 파일 확장자가 아닙니다: {ext} (지원: {', '.join(EXTENSIONS[kind])})")
@@ -610,9 +700,17 @@ def open_target(kind: str, target: str = "active", readonly: bool = True, snapsh
                 doc = _open_file(kind, app, path, readonly) if exists else _create_file(kind, app, path)
                 owns_doc = True
                 t = OfficeTarget(kind, app, doc, "file" if exists else "new", readonly)
+                if exists and not readonly and _opened_readonly(doc):
+                    # 다른 사람·프로그램이 열고 있어 읽기 전용으로 열림: 고친 내용을 저장할 수 없으므로 쓰기 전에 멈춤
+                    raise rt.InputError(f"'{os.path.basename(path)}'을(를) 다른 사용자나 프로그램이 열고 있어 읽기 전용으로만 열립니다. "
+                                        "아무것도 바꾸지 않았습니다. 그 파일을 닫은 뒤 다시 실행하거나, 이 PC의 Office에서 열어 둔 뒤 요청하세요.",
+                                        no_fallback=True)
 
-        if snapshot and not readonly and t.source != "new":
-            save_snapshot(kind, t.doc, tool, command)
+        if snapshot and not readonly:
+            if t.source == "new":
+                save_barrier(kind, t.doc, "새로 만든 파일이라 되돌릴 이전 상태가 없음", tool, command)
+            elif save_snapshot(kind, t.doc, tool, command) is None:
+                save_barrier(kind, t.doc, "되돌리기용 스냅샷을 만들지 못함 (DRM, 크기 초과 등)", tool, command)
 
         yield t
 
@@ -771,7 +869,7 @@ def parse_color(value: Any) -> Optional[int]:
             return (b << 16) | (g << 8) | r
         except ValueError:
             pass
-    raise rt.not_found("색상", s, list(COLOR_NAMES), extra=" ('#RRGGBB' 형식도 가능)")
+    raise rt.not_found("색상", s, list(COLOR_NAMES), extra=" ('#RRGGBB' 형식도 가능)", vocab=True)
 
 
 def bgr_to_hex(value: Any) -> Optional[str]:
@@ -807,4 +905,4 @@ def get_theme(name: Optional[str]) -> Optional[Dict[str, Any]]:
     key = str(name).strip().lower()
     if key in THEMES:
         return dict(THEMES[key], name=key)
-    raise rt.not_found("테마", str(name), list(THEMES))
+    raise rt.not_found("테마", str(name), list(THEMES), vocab=True)

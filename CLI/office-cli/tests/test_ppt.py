@@ -261,3 +261,65 @@ def test_export_pdf_e_fail_on_newer_office_is_not_relabelled(pp, capsys):
     _pdf_export(pp, com_error(*E_FAIL), version="16.0")
     code, out = run(capsys, "export", "--save", "deck.pdf")
     assert code == 1 and out["error_type"] == "office" and "PDF 내보내기 기능이 없습니다" not in out["message"]
+
+
+# ------------------------------------------------------------------ notes (발표자 노트)
+
+def test_notes_read_only_slides_with_notes_and_zero(pp, capsys):
+    code, out = run(capsys, "notes")
+    assert code == 0 and out["count"] == 0 and "0건" in out["agent_directive"]
+    pp["prs"].Slides(2).NotesPage.body.TextFrame.TextRange.Text = "첫 줄\r둘째 줄"
+    code, out = run(capsys, "notes")
+    assert code == 0 and out["count"] == 1
+    assert out["notes"][0]["no"] == 2 and out["notes"][0]["notes"] == "첫 줄\n둘째 줄"
+
+
+def test_notes_write_replace_and_append_verified(pp, capsys):
+    code, out = run(capsys, "notes", "--slide", "3", "--text", "발표 요점\\n시간 2분")
+    assert code == 0, out
+    body = pp["prs"].Slides(3).NotesPage.body.TextFrame.TextRange
+    assert body.Text == "발표 요점\r시간 2분"
+    assert out["verified"] is True and out["agent_directive"].startswith("VERIFIED:")
+    code, out = run(capsys, "notes", "--slide", "3", "--text", "질문 대비", "--append")
+    assert code == 0 and body.Text == "발표 요점\r시간 2분\r질문 대비"
+    assert out["before"] == "발표 요점\n시간 2분"
+    assert pp["app"].ActiveWindow.View.goto[-1] == 3          # 고친 슬라이드로 화면 이동
+
+
+def test_notes_write_from_file_and_errors(pp, capsys, tmp_path):
+    f = tmp_path / "노트.md"
+    f.write_text("파일에서 읽은 노트\n두 번째 줄\n", encoding="utf-8")
+    code, out = run(capsys, "notes", "--slide", "1", "--file", str(f))
+    assert code == 0 and pp["prs"].Slides(1).NotesPage.body.TextFrame.TextRange.Text == "파일에서 읽은 노트\r두 번째 줄"
+    code, out = run(capsys, "notes", "--text", "슬라이드 없음")
+    assert code == 1 and "--slide" in out["message"]
+    code, out = run(capsys, "notes", "--slide", "9", "--text", "x")
+    assert code == 1 and "1~3" in out["message"]
+
+
+def test_notes_write_unverified_when_reread_differs(pp, capsys, monkeypatch):
+    monkeypatch.setattr(ppt, "_notes_text", lambda slide: "")
+    code, out = run(capsys, "notes", "--slide", "1", "--text", "새 노트")
+    assert code == 0 and out["verified"] is False and out["agent_directive"].startswith("UNVERIFIED:")
+
+
+def test_notes_existing_needs_append_or_overwrite(pp, capsys):
+    body = pp["prs"].Slides(1).NotesPage.body.TextFrame.TextRange
+    body.Text = "기존 노트"
+    code, out = run(capsys, "notes", "--slide", "1", "--text", "새 노트")
+    assert code == 1 and out["error_type"] == "needs_user_decision" and body.Text == "기존 노트"
+    assert "--append" in out["agent_directive"] and "--overwrite" in out["agent_directive"]
+    code, out = run(capsys, "notes", "--slide", "1", "--text", "새 노트", "--overwrite")
+    assert code == 0 and body.Text == "새 노트"
+
+
+def test_notes_read_with_slide_and_missing_body(pp, capsys):
+    pp["prs"].Slides(1).NotesPage.body.TextFrame.TextRange.Text = "1번 노트"
+    pp["prs"].Slides(2).NotesPage.body.TextFrame.TextRange.Text = "2번 노트"
+    code, out = run(capsys, "notes", "--slide", "2")                # 읽기에서 --slide도 그 슬라이드만
+    assert code == 0 and [n["no"] for n in out["notes"]] == [2]
+    code, out = run(capsys, "notes", "--slides", "x")
+    assert code == 1 and "--slides 형식" in out["message"]
+    pp["prs"].Slides(3).NotesPage.Shapes.Placeholders.items.pop()   # 노트 본문 개체틀 없음
+    code, out = run(capsys, "notes", "--slide", "3", "--text", "x")
+    assert code == 1 and "본문 개체틀" in out["message"]

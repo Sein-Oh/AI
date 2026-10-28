@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import zipfile
 import zlib
 from collections import Counter
@@ -40,13 +41,14 @@ SUPPORTED = {
 }
 UNIT_NAMES = {"pdf": "단락", "pptx": "슬라이드", "xlsx": "행", "csv": "행"}
 PAGE_TYPES = ("pdf", "pptx")   # read --pages가 실제 쪽/슬라이드 번호인 형식 (그 밖은 항목 번호)
-PARSER_VERSION = 2          # 파서가 바뀌면 올려서 기존 캐시를 무효화 (2: 공통 단위 형식, 장절/번호/쪽)
+PARSER_VERSION = 3          # 파서가 바뀌면 올려서 기존 캐시를 무효화 (2: 공통 단위 형식, 장절/번호/쪽, 3: PDF 머리글·2단, DOCX 변경 추적·표 행 쪽)
 MAX_SHEET_ROWS = 20000      # xlsx 시트당 최대 행 수
 MAX_FOLDER_FILES = 300      # 한 번에 새로 등록(파싱)할 최대 파일 수
 MAX_FOLDER_DEPTH = 3        # 폴더 기본 탐색 깊이
 MAX_FOLDER_SCAN = 20000     # 폴더에서 살펴볼 최대 파일 수
 MAX_LIST_ITEMS = 20         # JSON에 담는 실패/새 등록 목록 상한
 MAX_SAVE_HITS = 5000        # --save 파일에 담는 최대 검색 결과 수
+STALE_REFRESH_MAX = 20      # 검색 때 원본이 바뀐 캐시를 그 자리에서 다시 읽는 최대 문서 수
 HEADING_MAX_CHARS = 80      # 번호로 시작하는 짧은 줄만 제목 후보 (굵게/큰 글씨는 120)
 LEGACY_OFFICE = (".xls", ".doc", ".ppt")
 
@@ -96,6 +98,12 @@ _ALPHA_LOWER_RE = re.compile(r"([a-z])\.(?=\s)")
 _SENTENCE_END = re.compile(r"(?:[.\u3002!;]|다|니다|어요|아요|해요|세요)\s*$")
 _NOUN_LIKE_END = re.compile(r"(?:음|함|임|됨)\s*$")
 _LETTER = re.compile(r"[A-Za-z\uac00-\ud7a3]")
+# 번호 뒤가 단위면 번호가 아니라 수치 (10.5 kV 이하, 1.5 kV 1분, 3 mm, 2 개월). '1. A형'처럼 뒤에 글자가 붙으면 단위 아님
+_UNIT_AFTER = re.compile(r"\s*(?:%|\u2103|\u00b0|\u2126|\u03a9|"
+                         r"[kKMGmun\u03bc]?(?:V|A|W|Hz|Pa|bar|g|m|L|s|dB|lx|ppm|ohm)(?=[\s/,.)\]]|$)|"
+                         r"(?:초|분|시간|일|주|개월|년|회|개|배|도|kg|mm|cm|km|mA|kA)(?=[\s/,.)\]]|$))")
+# 목차 줄: 점선 리더나 탭 뒤에 쪽 번호 (1.2 설계 기준 ........ 12)
+_TOC_LINE = re.compile(r"(?:[.\u00b7\u2026\u2025\u30fb\u2219_-]{3,}|\t)\s*\d{1,4}\s*$")
 
 
 def _info(family: str, number: Optional[str], rest: str, depth: int = 1, plain: bool = False) -> Dict[str, Any]:
@@ -152,7 +160,7 @@ def classify_number(line: str) -> Optional[Dict[str, Any]]:
     m = _ARABIC_RE.match(s)
     if m:
         rest = s[m.end():]
-        if rest.strip()[:1].isdigit():               # 날짜/수치 (예: 10. 28.)
+        if rest.strip()[:1].isdigit() or _UNIT_AFTER.match(rest):   # 날짜/수치 (예: 10. 28., 10.5 kV)
             return None
         parts = m.group(1).split(".")
         depth_parts = list(parts)
@@ -178,7 +186,7 @@ def heading_title(info: Optional[Dict[str, Any]], line: str, strong: bool = Fals
     if info is None or info["family"] == "bullet":
         return None
     s = line.strip()
-    if "\n" in s:
+    if "\n" in s or _TOC_LINE.search(s):            # 목차 줄은 제목이 아님 (목차 쪽이 장절로 남지 않게)
         return None
     rest = info["rest"]
     if info["family"].startswith("ko_") and info["family"] in ("ko_pyeon", "ko_jang", "ko_jeol", "ko_gwan", "ko_jo"):
@@ -297,12 +305,16 @@ def _looks_like_header(row: List[str]) -> bool:
     return all(len(c) <= 30 and not re.fullmatch(r"[\d.,%\s-]+", c) for c in cells)
 
 
-def table_rows(rows: List[List[Any]]) -> List[Dict[str, Any]]:
+def table_rows(rows: List[List[Any]], keys: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
     """표를 행 단위 글로 바꿉니다. 첫 행이 머리글로 보이면 '머리글: 값 | 머리글: 값' 형식.
     병합/빈 머리글 칸은 앞 칸의 머리글을 이어 쓰고, 여러 줄 칸은 공백으로 잇습니다.
-    반환: [{"row": 행 번호(1부터), "text", "number"}] (머리글 행은 단독 표가 아니면 넣지 않음)"""
-    grid = [[_clean_cell(c) for c in r] for r in rows]
-    grid = [r for r in grid if any(r)]
+    keys를 주면 행마다 같은 순서의 값을 결과의 key로 돌려줍니다 (예: 행의 쪽 번호).
+    반환: [{"row": 행 번호(1부터), "text", "number", "key"}] (머리글 행은 단독 표가 아니면 넣지 않음)"""
+    cleaned = [([_clean_cell(c) for c in r], (keys[i] if keys is not None and i < len(keys) else None))
+               for i, r in enumerate(rows)]
+    cleaned = [(r, k) for r, k in cleaned if any(r)]
+    grid = [r for r, _ in cleaned]
+    row_keys = [k for _, k in cleaned]
     if not grid:
         return []
     header: Optional[List[str]] = None
@@ -331,7 +343,7 @@ def table_rows(rows: List[List[Any]]) -> List[Dict[str, Any]]:
             info = classify_number(first)
             if info and info["family"] != "bullet" and not info["plain"]:
                 number = info["number"]
-        out.append({"row": i, "text": " | ".join(parts), "number": number})
+        out.append({"row": i, "text": " | ".join(parts), "number": number, "key": row_keys[i - 1]})
     return out
 
 
@@ -367,10 +379,14 @@ def _inside(bbox: Tuple[float, ...], box: Tuple[float, ...]) -> bool:
 
 
 def _pdf_lines(page, tables: Optional[List[Dict[str, Any]]] = None) -> List[Any]:
-    """페이지의 내용을 위에서 아래 순서로: 글 블록은 (줄 글, 글자 크기, 굵게) 목록, 표는 {"table": 행 목록}.
-    표 영역 안의 글 블록은 표 행과 겹치므로 뺍니다."""
+    """페이지의 내용을 읽는 순서로: 글 블록은 (줄 글, 글자 크기, 굵게) 목록, 표는 {"table": 행 목록}."""
+    return _order_items(_pdf_items(page, tables), float(page.rect.width))
+
+
+def _pdf_items(page, tables: Optional[List[Dict[str, Any]]] = None) -> List[Tuple[Tuple[float, ...], Any]]:
+    """페이지의 (bbox, 내용) 목록. 표 영역 안의 글 블록은 표 행과 겹치므로 뺍니다."""
     tables = tables or []
-    items: List[Tuple[float, float, Any]] = [(t["bbox"][1], t["bbox"][0], {"table": t["rows"]}) for t in tables]
+    items: List[Tuple[Tuple[float, ...], Any]] = [(tuple(t["bbox"]), {"table": t["rows"]}) for t in tables]
     for b in page.get_text("dict").get("blocks", []):
         if b.get("type", 0) != 0:
             continue
@@ -387,9 +403,66 @@ def _pdf_lines(page, tables: Optional[List[Dict[str, Any]]] = None) -> List[Any]
             bold = all((int(sp.get("flags", 0)) & 16) or "bold" in str(sp.get("font", "")).lower() for sp in spans)
             lines.append((text, size, bool(bold)))
         if lines:
-            items.append((bbox[1], bbox[0], lines))
-    items.sort(key=lambda it: (round(it[0], 1), it[1]))
-    return [it[2] for it in items]
+            items.append((bbox, lines))
+    return items
+
+
+def _order_items(items: List[Tuple[Tuple[float, ...], Any]], width: float) -> List[Any]:
+    """읽는 순서. 기본은 위에서 아래. 2단 편집(왼쪽 단과 오른쪽 단이 세로로 겹침)이면 가로로 걸친 블록(제목, 표) 사이마다
+    왼쪽 단을 먼저, 오른쪽 단을 다음에 읽습니다 (y로만 정렬하면 두 단의 줄이 섞여 장절이 틀어짐)."""
+    def by_y(xs):
+        return sorted(xs, key=lambda it: (round(it[0][1], 1), it[0][0]))
+    if not items or width <= 0:
+        return [it[1] for it in by_y(items)]
+    mid, gap = width / 2, width * 0.04
+    full = [it for it in items if it[0][0] < mid - gap and it[0][2] > mid + gap]
+    left = [it for it in items if it[0][2] <= mid + gap and it not in full]
+    right = [it for it in items if it[0][0] >= mid - gap and it not in full and it not in left]
+    overlap = any(lb[0][1] < rb[0][3] and rb[0][1] < lb[0][3] for lb in left for rb in right)
+    if len(left) < 2 or len(right) < 2 or not overlap:
+        return [it[1] for it in by_y(items)]
+    out: List[Any] = []
+    rest = left + right
+    for f in by_y(full):
+        band = [it for it in rest if it[0][1] < f[0][1]]
+        rest = [it for it in rest if it not in band]
+        out += [it[1] for it in by_y([b for b in band if b in left]) + by_y([b for b in band if b in right])]
+        out.append(f[1])
+    out += [it[1] for it in by_y([b for b in rest if b in left]) + by_y([b for b in rest if b in right])]
+    return out
+
+
+_MARGIN = 0.08          # 쪽 위/아래 8% 안에 있는 줄만 머리글/바닥글 후보
+
+
+def _margin_key(item: Tuple[Tuple[float, ...], Any], height: float) -> Optional[str]:
+    """머리글/바닥글 후보 블록의 비교용 글 (숫자는 #으로: '- 3 -'과 '- 4 -'는 같은 쪽 번호 줄)."""
+    bbox, payload = item
+    if isinstance(payload, dict) or height <= 0:
+        return None
+    if not (bbox[3] <= height * _MARGIN or bbox[1] >= height * (1 - _MARGIN)):
+        return None
+    text = " ".join(t for t, _, _ in payload)
+    return re.sub(r"\d+", "#", re.sub(r"\s+", " ", text)).strip() or None
+
+
+def _drop_headers_footers(pages: List[Tuple[List[Any], float]]) -> int:
+    """여러 쪽의 위/아래 여백에 반복되는 줄(문서 제목 머리글, 쪽 번호)을 뺍니다. 뺀 블록 수를 돌려줍니다.
+    남겨 두면 매 쪽 장절 경로가 머리글로 바뀌고, 머리글 문구가 쪽마다 검색 결과에 걸립니다."""
+    if len(pages) < 2:
+        return 0
+    seen: Counter = Counter()
+    for items, height in pages:
+        seen.update({k for k in (_margin_key(it, height) for it in items) if k})
+    repeated = {k for k, n in seen.items() if n >= max(2, (len(pages) + 1) // 2)}
+    if not repeated:
+        return 0
+    removed = 0
+    for items, height in pages:
+        keep = [it for it in items if _margin_key(it, height) not in repeated]
+        removed += len(items) - len(keep)
+        items[:] = keep
+    return removed
 
 
 def _import_pymupdf():
@@ -422,10 +495,14 @@ def _parse_pdf(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     try:
         if doc.needs_pass:
             raise rt.InputError(f"암호가 걸린 PDF입니다: {os.path.basename(path)}")
-        pages = [_pdf_lines(page, _pdf_tables(page)) for page in doc]
+        raw = [(_pdf_items(page, _pdf_tables(page)), float(page.rect.height), float(page.rect.width)) for page in doc]
         meta = {"pages": doc.page_count, "title": (doc.metadata or {}).get("title") or ""}
     finally:
         doc.close()
+    removed = _drop_headers_footers([(items, h) for items, h, _ in raw])
+    if removed:
+        meta["header_footer_removed"] = removed
+    pages = [_order_items(items, w) for items, _, w in raw]
 
     sizes: Counter = Counter()
     bold_chars = total_chars = 0
@@ -487,7 +564,16 @@ def _hwp_para_text(rec: bytes) -> str:
     i, n = 0, len(rec)
     while i + 1 < n:
         code = rec[i] | (rec[i + 1] << 8)
-        if code >= 32:
+        if 0xD800 <= code <= 0xDBFF and i + 3 < n:          # UTF-16 서로게이트 쌍 (확장 한자 등 BMP 밖 글자)
+            low = rec[i + 2] | (rec[i + 3] << 8)
+            if 0xDC00 <= low <= 0xDFFF:
+                out.append(chr(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)))
+                i += 4
+                continue
+        if 0xD800 <= code <= 0xDFFF:                         # 짝이 없는 서로게이트: 캐시 저장(UTF-8)이 실패하지 않게
+            out.append("\ufffd")
+            i += 2
+        elif code >= 32:
             out.append(chr(code))
             i += 2
         elif code in _HWP_CHAR_CONTROLS:
@@ -895,6 +981,45 @@ class _DocxPages:
         return first if first is not None else self.page
 
 
+_SKIP_TEXT_IN = {_W + "del", _W + "moveFrom", _W + "txbxContent"}   # 지운 글, 옮기기 전 자리, 글상자(따로 단락)
+
+
+def _p_text(el: Any) -> str:
+    """단락(w:p)의 글. python-docx의 Paragraph.text와 달리 변경 추적으로 삽입된 글(w:ins)과 옮긴 글(w:moveTo)도 넣고,
+    지운 글(w:del)은 뺍니다. 탭과 줄바꿈은 글자로."""
+    out: List[str] = []
+
+    def walk(node: Any) -> None:
+        for ch in node:
+            tag = ch.tag
+            if tag in _SKIP_TEXT_IN:
+                continue
+            if tag == _W + "t":
+                out.append(ch.text or "")
+            elif tag == _W + "tab":
+                out.append("\t")
+            elif tag in (_W + "br", _W + "cr"):
+                out.append("\n")
+            else:
+                walk(ch)
+    walk(el)
+    return "".join(out)
+
+
+def _body_blocks(parent: Any):
+    """본문의 단락(w:p)과 표(w:tbl)를 문서 순서로. 콘텐츠 컨트롤(w:sdt)과 customXml 안에 든 것도 꺼냅니다."""
+    for child in parent.iterchildren():
+        tag = child.tag
+        if tag in (_W + "p", _W + "tbl"):
+            yield child
+        elif tag == _W + "sdt":
+            content = child.find(_W + "sdtContent")
+            if content is not None:
+                yield from _body_blocks(content)
+        elif tag == _W + "customXml":
+            yield from _body_blocks(child)
+
+
 def parse_docx(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if not zipfile.is_zipfile(path):
         raise _encrypted_hint(path)
@@ -913,13 +1038,20 @@ def parse_docx(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     b = UnitBuilder()
     para_no = table_no = 0
     numbering_failed = False
-    for child in document.element.body.iterchildren():
+    for child in _body_blocks(document.element.body):
         tag = _local(child.tag)
         if tag == "p":
             para = Paragraph(child, document)
             page = pages.element_page(child)
-            text = para.text.strip()
+            text = _p_text(child).strip()
             if not text:
+                # 빈 번호 단락도 Word는 번호를 매김 ("3." 빈 줄): 번호 카운터를 진행해야 뒤 조항 번호가 밀리지 않음
+                try:
+                    _, _, num = _docx_style_info(para, numbering)
+                    if num:
+                        numbering.label(*num)
+                except Exception:
+                    pass
                 continue
             para_no += 1
             loc = f"단락 {para_no}"
@@ -942,19 +1074,21 @@ def parse_docx(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
                 continue
             b.add_text(loc, text, page, pages.mode, style_level=level, list_family=list_family, list_depth=list_depth)
         elif tag == "tbl":
-            page = pages.element_page(child)
             table_no += 1
             grid: List[List[str]] = []
+            row_pages: List[Optional[int]] = []
             for row in Table(child, document).rows:
+                row_pages.append(pages.element_page(row._tr))      # 여러 쪽에 걸친 표: 행마다 그 행이 있는 쪽
                 cells: List[str] = []
                 prev_tc = None
                 for cell in row.cells:
                     # 가로 병합 칸은 같은 칸이 반복되므로 빈 칸으로 (머리글은 앞 칸을 이어 씀)
-                    cells.append("" if cell._tc is prev_tc else cell.text)
+                    cells.append("" if cell._tc is prev_tc else
+                                 "\n".join(_p_text(p) for p in cell._tc.iter(_W + "p")))
                     prev_tc = cell._tc
                 grid.append(cells)
-            for r in table_rows(grid):
-                b.add("row", f"표 {table_no} {r['row']}행", r["text"], page, pages.mode, r["number"])
+            for r in table_rows(grid, row_pages):
+                b.add("row", f"표 {table_no} {r['row']}행", r["text"], r["key"], pages.mode, r["number"])
     core = document.core_properties
     meta: Dict[str, Any] = {"title": core.title or "", "paragraphs": para_no, "tables": table_no,
                             "page_source": pages.mode}
@@ -1130,19 +1264,55 @@ def _index_path() -> str:
 
 
 def load_index() -> Dict[str, Dict[str, Any]]:
+    """색인 {원본 경로: 정보}. Windows에서 대소문자만 다른 같은 파일(C:\\Docs, c:\\docs)은 최근 것 하나로 합칩니다."""
     p = _index_path()
     if not os.path.exists(p):
         return {}
     try:
         data = json.loads(rt.read_text_file(p))
-        return data if isinstance(data, dict) else {}
     except Exception:
         rt.log("WARN", "색인 파일이 손상되어 새로 만듭니다.")
         return {}
+    if not isinstance(data, dict):
+        return {}
+    merged: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+    for path, entry in data.items():
+        key = os.path.normcase(os.path.abspath(path))
+        if key not in merged or str(entry.get("parsed_at", "")) > str(merged[key][1].get("parsed_at", "")):
+            merged[key] = (path, entry)
+    return {path: entry for path, entry in merged.values()}
 
 
 def _save_index(index: Dict[str, Dict[str, Any]]) -> None:
     rt.safe_write_text(_index_path(), json.dumps(index, ensure_ascii=False))
+
+
+def _index_put(index: Dict[str, Dict[str, Any]], path: str, entry: Dict[str, Any]) -> None:
+    key = os.path.normcase(path)
+    for old in [k for k in index if os.path.normcase(k) == key]:
+        del index[old]
+    index[path] = entry
+
+
+def _index_entry(doc: Dict[str, Any], cache_file: str) -> Dict[str, Any]:
+    return {"type": doc["type"], "units": len(doc["units"]), "parsed_at": doc.get("parsed_at", ""),
+            "chars": sum(len(u["text"]) for u in doc["units"]), "cache_file": os.path.basename(cache_file),
+            "mtime": doc.get("mtime"), "size": doc.get("size"), "parser_version": doc.get("parser_version"),
+            "pages": _doc_pages(doc), "sections": _doc_sections(doc)}
+
+
+def _ensure_indexed(path: str, doc: Dict[str, Any], cache_file: str) -> None:
+    """캐시는 최신인데 색인에 없거나 다르면(색인 저장 전 중단, 동시 실행) 색인을 고칩니다 (JIT 복구, 실패는 무시)."""
+    try:
+        index = load_index()
+        entry = next((e for k, e in index.items() if os.path.normcase(k) == os.path.normcase(path)), None)
+        if entry and all(entry.get(k) == doc.get(k) for k in ("mtime", "size", "parser_version")):
+            return
+        _index_put(index, path, _index_entry(doc, cache_file))
+        _save_index(index)
+        rt.log("WARN", f"캐시는 있는데 색인에서 빠진 문서를 색인에 다시 넣었습니다: {os.path.basename(path)}")
+    except Exception:
+        pass
 
 
 _KIND_FROM_LOC = (("표", "table"), ("슬라이드", "slide"), ("헤더", "header"))  # 이전 캐시의 loc로 종류 추정
@@ -1212,7 +1382,7 @@ def load_cached_only(path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def load_document_status(path: str, use_cache: bool = True) -> Tuple[Dict[str, Any], str]:
+def load_document_status(path: str, use_cache: bool = True, check_index: bool = True) -> Tuple[Dict[str, Any], str]:
     """파일을 캐시에서 불러오거나(수정 시각/크기/파서 버전이 같으면) 파싱해 캐시와 색인에 등록합니다.
     반환: (문서, 상태) 상태는 'cached'(캐시 사용), 'new'(처음 등록), 'updated'(바뀌어서 다시 등록)."""
     path = os.path.abspath(path)
@@ -1226,6 +1396,8 @@ def load_document_status(path: str, use_cache: bool = True) -> Tuple[Dict[str, A
             cached = json.loads(rt.read_text_file(cache_file))
             if not is_stale_doc(cached, st):
                 rt.debug(f"캐시 사용: {os.path.basename(path)}")
+                if check_index:
+                    _ensure_indexed(path, cached, cache_file)
                 return normalize_doc(cached), "cached"
         except Exception:
             rt.log("WARN", f"캐시가 손상되어 다시 읽습니다: {os.path.basename(path)}")
@@ -1236,10 +1408,7 @@ def load_document_status(path: str, use_cache: bool = True) -> Tuple[Dict[str, A
     try:
         rt.safe_write_text(cache_file, json.dumps(doc, ensure_ascii=False))
         index = load_index()
-        index[path] = {"type": ftype, "units": len(units), "parsed_at": doc["parsed_at"],
-                       "chars": sum(len(u["text"]) for u in units), "cache_file": os.path.basename(cache_file),
-                       "mtime": st.st_mtime, "size": st.st_size, "parser_version": PARSER_VERSION,
-                       "pages": _doc_pages(doc), "sections": _doc_sections(doc)}
+        _index_put(index, path, _index_entry(doc, cache_file))
         _save_index(index)
     except OSError as e:
         rt.log("WARN", f"캐시 저장 실패 (결과에는 영향 없음): {e}")
@@ -1256,14 +1425,20 @@ def _under(path: str, folder: str) -> bool:
     return p.startswith(f)
 
 
-def _collect_folder(folder: str, depth: int = MAX_FOLDER_DEPTH) -> Tuple[List[str], Dict[str, int]]:
-    """폴더의 지원 형식 파일 목록과 건너뛴 형식별 개수 (예: {'.png': 2}). depth 0 = 그 폴더만."""
+def _collect_folder(folder: str, depth: int = MAX_FOLDER_DEPTH,
+                    excluded: Optional[List[str]] = None) -> Tuple[List[str], Dict[str, int]]:
+    """폴더의 지원 형식 파일 목록과 건너뛴 형식별 개수 (예: {'.png': 2}). depth 0 = 그 폴더만.
+    excluded를 주면 들어가지 않은 하위 폴더(깊이 제한, '_'/'.'로 시작)를 거기에 담습니다."""
     files: List[str] = []
     skipped: Counter = Counter()
     base_depth = folder.rstrip("\\/").count(os.sep)
     for root, dirs, names in os.walk(folder):
         if root.count(os.sep) - base_depth >= depth:
+            if excluded is not None:
+                excluded += [os.path.join(root, d) for d in dirs]
             dirs[:] = []
+        if excluded is not None:
+            excluded += [os.path.join(root, d) for d in dirs if d.startswith(("_", "~$"))]
         dirs[:] = sorted(d for d in dirs if not d.startswith((".", "~$", "_")))
         for n in sorted(names):
             if n.startswith(("~$", ".")):
@@ -1299,7 +1474,8 @@ def _index_files(files: List[str], max_files: int) -> Dict[str, Any]:
         except OSError as e:
             out["failures"].append({"file": path, "reason": str(e)})
             continue
-        entry = index.get(os.path.abspath(path))
+        key = os.path.normcase(os.path.abspath(path))
+        entry = next((e for k, e in index.items() if os.path.normcase(k) == key), None)
         fresh = bool(entry and entry.get("parser_version") == PARSER_VERSION
                      and entry.get("mtime") == st.st_mtime and entry.get("size") == st.st_size)
         if not fresh and parsed >= max_files:
@@ -1308,7 +1484,7 @@ def _index_files(files: List[str], max_files: int) -> Dict[str, Any]:
         try:
             if not fresh:
                 rt.log("PROGRESS", f"[{i}/{total}] 등록 중: {os.path.basename(path)}")
-            doc, status = load_document_status(path)
+            doc, status = load_document_status(path, check_index=not fresh)
         except Exception as e:
             out["failures"].append({"file": path, "reason": str(e)[:300]})
             parsed += 0 if fresh else 1
@@ -1324,8 +1500,8 @@ def _index_files(files: List[str], max_files: int) -> Dict[str, Any]:
 # 4. 공통 출력 도우미
 # ==============================================================================
 
-def parse_pages(spec: Optional[str], total: int) -> List[int]:
-    """'3', '1-3', '1,4,6-8' -> 1부터 센 번호 목록."""
+def parse_pages(spec: Optional[str], total: int, option: str = "--pages") -> List[int]:
+    """'3', '1-3', '1,4,6-8' -> 1부터 센 번호 목록. option은 오류 문구에 쓸 인자 이름 (ppt.py는 --slides)."""
     if not spec:
         return list(range(1, total + 1))
     result: List[int] = []
@@ -1334,12 +1510,12 @@ def parse_pages(spec: Optional[str], total: int) -> List[int]:
             continue
         m = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
         if not m:
-            raise rt.InputError(f"--pages 형식이 잘못되었습니다: '{spec}' (예: 3, 1-3, 1,4,6-8)")
+            raise rt.InputError(f"{option} 형식이 잘못되었습니다: '{spec}' (예: 3, 1-3, 1,4,6-8)")
         a = int(m.group(1))
         b = int(m.group(2) or a)
         result += [n for n in range(min(a, b), max(a, b) + 1) if 1 <= n <= total]
     if not result:
-        raise rt.InputError(f"--pages '{spec}'에 해당하는 항목이 없습니다 (전체 {total}개).")
+        raise rt.InputError(f"{option} '{spec}'에 해당하는 항목이 없습니다 (전체 {total}개).")
     return sorted(set(result))
 
 
@@ -1481,7 +1657,8 @@ def cmd_read(args) -> Dict[str, Any]:
     total = len(units)
     name = os.path.basename(path)
     unit_name = UNIT_NAMES.get(doc["type"], "항목")
-    by_page = doc["type"] in PAGE_TYPES
+    # 쪽 정보가 있는 형식(docx/hwpx의 저장된 쪽 경계 포함)은 --pages가 실제 쪽: search의 근거 'p.12'를 그대로 읽을 수 있게
+    by_page = doc["type"] in PAGE_TYPES or any(u.get("page") for u in units)
     if args.units:
         numbers = parse_pages(args.units, total) if total else []
     elif by_page and args.pages:
@@ -1492,6 +1669,7 @@ def cmd_read(args) -> Dict[str, Any]:
     selected = [units[n - 1] for n in numbers]
     result: Dict[str, Any] = {"file": path, "type": doc["type"], "units_total": total, "count": len(selected),
                               "unit_name": unit_name, "pages_total": _doc_pages(doc),
+                              "pages_mode": "page" if by_page else "item",
                               "sections_total": _doc_sections(doc), "meta": doc.get("meta", {})}
 
     if args.save:
@@ -1635,32 +1813,66 @@ def build_matcher(query: str, regex: bool, case_sensitive: bool):
             raise rt.InputError(f"정규식 오류: {e}")
 
         def match_regex(text: str):
-            m = pat.search(text)
+            m = next((m for m in pat.finditer(text) if m.group(0)), None)   # 빈 일치('a*')는 일치로 보지 않음
             return [m.group(0)] if m else None
         return match_regex
 
-    groups = [[t.strip() for t in re.split(r"\s+AND\s+", g) if t.strip()] for g in re.split(r"\s+OR\s+", query.strip())]
-    groups = [g for g in groups if g]
+    groups = parse_query(query)
     if not groups:
         raise rt.InputError("검색어가 비어 있습니다.")
 
     def norm(s: str) -> str:
+        s = re.sub(r"\s+", "", unicodedata.normalize("NFC", s))   # 띄어쓰기·줄바꿈이 달라도 찾음 (설계기준 = 설계 기준)
         return s if case_sensitive else s.lower()
+
+    keys = [[norm(t) for t in g] for g in groups]
 
     def match_terms(text: str):
         t = norm(text)
-        for g in groups:
-            if all(norm(term) in t for term in g):
+        for g, k in zip(groups, keys):
+            if all(x in t for x in k):
                 return g
         return None
     return match_terms
+
+
+def parse_query(query: str) -> List[List[str]]:
+    """'A AND B OR "C D"' -> [['A', 'B'], ['C D']]. AND/OR는 대소문자 무관(AND가 OR보다 먼저 묶임),
+    따옴표로 묶은 글은 구문 그대로(따옴표는 검색어가 아님), 연산자 없이 이어진 단어는 한 구문."""
+    groups: List[List[str]] = [[]]
+    words: List[str] = []
+
+    def push() -> None:
+        if words:
+            groups[-1].append(" ".join(words))
+            words.clear()
+    for tok in re.findall(r'"[^"]*"|\u201c[^\u201d]*\u201d|\S+', unicodedata.normalize("NFC", query or "")):
+        if tok.upper() == "AND":
+            push()
+        elif tok.upper() == "OR":
+            push()
+            groups.append([])
+        elif tok[:1] in ('"', "\u201c") and len(tok) >= 2:
+            push()
+            if tok[1:-1].strip():
+                groups[-1].append(tok[1:-1].strip())
+        else:
+            words.append(tok)
+    push()
+    return [g for g in groups if g]
+
+
+def _term_pattern(term: str, flags: int) -> "re.Pattern[str]":
+    """검색어를 글 안에서 찾는 정규식: 글자 사이 띄어쓰기·줄바꿈을 허용 (match_terms와 같은 기준)."""
+    chars = re.sub(r"\s+", "", term)
+    return re.compile(r"\s*".join(re.escape(c) for c in chars) or re.escape(term), flags)
 
 
 def make_snippet(text: str, terms: List[str], context: int, case_sensitive: bool) -> str:
     flags = 0 if case_sensitive else re.IGNORECASE
     first = None
     for term in terms:
-        m = re.search(re.escape(term), text, flags)
+        m = _term_pattern(term, flags).search(text)
         if m and (first is None or m.start() < first.start()):
             first = m
     if first is None:
@@ -1668,7 +1880,7 @@ def make_snippet(text: str, terms: List[str], context: int, case_sensitive: bool
     start = max(0, first.start() - context)
     end = min(len(text), first.end() + context)
     snippet = ("..." if start > 0 else "") + text[start:end] + ("..." if end < len(text) else "")
-    pattern = re.compile("|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True)), flags)
+    pattern = re.compile("|".join(_term_pattern(t, 0).pattern for t in sorted(terms, key=len, reverse=True)), flags)
     return pattern.sub(lambda m: f"**{m.group(0)}**", snippet).replace("\n", " ")
 
 
@@ -1679,7 +1891,7 @@ def match_sentence(text: str, terms: List[str], case_sensitive: bool, limit: int
     """일치한 단어가 든 문장 (문장으로 못 나누면 단락 앞부분)."""
     flags = 0 if case_sensitive else re.IGNORECASE
     for sent in _SENT_SPLIT.split(text):
-        if any(re.search(re.escape(t), sent, flags) for t in terms):
+        if any(_term_pattern(t, flags).search(sent) for t in terms):
             return sent.strip()[:limit]
     return text.strip()[:limit]
 
@@ -1698,14 +1910,14 @@ def _search_targets(args) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """검색할 문서를 정합니다. --file이 있으면 그 파일/폴더의 미등록/변경 문서를 먼저 등록, 없으면 캐시 전체만.
     반환: (문서 목록, 정보: indexed_now, from_cache, skipped, remaining, stale, missing, skipped_types)"""
     info: Dict[str, Any] = {"indexed_now": [], "from_cache": 0, "skipped": [], "remaining": 0, "stale": [],
-                            "missing": 0, "skipped_types": {}, "folder": None}
+                            "missing": 0, "skipped_types": {}, "folder": None, "excluded_dirs": [], "refreshed": 0}
     docs: List[Dict[str, Any]] = []
     if args.file:
         raw = os.path.expandvars(os.path.expanduser(str(args.file).strip().strip('"')))
         if os.path.isdir(raw):
             folder = os.path.abspath(raw)
             info["folder"] = folder
-            files, info["skipped_types"] = _collect_folder(folder)
+            files, info["skipped_types"] = _collect_folder(folder, excluded=info["excluded_dirs"])
         else:
             path = rt.resolve_input_path(raw, "검색할 파일")
             file_type(path)
@@ -1732,10 +1944,19 @@ def _search_targets(args) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         if not os.path.exists(path):
             doc["file_missing"] = True
             info["missing"] += 1
+        if is_stale_doc(doc) and not doc.get("file_missing") and info["refreshed"] < STALE_REFRESH_MAX:
+            try:
+                doc, _ = load_document_status(path)     # 원본이 바뀐 캐시는 그 자리에서 다시 읽음 (JIT 복구)
+                info["refreshed"] += 1
+            except Exception as e:
+                rt.debug(f"다시 읽기 실패, 이전 캐시로 검색: {e}")
         if is_stale_doc(doc):
+            doc["_stale"] = True
             info["stale"].append(path)
         docs.append(doc)
     info["from_cache"] = len(docs)
+    if info["refreshed"]:
+        rt.note_recovered(f"원본이 바뀐 캐시 {info['refreshed']}개 -> 다시 읽고 검색")
     return docs, info
 
 
@@ -1830,6 +2051,8 @@ def cmd_search(args) -> Dict[str, Any]:
             item["text"], _ = rt.clamp_text(u["text"], 2000)
         if doc.get("file_missing"):
             item["file_missing"] = True
+        if doc.get("_stale"):
+            item["stale"] = True             # 원본이 바뀌기 전 내용 (근거로 쓰기 전에 다시 등록 필요)
         view.append(item)
     result["matches"] = view
 
@@ -1861,8 +2084,15 @@ def cmd_search(args) -> Dict[str, Any]:
                   "next_commands의 index --all(읽기 전용)을 실행한 뒤 같은 검색을 1번 다시 하세요.")
     if info["indexed_now"]:
         notes += " 새로 등록한 파일(indexed_now)을 사용자에게 알리세요."
+    gaps = _search_gaps(docs, info)
+    if gaps:
+        result["not_searched"] = gaps
     if total == 0:
         preview = f"'{args.query}': {scope}에서 일치 항목 없음 (0건)"
+        if gaps:
+            # 일부를 검색하지 못했으면 "근거 없음"으로 단정하지 않음 (규격 대조에서 잘못된 판정이 됨)
+            return rt.ok_unverified(TOOL, "search", preview + ", 검색 범위 불완전",
+                                    ["0건이지만 검색하지 못한 부분이 있음: " + "; ".join(gaps)], **result)
         return rt.ok(TOOL, "search", preview,
                      "VERIFIED: 0건. 조건에 맞는 항목이 없습니다. 사용자에게 그대로 알리고 조건을 바꿔 다시 실행하지 마세요." + notes,
                      **result)
@@ -1875,7 +2105,33 @@ def cmd_search(args) -> Dict[str, Any]:
             directive += " 다른 문서에 넣으려면 next_commands를 그대로 실행하세요."
     else:
         directive = "VERIFIED: 검색 완료." + evid + " 전체 결과가 필요하면 --save \"근거.xlsx\"로 저장하세요."
+    if gaps:
+        payload = rt.ok_unverified(TOOL, "search", preview + ", 검색 범위 불완전",
+                                   ["검색하지 못한 부분이 있어 결과가 전부가 아닐 수 있음: " + "; ".join(gaps)], **result)
+        payload["agent_directive"] += evid
+        return payload
     return rt.ok(TOOL, "search", preview, directive + notes, **result)
+
+
+def _search_gaps(docs: List[Dict[str, Any]], info: Dict[str, Any]) -> List[str]:
+    """검색 범위에서 빠진 것: 결과가 없거나 적어도 '없다'고 단정하면 안 되는 이유들."""
+    gaps: List[str] = []
+    if info["remaining"]:
+        gaps.append(f"아직 등록하지 못한 파일 {info['remaining']}개 (next_commands의 index로 등록)")
+    if info["skipped"]:
+        gaps.append(f"읽지 못한 파일 {len(info['skipped'])}개 (skipped)")
+    if info["stale"]:
+        gaps.append(f"원본이 바뀐 뒤 다시 읽지 못한 캐시 {len(info['stale'])}개 (옛 내용으로 검색, 결과의 stale 표시)")
+    ocr = [os.path.basename(d["file"]) for d in docs if (d.get("meta") or {}).get("ocr_needed")]
+    if ocr:
+        gaps.append(f"글자가 없는 PDF {len(ocr)}개 (스캔 이미지, OCR 필요): {', '.join(ocr[:5])}")
+    cut = [os.path.basename(d["file"]) for d in docs if (d.get("meta") or {}).get("rows_truncated")]
+    if cut:
+        gaps.append(f"행이 많아 {MAX_SHEET_ROWS}행까지만 읽은 엑셀 {len(cut)}개: {', '.join(cut[:5])}")
+    if info["excluded_dirs"]:
+        gaps.append(f"들어가지 않은 하위 폴더 {len(info['excluded_dirs'])}개 (깊이 제한 또는 '_'로 시작): "
+                    + ", ".join(os.path.basename(d) for d in info["excluded_dirs"][:5]))
+    return gaps
 
 
 # ==============================================================================

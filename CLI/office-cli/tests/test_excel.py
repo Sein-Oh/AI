@@ -190,7 +190,7 @@ def test_read_values_search_and_truncation(xl, capsys):
 
 def test_read_unknown_sheet_suggests(xl, capsys):
     code, out = run(capsys, "read", "--sheet", "요약표")
-    assert code == 1 and "[추천] 요약" in out["message"]
+    assert code == 1 and "[후보] 요약" in out["message"] and "[추천]" not in out["message"]   # 부분 일치는 추측하지 않음
 
 
 def test_read_closed_xlsx_with_openpyxl(tmp_path, capsys, monkeypatch):
@@ -369,7 +369,7 @@ def test_chart_delete_rules(xl, capsys):
     code, out = run(capsys, "chart", "--action", "delete")
     assert code == 1
     code, out = run(capsys, "chart", "--action", "delete", "--name", "매출차트")
-    assert code == 1 and "[추천] 매출" in out["message"]
+    assert code == 1 and "[후보] 매출" in out["message"] and "[추천]" not in out["message"]
     code, out = run(capsys, "chart", "--action", "delete", "--name", "매출")
     assert code == 0 and ws.charts == []
 
@@ -377,3 +377,105 @@ def test_chart_delete_rules(xl, capsys):
 def test_argument_error_is_json(capsys):
     code, out = run(capsys, "chart", "--type", "donut")
     assert code == 2 and out["tool"] == "excel"
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영: 데이터 손상 방지
+# ---------------------------------------------------------------------------
+
+def test_text_that_excel_would_reinterpret_is_kept_as_text(xl, capsys, tmp_path):
+    app, wb = xl
+    f = tmp_path / "코드.csv"
+    f.write_text("코드,품번,금액,큰수,지수,날짜\n01234,1-2,(100),12345678901234567890,1E5,2026-10-28\n", encoding="utf-8")
+    code, out = run(capsys, "write", "--file", str(f))
+    assert code == 0, out
+    ws = ws_of(wb)
+    assert [ws.values[(2, c)] for c in range(1, 7)] == ["01234", "1-2", "(100)", "12345678901234567890", "1E5", "2026-10-28"]
+    assert {(2, c) for c in range(1, 6)} <= ws.prefixed and (2, 6) not in ws.prefixed     # 연도가 있는 날짜는 날짜로 변환되게 둠
+    assert excel.coerce("12345678901234567890") == "12345678901234567890" and excel.coerce("1200") == 1200
+
+
+def test_replace_result_that_looks_numeric_stays_text(xl, capsys):
+    app, wb = xl
+    ws = ws_of(wb)
+    ws.set(1, 1, "AB-001")
+    code, out = run(capsys, "replace", "--find", "AB-", "--replace", "")
+    assert code == 0 and ws.values[(1, 1)] == "001" and (1, 1) in ws.prefixed
+
+
+def test_range_clear_requires_range(xl, capsys):
+    app, wb = xl
+    ws = ws_of(wb)
+    ws.set(1, 1, "중요")
+    code, out = run(capsys, "range", "--action", "clear")
+    assert code == 1 and "--range" in out["message"] and ws.values[(1, 1)] == "중요"
+
+
+def test_merge_with_several_values_needs_overwrite(xl, capsys):
+    app, wb = xl
+    ws = ws_of(wb)
+    for c, v in enumerate(["이름", "부서", "직급"], 1):
+        ws.set(1, c, v)
+    code, out = run(capsys, "range", "--action", "merge", "--range", "A1:C1")
+    assert code == 1 and out["error_type"] == "needs_user_decision" and "B1=부서" in out["message"]
+    assert not [x for x in ws.log if x[0] == "Merge"]
+    code, out = run(capsys, "range", "--action", "merge", "--range", "A1:C1", "--overwrite")
+    assert code == 0 and ("Merge", "$A$1:$C$1", False) in ws.log
+
+
+def test_copy_over_existing_values_needs_overwrite(xl, capsys):
+    app, wb = xl
+    src, dst = ws_of(wb), ws_of(wb, "요약")
+    src.set(1, 1, "원본")
+    dst.set(2, 2, "기존 값")
+    code, out = run(capsys, "range", "--action", "copy", "--range", "A1:B2", "--dest", "요약!A1")
+    assert code == 1 and out["error_type"] == "needs_user_decision" and "B2=기존 값" in out["message"]
+    assert not [x for x in src.log if x[0] == "Copy"]
+    code, out = run(capsys, "range", "--action", "copy", "--range", "A1:B2", "--dest", "요약!D1")
+    assert code == 0 and ("Copy", "$A$1:$B$2", "$D$1") in src.log
+
+
+def test_hide_row_address_hides_rows_not_columns(xl, capsys):
+    import types
+    assert excel._axis(types.SimpleNamespace(axis=None, range="5:7")) == "rows"
+    assert excel._axis(types.SimpleNamespace(axis=None, range="'시트 1'!$5:$7")) == "rows"
+    assert excel._axis(types.SimpleNamespace(axis=None, range="C:E")) == "cols"
+    assert excel._axis(types.SimpleNamespace(axis="cols", range="5:7")) == "cols"
+
+
+def test_append_uses_lowest_row_of_all_columns_and_start_row_header(xl, capsys, tmp_path):
+    app, wb = xl
+    ws = ws_of(wb)
+    # C5부터 머리글, A열은 비어 있고 D열이 더 길게 차 있는 표
+    for r, row in enumerate([["품목", "수량"], ["사과", 3], [None, 5]], 5):
+        for c, v in enumerate(row, 3):
+            if v is not None:
+                ws.set(r, c, v)
+    f = tmp_path / "추가.csv"
+    f.write_text("품목,수량\n배,2\n", encoding="utf-8")
+    code, out = run(capsys, "write", "--file", str(f), "--range", "C5", "--append")
+    assert code == 0, out
+    assert ws.values[(8, 3)] == "배" and ws.values[(8, 4)] == 2 and ws.values[(7, 4)] == 5     # D7을 덮어쓰지 않음
+    assert out["range_written"] == "C8:D8"                                                   # 머리글(5행)을 다시 쓰지 않음
+    code, out = run(capsys, "write", "--file", str(f), "--range", "C5", "--append", "--header", "품목,수량")
+    assert code == 0 and out["range_written"] == "C9:D9" and ws.values[(9, 3)] == "배"          # --header도 같은 머리글이면 생략
+
+
+def test_read_closed_xlsx_without_dimension_reads_all_rows(tmp_path, capsys, monkeypatch):
+    import re as _re
+    import zipfile
+    import openpyxl
+    src, dst = tmp_path / "src.xlsx", tmp_path / "nodim.xlsx"
+    wb = openpyxl.Workbook()
+    for r in [["a", "b", "c"], [1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]:
+        wb.active.append(r)
+    wb.save(str(src))
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:     # 다른 프로그램처럼 <dimension> 없이
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.startswith("xl/worksheets/sheet"):
+                data = _re.sub(rb"<dimension[^>]*/>", b"", data)
+            zout.writestr(item, data)
+    monkeypatch.setattr(off, "win32com", None)
+    code, out = run(capsys, "read", "--target", str(dst))
+    assert code == 0 and out["values"][-1] == [10, 11, 12] and len(out["values"]) == 5

@@ -2,6 +2,83 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.4.0] - 2026-10-28
+
+배경: 동료가 만드는 office MCP와 기능을 비교해 필요한 것만 가져왔습니다. 규격서·보고서 검토(장절을 골라 읽고, 검토 결과를 메모로 남기고, 수정 기록을 확인)와 발표 준비(노트)에 씁니다.
+
+### 기능 (추가, 기존 인자·키 유지)
+- `word.py read`에 범위 고르기 `--pages 3-5`, `--paragraphs 120-140`(`141-`는 끝까지), `--section "제목 일부"`(+ `--occurrence N`). 셋 중 하나만 씁니다.
+  - `--pages`: Word가 계산한 실제 쪽(`GoTo`, `Information(wdActiveEndPageNumber)`). 앞 쪽에서 이어지는 단락도 넣고 단락마다 `page`. 결과에 `page_total`. 닫힌 .docx는 reader 캐시와 같은 쪽 정보(저장된 쪽 경계)로 고르고, 쪽 정보가 없으면 `--paragraphs`/`--section`을 안내합니다.
+  - `--section`: 제목 전체가 같은 것 -> 제목이 그 글로 시작하는 것(`1.1`은 `1.1. Scope`와 맞고 `1.1.1 Data`와는 안 맞음) -> 제목에 들어 있는 것 순으로 찾습니다. 여럿이면 `[후보]`, 없으면 비슷한 제목 `[추천]`.
+  - 결과에 `selection`, `count`. 잘리면 나머지를 `--paragraphs a-b`(또는 `--pages`)로 이어 읽는 명령과 고른 범위 전체를 `--save`하는 명령. 0건은 `count: 0`과 안내.
+- 새 명령 `word.py outline`: 제목마다 `paragraph`(read `--paragraphs`와 같은 번호), `level`, `text`, `page`. 200개씩 `--start`.
+- 새 명령 `word.py comment`: 검토 메모 목록(`--action list`, 기본) / 메모 달기(`--action add --anchor 글 --text 메모` 또는 `--file`).
+  메모는 기준 글이 든 단락을 `write --anchor`와 같은 규칙으로 고른 뒤 그 글 자체에 답니다. `--file 메모.csv`(열: 기준 글, 메모 내용[, 몇 번째 단락])는 여러 메모를 한 번에 달고, 기준 글 하나라도 정할 수 없으면 하나도 달지 않습니다(어느 줄이 왜 안 되는지 message). 단 뒤 메모 수와 내용을 다시 읽어 확인합니다(`verified`, 다르면 `UNVERIFIED:`). `office.py undo`로 되돌릴 수 있습니다.
+- 새 명령 `word.py revisions`: 변경 내용 추적 목록(`type` 삽입/삭제/서식 변경 등, `author, date, page, text`, `track_changes`). 읽기만 합니다.
+- 새 명령 `ppt.py notes`: 발표자 노트 읽기(`--slides`, 노트가 있는 슬라이드만, 0건 안내) / 쓰기(`--slide N --text` 또는 `--file`, `--append`). 쓴 뒤 다시 읽어 확인(`verified`, `before`, `after`).
+- 공통 런타임: `ok_unverified()` (R1의 `verified: false` + `UNVERIFIED:` 응답). 이번에 추가한 쓰기 명령(`comment --action add`, `notes` 쓰기)부터 `verified` 키를 씁니다.
+
+### 점검 반영: 공통 런타임 (모든 명령에 영향)
+전체 코드 점검에서 경량 LLM을 잘못 이끌 수 있는 공통 동작을 고쳤습니다 (R3, R4, R5, R7, R8).
+- `-h`/`--help`: 도움말은 stderr, stdout에는 `{"status":"ok","command":"help","verified":true,...}` 1줄 (이전에는 stdout에 사람용 글만 나와 JSON 파싱 실패). 서브명령도 같음.
+- `[추천]` 기준: 표기만 다른(대소문자·공백·`_`·`-`) 이름이 하나일 때만 `[추천]`. 부분·유사 일치는 뜻이 다를 수 있어 `[후보]`(사용자가 고름, `error_type: ambiguous`).
+  예: 시트 `2024` -> 이전 `[추천] 2024_1분기`, 이제 `[후보] 2024_1분기, 2024_2분기`. 첨부 `견적서.pdf`가 없을 때 `견적서_구버전.pdf`를 추천해 `--send`와 함께 다른 파일이 발송될 수 있던 문제.
+  도구가 정한 옵션 값(색 이름, 테마, 형광펜 색, 앱 이름)의 오타는 가까운 값 하나를 계속 `[추천]`.
+- 오류 분류: 일반 `ValueError`/`KeyError`는 코드 버그일 수 있어 `ERROR:`(내부 오류, 오류 로그에 traceback). 입력 문제는 `InputError`로 냅니다.
+- 출력 파일: `--save`, `export` 등의 저장 경로에 같은 이름의 파일이 있으면 덮어쓰지 않고 `_YYYYMMDD_HHMMSS`를 붙인 새 이름으로 저장합니다. 결과에 `recovered`.
+  잠긴 파일은 잠깐 기다려 보고(`retry_fs`) 그래도 잠겨 있으면 새 이름으로 저장하고 `recovered`. 이미 시각이 붙은 이름에 시각을 두 번 붙이지 않습니다.
+- `note_recovered()`와 응답의 `recovered` 키(성공·오류 모두). `retry_fs`는 일시적 오류(접근 거부, 공유·잠금 위반)만 재시도하고, 없는 파일 같은 영구 오류는 바로 올립니다.
+
+### 점검 반영: 1.4.0 새 기능
+- `ppt.py notes` 쓰기: 기존 노트가 있으면 `--append` 또는 `--overwrite`가 있어야 바꿉니다. 둘 다 없으면 노트를 지우지 않고 `needs_user_decision`.
+  노트 본문 개체틀이 없는 파일에서 다른 개체틀(머리글·쪽 번호)에 쓰던 문제. 읽기에서 `--slide 3`도 그 슬라이드만 읽습니다. 이어 읽기 명령이 고르지 않은 슬라이드를 넣던 문제.
+- `word.py comment`: `--anchor`/`--text`/`--file`을 주고 `--action add`를 빠뜨려도 메모를 답니다 (이전에는 목록만 보여 주고 완료로 응답).
+- `word.py read --paragraphs`에 떨어진 범위(예: `1-12,20`)를 주고 결과가 잘리면 오류가 나던 문제. 이어 읽기는 남은 단락 번호로 줍니다.
+- `ppt.py read/info/notes --slides` 형식 오류 문구가 `--pages`를 안내하던 문제.
+
+### 점검 반영 2: 데이터 손상 방지
+- 엑셀 쓰기(`write`, `replace`): Excel이 COM으로 받은 글자를 직접 입력한 것처럼 다시 해석해 값이 바뀌던 문제. 앞자리 0 코드(`01234` -> 1234),
+  15자리 초과 숫자, 월-일·분수처럼 보이는 글(`1-2`, `3/4` -> 날짜), 괄호 숫자(`(100)` -> -100), 지수(`1E5`)는 앞에 `'`를 붙여 글자 그대로 씁니다(`'`는 셀 값에 남지 않음).
+  15자리를 넘는 숫자 글자는 숫자로 바꾸지 않습니다(정밀도 손실). 연도가 있는 날짜(`2026-10-28`)는 계속 날짜로 바뀝니다.
+- `excel.py range --action clear`: `--range`를 빼면 시트 전체를 지우던 문제. `--range`가 필요합니다.
+- `range --action merge`: 값이 있는 칸이 둘 이상이면 왼쪽 위 밖의 값이 지워지므로 병합하지 않고 `needs_user_decision`(지워질 칸과 값). `--overwrite`로만 병합.
+- `range --action copy/move`: 대상 범위에 값이 있으면 덮어쓰지 않고 `needs_user_decision`(원본과 겹치는 칸은 제외). `--overwrite`로만 덮어씀.
+- `range --action hide/unhide/autofit`: `--axis`를 생략하고 `5:7`처럼 행 주소를 주면 시트의 모든 열이 숨겨지던 문제. 행 주소면 행으로 판단합니다.
+- `write --append`: 시작 열 하나만 보고 마지막 행을 찾아 다른 열의 데이터를 덮어쓰던 문제(쓸 열 전체에서 가장 아래 행). 머리글 비교를 1행이 아니라 시작 행과 하고, `--header`도 같은 머리글이면 생략. 시작 행 위쪽에 쓰던 문제.
+- `word.py write --anchor`: 앵커가 표 칸 안이면 `after`는 옆 칸이 아니라 표 뒤에 넣고, `before`/`replace`는 거절합니다. 문서 마지막 단락이 앵커일 때 앵커 단락에 글이 붙고 스타일이 바뀌던 문제. 표로 시작하는 문서의 `--pos start` 거절.
+- `office.py undo`:
+  - 스냅샷을 만들지 못한 쓰기와 새 파일 쓰기는 "되돌릴 지점 없음" 표식을 남깁니다. 직전 작업이 그렇다면 더 오래된 지점으로 넘어가 그 사이 작업까지 지우지 않고 `needs_user_decision`(`--list`에 `undo_available: false`).
+  - 되돌리기 지점 뒤에 파일이 다시 저장되었으면 `needs_user_decision`(`--overwrite`로만 되돌림).
+  - 열린 문서를 닫은 뒤 복사가 실패하면 원본을 다시 열고 `undo_failed` 오류에 `pre_undo_backup` 경로. 복사는 `retry_fs`로 재시도.
+- 쓰기 대상(`--target`, transfer 대상)이 열린 문서도 파일도 아니고 이름이 비슷한 열린 문서가 있으면 새 파일을 만들지 않고 `[후보]`. 새 파일은 전체 경로일 때만 바로 만듭니다.
+
+### 점검 반영 3: reader 근거 정확도 (`PARSER_VERSION` 3, 이전 캐시는 다시 읽을 때 갱신)
+- PDF: 여러 쪽의 위/아래 여백(8%)에 반복되는 줄(문서 제목 머리글, 쪽 번호)을 뺍니다(`meta.header_footer_removed`). 이전에는 머리글이 매 쪽 장절 경로를 끊고 검색 결과에 쪽마다 걸렸습니다.
+- PDF 2단 편집: 가로로 걸친 블록(제목, 표) 사이마다 왼쪽 단을 먼저 읽습니다. 이전에는 y 좌표로만 정렬해 두 단의 줄이 섞여 장절이 틀어졌습니다.
+- 제목 인식: 번호 뒤가 단위인 수치 줄(`10.5 kV 이하`, `3 mm`, `2 개월`)과 목차 줄(`1.2 설계 기준 ....... 12`, 탭 뒤 쪽 번호)은 제목이 아닙니다.
+- DOCX: 변경 추적으로 삽입된 글(`w:ins`, `w:moveTo`)을 넣고 지운 글은 뺍니다. 콘텐츠 컨트롤(`w:sdt`) 안의 본문도 읽습니다. 여러 쪽에 걸친 표는 행마다 그 행의 쪽(이전에는 모두 표가 시작한 쪽).
+  빈 번호 단락도 번호 카운터를 진행해 뒤 조항 번호가 밀리지 않습니다.
+- HWP: 확장 한자 등 BMP 밖 글자(서로게이트 쌍)를 바르게 읽고, 짝 없는 글자는 대체 문자로 바꿔 캐시 저장이 실패하지 않습니다.
+- `search`:
+  - 검색 범위가 불완전하면(등록하지 못한 파일, 읽지 못한 파일, 다시 읽지 못한 캐시, 스캔 PDF, 20,000행에서 자른 엑셀, 들어가지 않은 하위 폴더) `not_searched`와 함께 `UNVERIFIED:`. 이전에는 일부를 못 찾고도 "VERIFIED: 0건, 다시 실행하지 마세요"였습니다.
+  - 원본이 바뀐 캐시는 검색할 때 그 자리에서 다시 읽습니다(20개까지, `recovered`). 다시 읽지 못한 것은 결과 항목에 `stale: true`.
+  - 검색어: 따옴표 구문, 소문자 `and`/`or`, 띄어쓰기·줄바꿈 무시(`설계기준` = `설계 기준`), NFC 정규화, `--regex`의 빈 일치 제외.
+- 색인: 캐시는 최신인데 색인에 없으면(저장 전 중단, 동시 실행) 다시 등록할 때 색인을 고칩니다. Windows에서 경로 대소문자만 다른 항목은 하나로 합칩니다.
+- `read --pages`: 쪽 정보가 있는 DOCX/HWPX에서도 실제 쪽으로 고릅니다(`search`의 근거 `p.12`를 그대로 읽을 수 있게). 결과에 `pages_mode`.
+- `excel.py read`(닫힌 xlsx): 크기 정보(`<dimension>`)가 없는 파일을 A1 한 칸만 읽고 성공으로 응답하던 문제.
+
+### 점검 반영 4: 실제 환경 견고성 (회사 PC 실기 확인 필요)
+- 닫힌 파일을 보이지 않는 Office로 열 때 암호 창이나 열기 매크로 창이 뜨면 끝나지 않던 문제:
+  Excel/Word는 틀린 암호를 넘겨 바로 "열기 암호가 걸린 문서" 오류(STOP_RETRY)가 나게 하고, 백그라운드 인스턴스의 매크로를 끕니다(`AutomationSecurity` 3).
+  Excel은 읽기 전용 권장 창도 띄우지 않습니다. PowerPoint와 DRM 인증 창은 아직 막지 못합니다(남은 할 일).
+- 쓰기 대상 파일을 다른 사람·프로그램이 열고 있어 읽기 전용으로 열리면, 고친 내용을 저장할 수 없으므로 쓰기 전에 멈춥니다(이전에는 저장 실패 또는 저장 안 된 채 성공 응답).
+- Office가 재계산·자동 저장으로 잠깐 바빠 호출을 거부하면 COM 메시지 필터가 15초까지 기다렸다 다시 부릅니다(`recovered`). 넘으면 기존 `office_busy` 오류.
+- Outlook `--folder`: `inbox\프로젝트`처럼 기본 폴더 별칭으로 시작하는 경로를 지원하고, 없는 하위 폴더의 후보를 전체 경로로 줍니다(일부만 주면 상위 폴더 전체를 검색함).
+- `office.py focus`: 창 전환이 실패해도 Alt 키가 눌린 채 남지 않습니다.
+
+### 테스트 러너 (`tools/run_win_tests.py`)
+- K 그룹 추가(K1~K5): outline·장절, 쪽·단락 범위, 메모 달기·목록, 변경 추적 목록, PPT 노트. 가짜 COM 테스트로는 Word 쪽 계산(`GoTo`, `Information`)과 `Comments.Add`, 노트 개체틀이 실제와 같은지 확인할 수 없어 회사 PC 실기로 확인합니다.
+
 ## [1.3.0] - 2026-10-28
 
 배경: 회사 PC에서 reader.py의 두 가지 쓰임새를 지원합니다.
@@ -231,6 +308,14 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 워드 그림/도형 -> PPT 전달 (`office_bridge` word->ppt), PPT -> 워드 전달.
 - Outlook 날짜 범위 검색 (`--since`).
 
+### 1.4.0 점검에서 남긴 것
+- R1 사후 확인: 기존 쓰기 명령(excel write/replace/style/sheet/range/chart, word write/replace/export, ppt write/replace/export, transfer, undo, outlook)이 다시 읽지 않고 `VERIFIED:`. 명령마다 다시 읽어 비교하거나 `ok_unverified`로.
+- PowerPoint 닫힌 파일의 열기 암호, DRM 인증 창이 뜨는 문서: 백그라운드에서 멈출 수 있음 (감시 시간 초과 후 정리 필요).
+- 엑셀: 열 전체 범위(`A:A`)를 사용 범위로 자르기, 조건부 강조 `포함:`의 상대참조(활성 셀 기준), 같은 이름 차트가 여러 시트에 있을 때 `[후보]`, `--map` 연쇄 치환, 보호된 시트 사전 확인, 잘못된 시트 이름 검사 전에 시트가 만들어지는 문제.
+- 워드: 열린 문서의 자동 번호 제목(`ListFormat.ListString`)이 `outline`/`--section`에 나오지 않음(닫힌 파일과 번호 체계 다름), 목차(TOC) 안의 앵커 후보 구별, 머리글 안 글상자 치환, `replace --find`만 준 경우.
+- reader: HWP(바이너리) 개요 번호, PDF `find_tables` 성능(선이 있는 쪽만), 색인 저장 일괄화, BOM 없는 UTF-16 판별.
+- transfer relay 실패 시 넣은 빈 단락 정리.
+
 ### 확인 필요
 - Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 회사 PC(Office 16) 1차(1.2.0)는 A5 정리가 A.xlsx를 닫아 중단, D1·D4(PDF)와 G1·G2·G4는 통과. 남은 것: 1.2.1로 회사 PC 전체 재실행(`errors_*.txt`의 정리 기록에서 A5가 두 번째 Excel PID만 끝냈는지 확인), 눈 확인 항목.
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증. 실제 규격서(PDF/Word/HWPX)로 장절·쪽 인식 확인 (1.3.0).
@@ -240,19 +325,19 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
 상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
 - [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
-- [ ] 결과 JSON `recovered` 배열: 잠금 새 이름 저장, transfer 방식 대체, 색인 재생성, 오래된 스냅샷 정리 (공통 수집기는 `_runtime`)
+- [x] 결과 JSON `recovered` 배열과 `note_recovered` (1.4.0): 잠금·기존 파일 새 이름 저장, 낡은 캐시 다시 읽기. 남은 것: transfer 방식 대체, 오래된 스냅샷 정리도 `recovered`로
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
-- [ ] COM 호출 거부(0x8001010A, 0x80010001) 재시도 `com_retry`를 `_office.py`에 (횟수·시간 상한, 넘으면 기존 office_busy STOP_RETRY)
-- [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)와 undo 복원 `shutil.copy2`(office.py:709,715,721)에 적용. retry_fs는 일시적 오류만 재시도
-- [ ] COM 내보내기(excel.py:781,802; word.py:577,584; ppt.py:741,750; office.py:124)를 `save_with_lock_fallback`으로, 기존 출력 파일은 새 이름 저장 + `recovered`
-- [ ] `--save`(read --save, export .csv/.md, `write_csv_rows`/`write_text`, `resolve_output_path`)가 기존 파일을 덮어쓰는 문제: R4대로 기존 파일이면 새 이름 저장 + `recovered`, `--overwrite`일 때만 덮어쓰기
-- [ ] `--dry-run`: excel replace/range clear·move/sheet delete/chart delete --all, word replace/write --pos replace, ppt replace/slide delete·clear. 스냅샷이 없는 쓰기는 `undo_available: false`
+- [x] COM 호출 거부(0x8001010A, 0x80010001) 재시도: `_office.BusyMessageFilter` (1.4.0, 실기 확인 필요)
+- [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)에 적용. (1.4.0: undo 복원 복사는 `retry_fs`, retry_fs는 일시적 오류만 재시도 완료)
+- [ ] COM 내보내기(excel.py, word.py, ppt.py export)의 잠금 대비 `save_with_lock_fallback`. (1.4.0: 기존 출력 파일은 새 이름 저장 + `recovered` 완료)
+- [x] `--save`가 기존 파일을 덮어쓰는 문제: 기존 파일이면 새 이름 저장 + `recovered` (1.4.0). 남은 것: 덮어쓰기를 원할 때의 `--overwrite` 인자
+- [ ] `--dry-run`: excel replace/range clear·move/sheet delete/chart delete --all, word replace/write --pos replace, ppt replace/slide delete·clear. (1.4.0: 스냅샷이 없는 쓰기는 undo가 건너뛰지 않음, `undo --list`의 `undo_available: false`. 쓰기 결과에도 표시하는 것은 남음)
 - [ ] 빈 결과 `count: 0` + "찾은 항목 없음": excel read 빈 범위, word/ppt read 0단위, outlook list, office windows, info --all, chart list, undo --list
 - [ ] 잘리는 결과에 `truncated` + 전체 결과 파일 경로: excel read --search(50), excel replace cells(30), undo --list(20), outlook list/search. `body_truncated` 옆에 `truncated`
 - [ ] next_commands: excel write 자리표시 `--title 차트` 제거(excel.py:509), word.py:136·ppt.py:183 transfer 명령에 `--from-target`
-- [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
+- [x] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄) (1.4.0)
 - [ ] tools/run_win_tests.py `--agent` 모드: JsonArgumentParser와 최상위 예외 처리, 로그 태그 `[준비]` `[주의]` `[확인]` -> `[INFO]` `[WARN]`
 - [ ] .md 문자 규칙: 유니코드 화살표 26개 -> `->` (SKILL.md:44, README.md:69,133-135,140, TEST_CHECKLIST.md:34, docs/history/office-cli_WORK_PLAN_1.0.md 7곳), 원문자 -> `1.` `2.` (WORK_PLAN.md:195)
-- [ ] `_STOP_RETRY_ERRORS`에서 ValueError/KeyError 제외 (_runtime.py:79-80)
+- [x] `_STOP_RETRY_ERRORS`에서 ValueError/KeyError 제외 (1.4.0)
 - [ ] pyproject.toml `target-version = "py313"`
 - [ ] 인자 alias 정리(추가만): `-r`/`-c`/`-n` 충돌, `--limit` 대 `--top`, `--pages` 대 `--slides`

@@ -66,6 +66,15 @@ class FakeRange:
     def Style(self, value):
         self.doc.log.append(("style", self.doc.text[self.Start:self.End], value))
 
+    def Information(self, kind):
+        if kind == 12:                                   # wdWithInTable
+            return any(s <= self.Start < e for s, e in self.doc.table_spans)
+        raise AssertionError(kind)
+
+    def Tables(self, i):
+        s, e = next((s, e) for s, e in self.doc.table_spans if s <= self.Start < e)
+        return type("T", (), {"Range": FakeRange(self.doc, s, e)})()
+
     def InsertAfter(self, s):
         self.doc.replace(self.End, self.End, s)
         self.End += len(s)
@@ -126,6 +135,37 @@ class FakeTable:
         return cell
 
 
+class FakeComment:
+    def __init__(self, scope, text, author="검토자", done=False):
+        self.Scope = scope
+        self.Range = Props()
+        self.Range.Text = text
+        self.Author = author
+        self.Date = "2026-10-28 10:00"
+        self.Done = done
+        self.Ancestor = None
+
+
+class FakeComments:
+    def __init__(self, doc):
+        self.doc = doc
+        self.items = []
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def __call__(self, i):
+        return self.items[i - 1]
+
+    def Add(self, Range=None, Text=""):
+        c = FakeComment(FakeRange(self.doc, Range.Start, Range.End), Text)
+        self.items.append(c)
+        self.items.sort(key=lambda x: x.Scope.Start)      # Word도 문서 순서로 번호를 매김
+        self.doc.Saved = False
+        return c
+
+
 class FakeStyles:
     def __call__(self, key):
         return key
@@ -141,6 +181,8 @@ class FakeWordDocument:
         self.Saved = True
         self.Styles = FakeStyles()
         self.WordOpenXML = "<xml/>"
+        self.Comments = FakeComments(self)
+        self.table_spans = []        # 표 영역 [(시작, 끝)] (끝 = 표 다음 단락의 시작)
 
     def replace(self, s, e, v):
         self.text = self.text[:s] + v + self.text[e:]

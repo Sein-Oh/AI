@@ -66,9 +66,9 @@ def test_ok_response_is_one_json_line_exit_0(tmp_path):
 def test_input_error_is_stop_retry_with_suggestion(tmp_path):
     code, payload, _ = run_script(tmp_path, TOOL_BODY, "go", "--mode", "input")
     assert code == 1
-    assert payload["status"] == "error" and payload["error_type"] == "input"
+    assert payload["status"] == "error" and payload["error_type"] == "ambiguous"
     assert payload["agent_directive"].startswith("STOP_RETRY:")
-    assert "[추천] 시트3" in payload["message"] or "[추천]" in payload["message"]
+    assert "[후보]" in payload["message"] and "[추천]" not in payload["message"]   # Sheet3 -> Sheet1/Sheet2는 추측하지 않음
 
 
 def test_com_busy_error_is_explained(tmp_path):
@@ -173,7 +173,7 @@ def test_resolve_input_path_suggests(tmp_path):
     assert rt.resolve_input_path("매출_10월.csv") == os.path.join(data, "매출_10월.csv")
     with pytest.raises(rt.InputError) as ei:
         rt.resolve_input_path("매출_10월.xlsx")
-    assert "[추천] 매출_10월.csv" in str(ei.value)
+    assert "[후보] 매출_10월.csv" in str(ei.value) and "[추천]" not in str(ei.value)   # 다른 형식 파일은 추측하지 않음
 
 
 def test_cleanup_work_dir_removes_old_files():
@@ -238,7 +238,7 @@ def test_error_log_input_error_without_traceback(tmp_path):
     text = _error_log(tmp_path)
     assert text.startswith(f"===== ") and f"| office-cli {rt.VERSION} | Python " in text
     assert "명령: demo.py go --mode input" in text
-    assert "결과: input | 시트 'Sheet3'" in text
+    assert "결과: ambiguous | 시트 'Sheet3'" in text
     assert "traceback:" not in text
     assert text.endswith("\n\n")
 
@@ -328,3 +328,84 @@ def test_version_matches_skill_md():
         with open(os.path.join(TOOL_DIR, skill), encoding="utf-8") as f:
             m = re.search(r'^\s+version:\s*"([^"]+)"', f.read(), re.M)
         assert m and m.group(1) == rt.VERSION, skill
+
+
+# ------------------------------------------------------------------ 공통 런타임 R3/R4/R5/R7/R8
+
+def test_help_is_stderr_text_and_one_json_line(tmp_path):
+    for argv in (["-h"], ["go", "-h"]):                       # 최상위와 서브명령 모두
+        code, payload, err = run_script(tmp_path, TOOL_BODY, *argv)
+        assert code == 0 and payload["command"] == "help" and payload["verified"] is True
+        assert payload["agent_directive"].startswith("VERIFIED:") and "usage:" in err
+
+
+def test_value_error_is_internal_error_with_traceback(tmp_path):
+    body = TOOL_BODY.replace('raise RuntimeError("버그")', 'raise ValueError("코드 버그")')
+    code, payload, _ = run_script(tmp_path, body, "go", "--mode", "x")
+    assert code == 1 and payload["error_type"] == "internal" and payload["agent_directive"].startswith("ERROR:")
+    assert "traceback:" in _error_log(tmp_path)
+
+
+def test_not_found_recommends_only_same_name():
+    e = rt.not_found("시트", "sheet 1", ["Sheet_1", "Sheet2"])          # 표기만 다름 -> 바로 재시도해도 같은 뜻
+    assert "[추천] Sheet_1" in str(e) and not e.candidates
+    e = rt.not_found("시트", "2024", ["2024_1분기", "2024_2분기"])      # 부분 일치 -> 사용자가 고름
+    assert "[추천]" not in str(e) and e.candidates == ["2024_1분기", "2024_2분기"]
+    e = rt.not_found("첨부 파일", "견적서.pdf", ["견적서_구버전.pdf"])
+    assert "[추천]" not in str(e) and "[후보] 견적서_구버전.pdf" in str(e)
+    e = rt.not_found("색상", "yelow", ["yellow", "green"], vocab=True)  # 도구가 정한 옵션 값의 오타
+    assert "[추천] yellow" in str(e)
+    e = rt.not_found("시트", "없음", [])
+    assert "[추천]" not in str(e) and "[후보]" not in str(e)
+
+
+def test_resolve_output_path_never_overwrites(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "RECOVERED", [])
+    target = tmp_path / "보고서.csv"
+    target.write_text("기존", encoding="utf-8")
+    out = rt.resolve_output_path(str(target), "x", ".csv")
+    assert out != str(target) and os.path.basename(out).startswith("보고서_") and target.read_text(encoding="utf-8") == "기존"
+    assert rt.RECOVERED and "보고서.csv 이미 있음" in rt.RECOVERED[0]
+    assert rt.ok("t", "c", "p")["recovered"] == rt.RECOVERED
+    assert rt.resolve_output_path(str(target), "x", ".csv", overwrite=True) == str(target)
+
+
+def test_timestamped_does_not_stack_stamps(tmp_path):
+    p = str(tmp_path / "r_20261028_101500.xlsx")
+    import re
+    assert re.fullmatch(r"r_\d{8}_\d{6}\.xlsx", os.path.basename(rt._timestamped(p)))
+
+
+def test_retry_fs_retries_only_transient_errors(monkeypatch):
+    monkeypatch.setattr(rt.time, "sleep", lambda s: None)
+    calls = []
+
+    def missing():
+        calls.append(1)
+        raise FileNotFoundError("없음")
+    with pytest.raises(FileNotFoundError):
+        rt.retry_fs(missing)
+    assert len(calls) == 1                                    # 영구 오류는 기다리지 않음
+
+    state = {"n": 0}
+
+    def locked_twice():
+        state["n"] += 1
+        if state["n"] < 3:
+            raise PermissionError("잠김")
+        return "ok"
+    assert rt.retry_fs(locked_twice) == "ok" and state["n"] == 3
+
+
+def test_lock_fallback_reports_recovered(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "RECOVERED", [])
+    monkeypatch.setattr(rt.time, "sleep", lambda s: None)
+    target = str(tmp_path / "표.csv")
+
+    def writer(p):
+        if p == target:
+            raise PermissionError("Excel에서 열림")
+        open(p, "w").close()
+    out = rt.save_with_lock_fallback(target, writer, "CSV 파일")
+    assert out != target and os.path.exists(out)
+    assert rt.RECOVERED == [f"표.csv 잠김(CSV 파일) -> {os.path.basename(out)}로 저장"]
