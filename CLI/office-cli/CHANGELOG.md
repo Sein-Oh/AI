@@ -117,7 +117,7 @@
 ## [1.2.0] - 2026-10-28
 
 저장소 지침(AGENTS.md 2026-10-28) 반영 1차: 사용자 확인 없이 덮어쓰거나 추측하던 동작을 멈춥니다.
-근거 `docs/COMPLIANCE_REVIEW_2026-10-28.md` 2절, 구현 `CLI/README.md` R8(`[추천]`/`[후보]`).
+근거 `docs/history/COMPLIANCE_REVIEW_2026-10-28.md` 2절, 구현 `CLI/README.md` R8(`[추천]`/`[후보]`).
 
 ### 기능 (추가만, 기존 인자·키 유지)
 - 후보가 둘 이상이라 도구가 고를 수 없을 때의 오류 형식: `error_type: "ambiguous"`, `candidates`(최대 10개), message 끝 `[후보] a, b, c`,
@@ -238,7 +238,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
 
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
-상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
+상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
 - [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
 - [ ] 결과 JSON `recovered` 배열: 잠금 새 이름 저장, transfer 방식 대체, 색인 재생성, 오래된 스냅샷 정리 (공통 수집기는 `_runtime`)
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
@@ -252,7 +252,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - [ ] next_commands: excel write 자리표시 `--title 차트` 제거(excel.py:509), word.py:136·ppt.py:183 transfer 명령에 `--from-target`
 - [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
 - [ ] tools/run_win_tests.py `--agent` 모드: JsonArgumentParser와 최상위 예외 처리, 로그 태그 `[준비]` `[주의]` `[확인]` -> `[INFO]` `[WARN]`
-- [ ] .md 문자 규칙: 유니코드 화살표 26개 -> `->` (SKILL.md:44, README.md:69,133-135,140, TEST_CHECKLIST.md:34, WORK_PLAN.md 7곳), 원문자 -> `1.` `2.` (WORK_PLAN.md:195)
+- [ ] .md 문자 규칙: 유니코드 화살표 26개 -> `->` (SKILL.md:44, README.md:69,133-135,140, TEST_CHECKLIST.md:34, docs/history/office-cli_WORK_PLAN_1.0.md 7곳), 원문자 -> `1.` `2.` (WORK_PLAN.md:195)
 - [ ] `_STOP_RETRY_ERRORS`에서 ValueError/KeyError 제외 (_runtime.py:79-80)
 - [ ] pyproject.toml `target-version = "py313"`
 - [ ] 인자 alias 정리(추가만): `-r`/`-c`/`-n` 충돌, `--limit` 대 `--top`, `--pages` 대 `--slides`

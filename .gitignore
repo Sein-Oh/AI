@@ -25,6 +25,8 @@ wheels/
 
 # Tool runtime data (error logs, caches) – each tool folder
 CLI/*/data/
+CLI/*/cache/
+CLI/office-cli/config.json
 
 # Windows 통합 테스트 결과 (CLI/run_all_tests.py)
 CLI/test_result_*.txt

@@ -5,7 +5,7 @@ PDF, HWP, Office 파일은 Office 없이 읽고, 캐시에 등록해 쪽·장절
 
 - 에이전트용 요약: [`SKILL.md`](SKILL.md)
 - 변경 이력과 남은 할 일: [`CHANGELOG.md`](CHANGELOG.md)
-- 설계 배경과 결정 기록: [`WORK_PLAN.md`](WORK_PLAN.md)
+- 1.0 설계 배경과 결정 기록: [`docs/history/office-cli_WORK_PLAN_1.0.md`](../../docs/history/office-cli_WORK_PLAN_1.0.md)
 
 ## 1. 구성
 
