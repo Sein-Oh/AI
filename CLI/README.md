@@ -23,7 +23,7 @@ python run_all_tests.py --only diag            :: 환경 진단만 (1분)
 
 - 단계: `diag`(Python, 라이브러리, 문서 보안(DRM)이 python-docx/pptx 템플릿과 새로 쓴 파일을 바꾸는지) -> `pytest`(도구별 오프라인 테스트)
   -> `ml`(ml-kit 실기) -> `office`(office-cli 실기, Outlook은 `--outlook`일 때만). 끝에 각 도구의 `data\logs\errors.txt`(실제 사용 중 오류)도 붙입니다.
-- 결과: `C:\CLI\test_result_<라벨>_<시각>.txt`. 단계마다 바로 기록하므로 중간에 멈추거나 Ctrl+C로 끊어도 남습니다. 이 파일 하나를 그대로 Claude에게 전달하세요.
+- 결과: `C:\CLI\test_result_<라벨>_<시각>.txt`. 단계마다 바로 기록하므로 중간에 멈추거나 Ctrl+C로 끊어도 남습니다. 이 파일 하나를 그대로 Claude에게 전달하세요. 저장소에는 `docs/test_logs/`에 올립니다.
 - 시작 전에 열린 Office 문서를 모두 저장하고 닫고, 실기 테스트 중에는 Office 창을 만지지 마세요.
 - `run_all_tests.bat`를 더블클릭해도 같습니다(전부 실행, 끝나면 창이 멈춰 요약을 보여 줌). 화면 끝과 결과 파일 끝에 단계별 요약이 나옵니다.
 
