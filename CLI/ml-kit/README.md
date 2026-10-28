@@ -59,15 +59,11 @@ data/logs/errors.txt        # 실패한 실행의 오류 로그 (자동 생성, 
 
 ### 1-B) OpenCode 스킬 설치
 
-OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이름(`ml-kit`)과 같아야** 합니다. 이 폴더(`CLI/ml-kit/`)를 그대로 복사합니다.
+도구는 `C:\CLI\ml-kit`에 둡니다. `SKILL.md`의 명령 경로가 이 위치 기준으로 적혀 있습니다 (사내 PC 배치 안내: `docs/opencode/README.md`).
+OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이름(`ml-kit`)과 같아야** 합니다.
 
-| 범위 | 설치 위치 (Windows) |
-|---|---|
-| 전체 프로젝트 공용 (권장) | `C:\Users\<사용자>\.config\opencode\skills\ml-kit\` |
-| 특정 프로젝트 전용 | `<프로젝트>\.opencode\skills\ml-kit\` |
-
-1. 위 위치에 `ml-kit` 폴더째 복사합니다 (`SKILL.md`, `ml_*.py` 포함, `tests\`는 생략 가능).
-2. **권장**: 복사한 `SKILL.md` 안의 `<SKILL_DIR>` 를 실제 절대 경로(예: `C:\Users\hong\.config\opencode\skills\ml-kit`)로 모두 바꿔 저장합니다. 경량 LLM이 경로를 추론할 필요가 없어집니다.
+1. 스킬 폴더 `C:\Users\<사용자>\.config\opencode\skills\ml-kit\`를 `C:\CLI\ml-kit`에 연결(`mklink /J`)하거나, 그 폴더에 `SKILL.md`만 복사합니다.
+2. 도구를 다른 위치에 두면 `SKILL.md` 안의 `C:\CLI\ml-kit`을 그 경로로 모두 바꿉니다.
 3. 권한을 제한하는 경우 `opencode.json` 에 `"permission": {"skill": {"ml-kit": "allow"}}` 를 추가합니다.
 4. OpenCode에서 에이전트가 `skill({ name: "ml-kit" })` 로 스킬을 불러오는지 확인합니다.
 

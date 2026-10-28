@@ -24,7 +24,7 @@
 | 표(Excel/CSV) 데이터로 예측 모델 학습, 새 데이터 예측, ML 결과 보고서 | `ml-kit` |
 
 1. 위 작업은 스킬 명령으로만 한다. openpyxl, python-docx, win32com 등으로 파이썬 코드를 직접 짜서 하지 않는다.
-2. 스킬 폴더(SKILL.md의 `<SKILL_DIR>`)는 `C:\Users\<사용자이름>\.config\opencode\skills\<스킬이름>`이다.
+2. 도구는 `C:\CLI\ml-kit`, `C:\CLI\office-cli`에 있다. SKILL.md의 명령 경로를 그대로 쓴다.
 3. 해당 스킬의 SKILL.md를 먼저 읽고, 템플릿 명령을 그대로 쓴다. `<...>` 부분만 바꾸고 옵션을 지어내지 않는다.
 4. 명령은 1번만 실행한다. 출력의 **마지막 1줄 JSON**만 읽는다. `[PROGRESS]`, `[INFO]`, `[WARN]` 줄은 무시한다.
 5. JSON에 `next_commands`가 있으면 다음 단계는 그 `command`를 글자 그대로 실행한다. 명령을 새로 만들지 않는다.

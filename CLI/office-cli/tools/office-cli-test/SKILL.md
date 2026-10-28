@@ -10,7 +10,7 @@ metadata:
 
 # office-cli-test 스킬 (Windows)
 
-`<SKILL_DIR>` 는 이 SKILL.md 가 있는 폴더의 절대 경로다. 이 폴더는 스킬 폴더 안에서 `office-cli` 폴더 **옆**에 있어야 한다.
+테스트 러너 위치는 `C:\CLI\office-cli\tools\run_win_tests.py`이다. 아래 명령의 경로를 그대로 쓴다.
 테스트는 실제 Office 창을 열고 닫으며 5~20분 걸린다. 명령은 **1회만** 실행한다.
 
 ## 1. 실행 전 (반드시)
@@ -23,9 +23,9 @@ PowerShell에서는 명령 앞에 전역 지침의 인코딩 줄(`$env:PYTHONIOE
 
 | 요청 | 명령 |
 |---|---|
-| 기본 (Outlook 제외) | `python "<SKILL_DIR>\..\office-cli\tools\run_win_tests.py" --agent --skip-outlook` |
-| 일부 그룹만 (예: A, C) | `python "<SKILL_DIR>\..\office-cli\tools\run_win_tests.py" --agent --skip-outlook --only A,C` |
-| Outlook 포함 (사용자가 요청한 경우만) | `python "<SKILL_DIR>\..\office-cli\tools\run_win_tests.py" --agent` |
+| 기본 (Outlook 제외) | `python "C:\CLI\office-cli\tools\run_win_tests.py" --agent --skip-outlook` |
+| 일부 그룹만 (예: A, C) | `python "C:\CLI\office-cli\tools\run_win_tests.py" --agent --skip-outlook --only A,C` |
+| Outlook 포함 (사용자가 요청한 경우만) | `python "C:\CLI\office-cli\tools\run_win_tests.py" --agent` |
 | 테스트 폴더 지정 | 위 명령 끝에 `--dir "D:\office_test"` |
 
 - `--self-email` 은 실제 메일을 보낸다. 사용자가 주소를 주며 **발송 테스트를 분명히 요청한 경우에만** 붙인다.

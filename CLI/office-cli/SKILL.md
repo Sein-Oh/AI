@@ -11,7 +11,7 @@ metadata:
 # office-cli 스킬 (Windows)
 
 ## 꼭 지킬 규칙
-1. 모든 명령은 `python "<SKILL_DIR>\<파일>.py" <명령> ...` 형식이다. `<SKILL_DIR>` = 이 SKILL.md가 있는 폴더의 절대 경로.
+1. 도구 위치는 `C:\CLI\office-cli`이다. 모든 명령은 `python "C:\CLI\office-cli\<파일>.py" <명령> ...` 형식이다 (예: `python "C:\CLI\office-cli\excel.py" read`).
 2. PowerShell에서는 명령 앞에 전역 지침의 인코딩 줄(`$env:PYTHONIOENCODING='utf-8'; ...`)을 붙인다.
 3. 명령은 **1번만** 실행한다. 출력의 **마지막 1줄 JSON**만 읽는다. `[PROGRESS]` 줄은 무시한다.
 4. 아래 표의 명령과 옵션만 쓴다. 옵션을 지어내지 않는다.

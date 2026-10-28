@@ -20,7 +20,7 @@ CLI/office-cli/
 ├── _runtime.py  공통 런타임 (응답 계약, 경로, 입출력, 마크다운 해석)
 ├── _office.py   Office COM 공통 (세션, 스냅샷, 색/테마)
 ├── tools/run_win_tests.py  Windows 실기 테스트 러너
-├── tools/office-cli-test/SKILL.md  실기 테스트를 에이전트가 돌리는 스킬 (스킬 폴더에 office-cli 옆으로 복사)
+├── tools/office-cli-test/SKILL.md  실기 테스트를 에이전트가 돌리는 스킬 (스킬 폴더 office-cli-test에 연결하거나 SKILL.md만 복사)
 └── tests/       오프라인 테스트 (가짜 COM + 실제 샘플 파일)
 ```
 
@@ -190,5 +190,5 @@ python CLI/office-cli/tools/run_win_tests.py  :: Windows + Office 실기 (자세
   `errors_*.txt`에는 러너의 자동 복구(닫힌 A 문서 다시 열기), 창/프로세스 정리 기록(어떤 PID에 Quit/WM_CLOSE를 보냈고 무엇을 보호했는지), 도구 오류 로그가 함께 들어 있습니다.
 - 러너는 테스트 문서(A.xlsx/A.docx/A.pptx)가 열린 프로세스를 끝내지 않습니다. 정리 판단 규칙은 `tools/win_test_rules.py`(오프라인 테스트 `tests/test_win_runner.py`).
 - DRM PC에서 python-pptx 기본 템플릿(`pptx/templates/default.pptx`)이 암호화돼 있으면 그 템플릿이 필요한 오프라인 테스트만 "python-pptx 기본 템플릿이 손상됨 (DRM 추정)"으로 건너뜁니다. python-docx는 폴더 템플릿으로 대신 만듭니다. 도구 코드는 기본 템플릿을 쓰지 않습니다.
-- OpenCode 에이전트에게 실기 테스트를 맡기려면 `tools/office-cli-test` 폴더를 스킬 폴더의 `office-cli` 옆에 복사합니다. 에이전트는 `--agent`로 실행해 결과 JSON 1줄만 읽습니다.
+- 도구는 `C:\CLI\office-cli`에 둡니다 (SKILL.md의 명령 경로 기준). OpenCode 에이전트에게 실기 테스트를 맡기려면 스킬 폴더 `office-cli-test`를 `C:\CLI\office-cli\tools\office-cli-test`에 연결하거나 그 SKILL.md만 복사합니다. 에이전트는 `--agent`로 실행해 결과 JSON 1줄만 읽습니다.
 - 대상은 Office 16.0(2016/2019/2021/365)입니다. Word 2007의 `SaveAs2` 부재는 `SaveAs`로 대체하므로 Office 2007에서도 실기 테스트가 돕니다. 다만 PDF 추가 기능이 없으면 PDF 내보내기 항목은 `ENV-SKIP`으로 기록됩니다.

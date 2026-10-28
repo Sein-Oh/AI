@@ -20,7 +20,7 @@ metadata:
 7. `--overwrite`는 사용자가 "덮어써", "교체해"라고 말했을 때만 붙인다. 스스로 붙이지 않는다.
 8. 파일 경로는 `file:///C:/...` 링크로 보고한다. 이모지를 쓰지 않는다.
 
-`<SKILL_DIR>` = 이 SKILL.md가 있는 폴더의 절대 경로.
+도구 위치는 `C:\CLI\ml-kit` (office-cli는 `C:\CLI\office-cli`)이다. 아래 경로를 그대로 쓴다.
 
 ## 1단계: 무엇을 할지 고르기
 
@@ -32,7 +32,7 @@ metadata:
 | "보고서 만들어줘" | 5단계 보고서 |
 
 실행 전에 꼭 알아야 할 것: 데이터 파일 경로, 타겟(맞힐 컬럼), 피처(입력 컬럼). 모르면 사용자에게 묻는다.
-컬럼 이름을 모르는 xlsx는 office-cli로 앞부분만 읽는다: `python "<SKILL_DIR>\..\office-cli\excel.py" read --target "<데이터파일>" --range A1:Z5`
+컬럼 이름을 모르는 xlsx는 office-cli로 앞부분만 읽는다: `python "C:\CLI\office-cli\excel.py" read --target "<데이터파일>" --range A1:Z5`
 
 ## 2단계: 학습
 
@@ -40,11 +40,11 @@ metadata:
 
 회귀:
 ```powershell
-python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --desc "<데이터 설명 한 줄>"
+python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --desc "<데이터 설명 한 줄>"
 ```
 분류:
 ```powershell
-python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --task classification --desc "<데이터 설명 한 줄>"
+python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --task classification --desc "<데이터 설명 한 줄>"
 ```
 
 필요할 때만 덧붙이는 옵션:
@@ -75,13 +75,13 @@ python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,
 
 한 건:
 ```powershell
-python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -i "<피처1>=<값>,<피처2>=<값>,<피처3>=<값>"
+python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -i "<피처1>=<값>,<피처2>=<값>,<피처3>=<값>"
 ```
 파일 전체:
 ```powershell
-python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>"
+python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>"
 ```
-- `<version_dir>`은 학습 결과 JSON의 `version_dir` 값을 그대로 쓴다. 모르면 `python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" --history`를 실행해 `<data_root>\<best_version>`을 쓴다.
+- `<version_dir>`은 학습 결과 JSON의 `version_dir` 값을 그대로 쓴다. 모르면 `python "C:\CLI\ml-kit\ml_train.py" -f "<데이터파일>" --history`를 실행해 `<data_root>\<best_version>`을 쓴다.
 - 알릴 것: 한 건이면 `predictions_summary.<타겟>.predictions`, 회귀는 `intervals`(90% 범위)도. 파일이면 `output_file`.
 - 아래 값이 `true`이면 옆의 문장을 덧붙인다:
 
@@ -95,7 +95,7 @@ python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>"
 ## 5단계: ML 결과 보고서 (Word)
 
 ```powershell
-python "<SKILL_DIR>\ml_report.py" -m "<version_dir>"
+python "C:\CLI\ml-kit\ml_report.py" -m "<version_dir>"
 ```
 - 알릴 것: `report_file`(링크), `overall_verdict`(적합/조건부/부적합).
 - 사용자가 보고서 문장을 직접 정해 주면, 파일 쓰기 도구로 `slots.json`(UTF-8)을 만들고 명령 끝에 `--slots "<그 경로>"`를 붙인다.
