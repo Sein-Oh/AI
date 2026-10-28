@@ -35,7 +35,7 @@ import time
 import argparse
 import warnings
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -845,20 +845,30 @@ def train_and_benchmark_classifiers(
 class TransactionGuard:
     """
     Manages atomic version folders:
-    - Garbage collects broken/abandoned .tmp_* folders on startup.
-    - Allocates next version folder (v1, v2, ...).
-    - Stages all files in .tmp_vX/.
-    - Atomically renames .tmp_vX/ to vX/ upon 100% successful execution.
-    - Cleans up .tmp_vX/ immediately if an exception or interrupt occurs.
+    - Removes abandoned .tmp_* staging folders (created by this tool) on startup.
+    - Never deletes a vN folder it did not create in this run: incomplete folders are reported and skipped.
+    - Allocates next version folder (v1, v2, ...). An existing --version is refused unless overwrite=True.
+    - Stages all files in .tmp_vX/ and atomically renames it to vX/ (commit).
+    - With overwrite, the old vX is parked as .bak_vX until finalize(), so a failure restores it.
+    - rollback() undoes everything not yet finalized (staging folder, committed folder, parked backup).
     """
-    def __init__(self, data_root: str, target_version: Optional[str] = None):
+    def __init__(self, data_root: str, target_version: Optional[str] = None, overwrite: bool = False):
         self.data_root = os.path.abspath(data_root)
         os.makedirs(self.data_root, exist_ok=True)
         self.target_version = target_version
+        self.overwrite = overwrite
         self.version_str = ""
         self.tmp_dir = ""
         self.final_dir = ""
+        self.backup_dir = ""
         self.is_committed = False
+        self.is_finalized = False
+        self.incomplete_versions: List[str] = []
+
+    def _next_version(self) -> str:
+        nums = [int(item[1:]) for item in os.listdir(self.data_root)
+                if re.match(r"^v\d+$", item) and os.path.isdir(os.path.join(self.data_root, item))]
+        return f"v{max(nums, default=0) + 1}"
 
     def setup(self) -> str:
         # 1. Startup Garbage Collection of broken temporary folders
@@ -869,18 +879,15 @@ class TransactionGuard:
             self.version_str = normalize_version(self.target_version)
             if not re.match(r"^v[0-9A-Za-z_.-]+$", self.version_str):
                 raise InputError(f"버전명은 영문/숫자만 사용할 수 있습니다 (예: v3): '{self.target_version}'")
+            if os.path.exists(os.path.join(self.data_root, self.version_str)) and not self.overwrite:
+                raise InputError(
+                    f"버전 폴더 '{self.version_str}'이(가) 이미 있어 덮어쓰지 않았습니다. "
+                    f"기존 {self.version_str}를 바꾸는 것은 사용자가 요청한 경우에만 --overwrite로 합니다. "
+                    f"[추천] --version {self._next_version()}"
+                )
         else:
-            # Auto-infer next version
-            existing_versions = []
-            for item in os.listdir(self.data_root):
-                p = os.path.join(self.data_root, item)
-                if os.path.isdir(p) and re.match(r"^v\d+$", item):
-                    try:
-                        existing_versions.append(int(item[1:]))
-                    except Exception:
-                        pass
-            next_num = max(existing_versions, default=0) + 1
-            self.version_str = f"v{next_num}"
+            # Auto-infer next version (incomplete vN folders still take their number)
+            self.version_str = self._next_version()
 
         self.tmp_dir = os.path.join(self.data_root, f".tmp_{self.version_str}")
         self.final_dir = os.path.join(self.data_root, self.version_str)
@@ -892,55 +899,119 @@ class TransactionGuard:
         return self.version_str
 
     def _garbage_collect(self) -> None:
-        """Removes orphaned .tmp_* folders and corrupted version folders without leaderboard.json."""
-        for item in os.listdir(self.data_root):
+        """Removes orphaned .tmp_* staging folders, restores parked .bak_* backups, reports incomplete vN folders."""
+        for item in sorted(os.listdir(self.data_root)):
             p = os.path.join(self.data_root, item)
-            if os.path.isdir(p):
-                # Clean temp folders
-                if item.startswith(".tmp_"):
+            if not os.path.isdir(p):
+                continue
+            if item.startswith(".tmp_"):
+                try:
+                    remove_tree(p)
+                    sys.stderr.write(f"[INFO] 고아 임시 폴더 자동 청소: {item}\n")
+                except Exception:
+                    pass
+            elif item.startswith(".bak_"):
+                original = os.path.join(self.data_root, item[len(".bak_"):])
+                if not os.path.exists(original):
                     try:
-                        remove_tree(p)
-                        sys.stderr.write(f"[INFO] 고아 임시 폴더 자동 청소: {item}\n")
+                        retry_fs(lambda: os.rename(p, original))
+                        sys.stderr.write(f"[WARN] 중단된 덮어쓰기 복원: {item} -> {os.path.basename(original)}\n")
                     except Exception:
                         pass
-                # Check for corrupted version folder (missing leaderboard or dataset)
-                elif re.match(r"^v\d+$", item):
-                    lead_p = os.path.join(p, "leaderboard.json")
-                    ds_p = os.path.join(p, "model_dataset.csv")
-                    if not (os.path.exists(lead_p) and os.path.exists(ds_p)):
-                        try:
-                            remove_tree(p)
-                            sys.stderr.write(f"[INFO] 불완전/손상된 버전 폴더 자동 청소: {item}\n")
-                        except Exception:
-                            pass
+                else:
+                    sys.stderr.write(f"[WARN] 이전 덮어쓰기의 백업 폴더 {item}이(가) 남아 있습니다. 지우지 않았습니다.\n")
+            elif re.match(r"^v\d+$", item):
+                lead_p = os.path.join(p, "leaderboard.json")
+                ds_p = os.path.join(p, "model_dataset.csv")
+                if not (os.path.exists(lead_p) and os.path.exists(ds_p)):
+                    self.incomplete_versions.append(item)
+                    sys.stderr.write(
+                        f"[WARN] 불완전한 버전 폴더 {item} (leaderboard.json 또는 model_dataset.csv 없음): "
+                        f"지우지 않았습니다. 필요 없으면 사용자가 직접 지우세요. 이 버전 번호는 건너뜁니다.\n"
+                    )
 
     def commit(self) -> str:
         """Atomically renames .tmp_vX to vX (retries transient Windows locks from antivirus/Explorer)."""
         if os.path.exists(self.final_dir):
-            # Target version already exists (manual --version override): replace it
-            remove_tree(self.final_dir)
+            if not self.overwrite:
+                raise InputError(f"버전 폴더 '{self.version_str}'이(가) 이미 있어 덮어쓰지 않았습니다.")
+            # Park the old version; it is deleted only after the new one is recorded (finalize)
+            backup = os.path.join(self.data_root, f".bak_{self.version_str}")
+            if os.path.exists(backup):
+                # A leftover backup may be the only good copy of an earlier version: never delete it here
+                raise InputError(f"이전 덮어쓰기의 백업 폴더 '.bak_{self.version_str}'이(가) 남아 있어 진행하지 않았습니다. "
+                                 f"사용자가 내용을 확인한 뒤 직접 정리하세요.")
+            self.backup_dir = backup
+            retry_fs(lambda: os.rename(self.final_dir, self.backup_dir))
         retry_fs(lambda: os.rename(self.tmp_dir, self.final_dir))
         self.is_committed = True
         return self.final_dir
 
-    def rollback(self) -> None:
-        """Removes staging directory on failure."""
-        if not self.is_committed and self.tmp_dir and os.path.exists(self.tmp_dir):
+    def finalize(self) -> None:
+        """Called once the ledger records the committed version: the parked old version is no longer needed."""
+        self.is_finalized = True
+        if self.backup_dir:
             try:
+                remove_tree(self.backup_dir)
+            except Exception as e:
+                sys.stderr.write(f"[WARN] 이전 버전 백업 폴더 정리 실패 (다음 학습 때 다시 안내): {e}\n")
+
+    def rollback(self) -> None:
+        """Undoes a run that was not finalized: staging folder, committed folder and parked backup."""
+        if self.is_finalized:
+            return
+        try:
+            if self.is_committed and os.path.exists(self.final_dir):
+                remove_tree(self.final_dir)  # created by this run, not yet in the ledger
+            if self.backup_dir and os.path.exists(self.backup_dir) and not os.path.exists(self.final_dir):
+                retry_fs(lambda: os.rename(self.backup_dir, self.final_dir))
+                sys.stderr.write(f"[WARN] 비정상 중단: 기존 {self.version_str} 폴더를 되돌렸습니다\n")
+            if self.tmp_dir and os.path.exists(self.tmp_dir):
                 remove_tree(self.tmp_dir)
-                sys.stderr.write(f"[WARN] 비정상 중단: 임시 스테이징 폴더 롤백 완료 ({self.tmp_dir})\n")
-            except Exception:
-                pass
+            sys.stderr.write(f"[WARN] 비정상 중단: 임시 스테이징 폴더 롤백 완료 ({self.tmp_dir})\n")
+        except Exception:
+            pass
+
+
+def verify_version_dir(version_dir: str, target_names: List[str], ledger_path: str, version: str) -> List[str]:
+    """Re-reads a committed version folder. Returns what could not be confirmed (empty = verified)."""
+    problems: List[str] = []
+    try:
+        load_json_file(os.path.join(version_dir, "leaderboard.json"))
+    except Exception as e:
+        problems.append(f"leaderboard.json 읽기 실패: {e}")
+    ds = os.path.join(version_dir, "model_dataset.csv")
+    if not (os.path.exists(ds) and os.path.getsize(ds) > 0):
+        problems.append("model_dataset.csv 없음 또는 빈 파일")
+    for t in target_names:
+        safe = sanitize_filename(t)
+        try:
+            joblib.load(os.path.join(version_dir, f"model_{safe}.joblib"))
+        except Exception as e:
+            problems.append(f"model_{safe}.joblib 다시 읽기 실패: {type(e).__name__}")
+        try:
+            meta = load_json_file(os.path.join(version_dir, f"model_{safe}.json"))
+            if meta.get("version") != version or meta.get("target") != t:
+                problems.append(f"model_{safe}.json의 version/target 불일치")
+        except Exception as e:
+            problems.append(f"model_{safe}.json 읽기 실패: {type(e).__name__}")
+    records = load_history_ledger(ledger_path)
+    if not records or records[-1].get("version") != version:
+        problems.append(f"history.jsonl 마지막 기록이 {version}이 아님")
+    return problems
 
 
 # ==============================================================================
 # 7. SSOT Ledger (history.jsonl) Management
 # ==============================================================================
 
-def append_history_ledger(ledger_path: str, record: Dict[str, Any]) -> None:
+def append_history_ledger(ledger_path: str, record: Dict[str, Any],
+                          on_recorded: Optional[Callable[[], None]] = None) -> None:
     """
     Appends experiment record to history.jsonl and automatically synchronizes
     history.json (standard indented JSON array) as Single Source of Truth (SSOT).
+    on_recorded runs right after the jsonl line is written, before the json sync, so a training run
+    can mark its version folder final the moment the ledger names it (no rollback after that point).
     """
     data_root = os.path.dirname(ledger_path)
     os.makedirs(data_root, exist_ok=True)
@@ -948,6 +1019,8 @@ def append_history_ledger(ledger_path: str, record: Dict[str, Any]) -> None:
     # 1. Append to history.jsonl (streaming ledger)
     with open(ledger_path, "a", encoding="utf-8", newline="\n") as f:
         f.write(dumps_json(record) + "\n")
+    if on_recorded:
+        on_recorded()
 
     # 2. Synchronize history.json (standard formatted JSON array), written atomically
     json_path = os.path.join(data_root, "history.json")
@@ -1160,7 +1233,8 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
     run_lock.acquire()
 
     # Transaction Guard Setup
-    guard = TransactionGuard(data_root=data_root, target_version=args.version)
+    guard = TransactionGuard(data_root=data_root, target_version=args.version,
+                             overwrite=bool(getattr(args, "overwrite", False)))
     try:
         current_version = guard.setup()
     except BaseException:
@@ -1512,10 +1586,14 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             mean_score=min_score, staging_dir=staging_dir, final_dir=guard.final_dir, data_root=data_root,
         )
         history_record["next_commands"] = next_commands
-        append_history_ledger(ledger_path, history_record)
 
-        # Commit Transaction: Atomic rename from .tmp_vX to vX
+        # Commit Transaction: atomic rename .tmp_vX -> vX, then record it in the ledger.
+        # The ledger never names a version folder that does not exist (a failed commit leaves no record).
         final_version_dir = guard.commit()
+        append_history_ledger(ledger_path, history_record, on_recorded=guard.finalize)
+        unverified = verify_version_dir(final_version_dir, target_names, ledger_path, current_version)
+        for u in unverified:
+            sys.stderr.write(f"[WARN] 저장 확인 실패: {u}\n")
         log_progress(100, f"학습 및 산출물 패키징 완료: {current_version} ({os.path.basename(final_version_dir)}) [소요: {duration_sec}초]")
 
         # LLM Directive
@@ -1529,7 +1607,9 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             f"산출물 저장: {final_version_dir}"
         )
         agent_directive = (
-            f"VERIFIED: {current_version} competitive training completed. "
+            (f"UNVERIFIED: {current_version} 학습은 끝났지만 저장 결과를 확인하지 못했습니다 ({'; '.join(unverified)}). "
+             f"재시도하지 말고 이 내용을 사용자에게 그대로 알리세요. " if unverified else "VERIFIED: ")
+            + f"{current_version} competitive training completed. "
             f"Champion models and leaderboard packaged into '{os.path.basename(final_version_dir)}'. "
             f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. "
             f"Next step: run next_commands[0] if the user wants to continue, or proceed to inference. "
@@ -1548,6 +1628,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
             **score_keys,
             "is_best": is_best,
             "goal_met": bool(min_score >= 0.90),
+            "verified": not unverified,
             "recommendations": recommendations,
             "next_commands": next_commands,
             "feature_types": history_record["feature_types"],
@@ -1556,6 +1637,10 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         }
         if column_aliases:
             result["column_aliases"] = column_aliases
+        if unverified:
+            result["unverified"] = unverified
+        if guard.incomplete_versions:
+            result["incomplete_versions"] = guard.incomplete_versions
         return result
 
     except BaseException:
@@ -1672,6 +1757,8 @@ def main():
     parser.add_argument("--dtypes", help="데이터 타입 수동 오버라이드 (예: '일시:datetime,설비코드:str')")
     parser.add_argument("--encoding", help="model_dataset.csv 저장 인코딩 (기본값: Windows Excel 최적화 cp949, 특수문자 발생 시 utf-8-sig 자동 폴백)")
     parser.add_argument("--version", "-v", help="버전 수동 지정 (미지정 시 자동 계산 v1, v2...)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="--version으로 지정한 버전 폴더가 이미 있으면 교체 (사용자 확인 후에만 사용)")
     parser.add_argument("--task", choices=[TASK_REGRESSION, TASK_CLASSIFICATION], default=TASK_REGRESSION,
                         help="학습 유형: regression(기본값, 연속 수치 예측) 또는 classification(범주/라벨 예측)")
     parser.add_argument("--positive-class", dest="positive_class",

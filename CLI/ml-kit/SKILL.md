@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
   platform: windows
 ---
 
@@ -17,6 +17,7 @@ metadata:
 4. 같은 명령을 다시 실행하지 않는다. 결과 파일을 다시 열어 확인하지 않는다.
 5. 파일 경로는 `file:///C:/...` 링크로 보고한다. 이모지를 쓰지 않는다.
 6. 학습은 몇 분 걸릴 수 있다. 명령 실행 도구에 시간 제한 옵션이 있으면 600초 이상으로 준다.
+7. `--overwrite`는 사용자가 "덮어써", "교체해"라고 말했을 때만 붙인다. 스스로 붙이지 않는다.
 
 `<SKILL_DIR>` = 이 SKILL.md가 있는 폴더의 절대 경로.
 
@@ -101,6 +102,9 @@ python "<SKILL_DIR>\ml_report.py" -m "<version_dir>"
 | `agent_directive` 첫 단어 | 할 일 |
 |---|---|
 | `VERIFIED:` | 성공. `preview`와 위에서 정한 값을 사용자에게 알리고 끝낸다. |
-| `STOP_RETRY:` 이고 `message`에 `[추천]`이 있다 | `[추천]` 뒤의 이름으로 바꿔 **1번만** 다시 실행한다. 또 실패하면 `message`를 그대로 알린다. |
+| `UNVERIFIED:` | 실행은 됐지만 결과를 확인하지 못했다. 다시 실행하지 않는다. `unverified` 내용을 그대로 알린다. |
+| `STOP_RETRY:` 이고 `message`에 `[추천]`이 있다 | `[추천]` 뒤의 이름(또는 `--version v3` 같은 옵션 값)으로 바꿔 **1번만** 다시 실행한다. 또 실패하면 `message`를 그대로 알린다. |
 | `STOP_RETRY:` 이고 `[추천]`이 없다 | 다시 실행하지 않는다. `message`를 그대로 알린다. |
 | `ERROR:` | 다시 실행하지 않는다. `message`를 그대로 알린다. |
+
+결과 JSON에 `recovered`가 있으면 (예: 같은 이름 파일이 있어 새 이름으로 저장) 그 문장을 사용자에게 그대로 알린다.

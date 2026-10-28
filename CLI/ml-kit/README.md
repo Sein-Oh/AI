@@ -21,7 +21,9 @@
 
 4. **원자적 트랜잭션 보장 (Atomic Staging & Self-Healing Garbage Collection)**:
    - 학습 도중 예기치 못한 중단(`Ctrl+C`, 프로세스 킬, 메모리 부족) 발생 시 미완성 잔여물이 운영 환경을 오염시키지 않도록 임시 디렉토리(`.tmp_vX/`)에서 모든 작업을 수행합니다.
-   - 모든 검증과 아티팩트 저장이 100% 완료된 순간에만 원자적 이름 변경(`vX/`)을 수행하며, 프로세스 기동 시 이전 실패 잔여물을 자가 청소(GC)합니다.
+   - 모든 검증과 아티팩트 저장이 100% 완료된 순간에만 원자적 이름 변경(`vX/`)을 수행하고, **그 다음에** 원장에 기록합니다 (커밋이 실패하면 원장에 없는 버전이 남지 않음). 프로세스 기동 시 도구가 만든 `.tmp_*` 잔여물만 자가 청소(GC)합니다.
+   - **사용자 확인 없이 지우거나 덮어쓰지 않습니다 (2.3.0)**: 불완전한 `vN` 폴더는 지우지 않고 `[WARN]`과 `incomplete_versions`로 알린 뒤 그 번호를 건너뜁니다. 이미 있는 `--version`은 `--overwrite` 없이는 거부합니다.
+     예측 결과·보고서 파일이 이미 있으면 시각을 붙인 새 이름으로 저장하고 JSON `recovered`에 적습니다 (덮어쓰기는 `--overwrite`).
 
 5. **터미널 및 인코딩 무결성 (Clean Terminal Principle & CP949/UTF-8 Dual Guard)**:
    - Windows 콘솔의 폰트 폭 계산 오차, 줄바꿈 꼬임, 로그 오염, 인코딩 에러(`UnicodeEncodeError`)를 유발하는 유니코드 이모지(아이콘, 원문자 등)의 사용을 엄격히 금지하고 표준 텍스트 태그(`[INFO]`, `[PROGRESS]`, `[WARN]`, `[ERROR]`, `[STATUS]`)만을 사용합니다.
@@ -39,6 +41,7 @@ ml-kit/
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
 ├── requirements.txt        # 런타임 의존성
 ├── tools/run_win_tests.py  # Windows 실기 테스트 (실제 Excel/Word, 파일 잠금, cmd/PowerShell, 배포 폴더)
+│                           #   --dir은 없는 경로나 빈 폴더 (러너가 만든 폴더만 다시 비움)
 │                           #   결과: 테스트 폴더 report_*.txt(요약) + tools/test_logs/testlog_<라벨>_<시각>.txt(AI 판독용 상세 로그)
 │
 ├── [1단계: 학습 엔진]
@@ -210,7 +213,8 @@ python ml_train.py -f "공정.xlsx" -x "반응온도,촉매비율,수분함량" 
 | `--unit-row` | - | 선택 | 단위 행 번호 (지정 시 컬럼명에 안전 결합: `반응온도(°C)`) |
 | `--data-row` | - | 선택 | 실제 데이터 시작 행 번호 (비표준 표 레이아웃 처리용) |
 | `--dtypes` | - | 선택 | 데이터 타입 수동 오버라이드 (예: `일시:datetime,코드:str`) |
-| `--version` | `-v` | 선택 | 버전 폴더 수동 지정 (미지정 시 `v1`, `v2`, ... 자동 채번) |
+| `--version` | `-v` | 선택 | 버전 폴더 수동 지정 (미지정 시 `v1`, `v2`, ... 자동 채번). 이미 있는 버전이면 `STOP_RETRY` + `[추천] --version v<다음>` |
+| `--overwrite` | - | 선택 | `--version` 폴더가 이미 있을 때 교체 (사용자 확인 후에만). 새 버전이 원장에 기록될 때까지 기존 폴더를 `.bak_vX`로 보관했다가 실패하면 되돌림 |
 | `--encoding` | - | 선택 | 산출물 CSV 저장 인코딩 (기본값: Windows Excel 호환 `cp949`) |
 | `--task` | - | 선택 | 학습 유형 `regression`(기본값) / `classification` |
 | `--positive-class` | - | 선택 | 이진 분류 양성 클래스. 지정 시 판정 기준 확률 자동 조정 |
@@ -285,7 +289,8 @@ python ml_predict.py -m v3 -i "반응온도=240,소비전력=65"
 | `--targets` | `-y` | 선택 | 추론할 특정 타겟 목록 (폴더 모드에서 생략 시 폴더 내 전체 타겟 자동 추론) |
 | `--file` | `-f` | 선택* | 배치 추론 대상 데이터 파일 경로 (`.xlsx`, `.csv`) |
 | `--input` | `-i` | 선택* | 단일 즉시 추론용 입력 (`k1=v1,k2=v2` 키-값 쌍, JSON 문자열, 또는 `.json` 파일 경로). Windows 셸에서는 따옴표 이스케이프가 필요 없는 키-값 쌍 또는 `.json` 파일을 권장. 단위 생략 키 허용 |
-| `--out` | `-o` | 선택 | 예측 결과 CSV 저장 경로 (생략 시 `원본_pred_타임스탬프.csv` 자동 생성) |
+| `--out` | `-o` | 선택 | 예측 결과 CSV 저장 경로 (생략 시 `원본_pred_타임스탬프.csv` 자동 생성). 파일이 이미 있으면 `<이름>_<시각>.csv`로 저장하고 `recovered`에 기록 |
+| `--overwrite` | - | 선택 | `--out` 파일이 이미 있으면 덮어쓰기 (사용자 확인 후에만) |
 | `--header-row` | - | 선택 | 컬럼명 헤더 행 번호 (배치 파일 추론 시) |
 | `--unit-row` | - | 선택 | 단위 행 번호 (배치 파일 추론 시) |
 | `--data-row` | - | 선택 | 데이터 시작 행 번호 (배치 파일 추론 시) |
@@ -339,7 +344,8 @@ python ml_predict.py \
 | `--version`, `-v` | `-d`와 함께 쓸 버전 (`v2` 또는 `2`) |
 | `--target`, `-t` | 문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 `all` = 전체) |
 | `--slots` | 소견 덮어쓰기 JSON (파일 또는 문자열) |
-| `--out`, `-o` | 저장 경로 (생략 시 데이터 폴더의 `ML결과보고서_<데이터>_<버전>.docx`) |
+| `--out`, `-o` | 저장 경로 (생략 시 데이터 폴더의 `ML결과보고서_<데이터>_<버전>.docx`). 이미 있으면 `<이름>_<시각>.docx`로 저장하고 `recovered`에 기록 |
+| `--overwrite` | 같은 이름의 보고서가 있으면 덮어쓰기 (사용자 확인 후에만) |
 
 ```bat
 python ml_report.py -m sample_ml_data\v3
@@ -481,6 +487,11 @@ python ml_report.py -d sample_ml_data --slots slots.json
   "agent_directive": "VERIFIED: v1 competitive training completed. Champion models and leaderboard packaged into 'v1'. Mean Val R2=0.9645. Next step: proceed to inference or next iteration."
 }
 ```
+- `verified` (2.3.0): 커밋 후 버전 폴더를 다시 읽어(leaderboard.json, model_dataset.csv, 모델 joblib 다시 load, 메타 version/target, 원장 마지막 기록) 확인했으면 `true`.
+  확인하지 못한 것이 있으면 `false`, `unverified`에 사유 목록, `agent_directive`는 `UNVERIFIED:`로 시작합니다 (재시도하지 말고 그대로 보고).
+- `incomplete_versions` (2.3.0, 있을 때만): 지우지 않고 건너뛴 불완전한 버전 폴더 이름 목록.
+- `recovered` (2.3.0, 모든 도구, 있을 때만): 결과가 달라진 자동 복구 목록. 예: `"예측 결과 파일 pred.csv 이미 있음 -> pred_20261028_101500.csv로 저장 (덮어쓰려면 --overwrite)"`,
+  `"Word 보고서 a.docx 잠김(Excel/Word 등에서 열림) -> a_20261028_101500.docx로 저장"`. 실제 저장 경로는 `output_file`/`report_file`에 있습니다.
 
 #### [에러 발생 시 반환 JSON]
 모든 도구 공통. `error_type`은 `input`(인자/데이터 문제, `STOP_RETRY:`), `internal`(내부 오류, `ERROR:`), `interrupted`(Ctrl+C, exit 130) 중 하나이며, 컬럼명 오타 시 message에 `[추천]` 후보가 포함됩니다.
@@ -692,7 +703,8 @@ OpenCode, Glimmer-30B, CI 파이프라인 등 무인 서브프로세스 환경�
 - **해결 완료**: `--header-row`, `--unit-row`, `--data-row` 파라미터를 활용하십시오. 상단 빈 행은 내장 스니퍼가 자동 건너뛰며, 단위 행(`--unit-row`)을 지정하면 `반응온도(°C)`와 같이 컬럼명에 안전 결합됩니다.
 
 ### Q3. Word 보고서 파일이 열려 있는 상태에서 `ml_report.py`를 다시 실행하면 에러가 납니다.
-- **해결 완료**: Windows 운영체제의 파일 잠금(`PermissionError: [Errno 13]`)을 감지하여, 기존 파일이 잠겨있을 경우 타임스탬프가 추가된 새 파일(`ML결과보고서_<데이터>_<버전>_YYYYMMDD_HHMMSS.docx`)로 자동 분기 저장되므로 작업이 절대 중단되지 않습니다.
+- **해결 완료**: 같은 이름의 보고서가 이미 있으면 (열려 있든 아니든) 기존 파일을 건드리지 않고 시각을 붙인 새 파일(`ML결과보고서_<데이터>_<버전>_YYYYMMDD_HHMMSS.docx`)로 저장하며, JSON `recovered`에 적습니다.
+  `--overwrite`를 줬는데 파일이 Word에 열려 잠겨 있어도 같은 방식으로 새 이름에 저장합니다. 이름 끝의 시각은 두 번 붙지 않습니다.
 
 ### Q4. 다중 타겟으로 학습된 결과는 어떻게 추론하고 보고서를 만드나요?
 - **추론**: `python ml_predict.py --model sample_ml_data/v2 --file new.xlsx`를 실행하면 폴더 내 모든 타겟 모델을 스캔하여 각 타겟의 예측값을 한 번에 생성합니다.

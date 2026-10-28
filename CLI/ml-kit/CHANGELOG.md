@@ -2,6 +2,48 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.3.0] - 2026-10-28
+
+저장소 지침(AGENTS.md "JIT 자가복구" 3번: 덮어쓰기·삭제는 사용자 확인 필요) 반영 1차. 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md` 2절.
+구현은 `CLI/README.md` "공통 런타임 구현 규칙" R1(사후 확인), R3(`recovered`), R4(덮어쓰기 방지).
+
+### 수정 (사용자 확인 없이 지우거나 덮어쓰던 동작)
+- 학습 시작 시 `leaderboard.json`/`model_dataset.csv`가 없는 `vN` 폴더를 **통째로 지우던** 동작을 없앴습니다.
+  이제 지우지 않고 `[WARN]`과 결과 JSON `incomplete_versions`로 알리며, 자동 버전 번호는 그 번호를 건너뜁니다.
+  도구가 만든 임시 폴더 `.tmp_*`만 계속 자동 청소합니다.
+- `--version`에 이미 있는 버전을 주면 **아무 말 없이 교체하던** 동작을 막았습니다.
+  `STOP_RETRY` + `[추천] --version v<다음>`을 내고, 교체는 새 인자 `--overwrite`가 있을 때만 합니다.
+  교체 중에는 기존 폴더를 `.bak_vX`로 보관했다가 새 버전이 원장에 기록된 뒤에 지우며, 실패·중단 시 되돌립니다
+  (프로세스가 죽어 남은 `.bak_vX`는 다음 학습 때 `vX`가 없으면 복원).
+- 원장(`history.jsonl`) 기록을 버전 폴더 커밋 **뒤로** 옮겼습니다. 커밋이 실패하면 원장에 없는 버전이 남지 않고,
+  원장 기록이 실패하면 방금 만든 버전 폴더를 롤백합니다.
+  `history.jsonl`에 한 줄이 기록되는 즉시 그 버전을 확정하므로, 이후 `history.json` 동기화 중에 중단돼도 폴더를 지우거나 되돌리지 않습니다
+  (원장과 폴더가 항상 일치).
+- `--overwrite` 교체 시 이전 덮어쓰기의 백업 `.bak_vX`가 남아 있으면 지우지 않고 `STOP_RETRY`로 멈춥니다 (유일한 정상본일 수 있음).
+- `ml_predict.py --out`의 파일이 이미 있으면 덮어쓰던 동작, `ml_report.py`가 같은 이름(`ML결과보고서_<데이터>_<버전>.docx`)의
+  기존 보고서를 덮어쓰던 동작을 막았습니다. 시각을 붙인 새 이름으로 저장하고 `recovered`에 적습니다. 덮어쓰기는 새 인자 `--overwrite`.
+- 실기 러너 `tools/run_win_tests.py`가 `--dir` 폴더를 확인 없이 `rmtree` 하던 동작을 막았습니다.
+  러너가 만든 폴더(표식 파일 `.created_by_ml-kit-tests`)나 빈 폴더만 비우고, 다른 폴더면 지우지 않고 준비 단계 오류로 멈춥니다.
+- 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙던 문제 (`_pred_<시각>_<시각>.csv`): 기존 시각을 바꿔 붙입니다.
+  같은 초에 같은 이름이 있으면 `_2`를 붙여 기존 파일을 덮지 않습니다.
+
+### 기능 (추가만)
+- 학습 결과 JSON `verified`: 커밋 후 버전 폴더를 다시 읽어 확인(leaderboard, 데이터 스냅샷, 모델 다시 load, 메타, 원장 마지막 기록).
+  확인 실패 시 `verified: false`, `unverified` 사유 목록, `agent_directive`는 `UNVERIFIED:`.
+- 모든 도구 결과 JSON `recovered` (있을 때만): 결과가 달라진 자동 복구 문구 목록. 공통 런타임 `note_recovered()`가 stderr `[WARN]`과 함께 모읍니다.
+  이번 버전에서 기록하는 것: 기존 파일 덮어쓰기 회피, 잠긴 파일 새 이름 저장.
+- 새 인자 `--overwrite`: `ml_train.py`(기존 버전 교체), `ml_predict.py`(`--out` 덮어쓰기), `ml_report.py`(같은 이름 보고서 덮어쓰기).
+- SKILL.md: `UNVERIFIED:` 행동, `recovered` 전달, `--overwrite`는 사용자가 허락했을 때만 붙이는 규칙.
+
+### 실기 테스트 러너
+- M5/M7은 `--overwrite`를 주고 잠긴 파일을 덮어쓰려 할 때 새 이름 저장 + `recovered`의 '잠김'을 확인합니다
+  (덮어쓰기 방지 때문에 잠금 경로가 검사되지 않는 것을 막음).
+- 이전 러너가 만든 `C:\ml_test\ml 테스트`에는 표식 파일이 없으므로, 처음 한 번은 그 폴더를 직접 지우거나 다른 `--dir`을 주세요.
+
+### 호환
+- 기존 CLI 인자와 JSON 키는 그대로입니다. 다만 위 세 경우(이미 있는 `--version`, 이미 있는 `--out` 파일, 같은 이름 보고서)는
+  기존처럼 교체·덮어쓰기하려면 `--overwrite`를 붙여야 합니다 (지침의 "덮어쓰기는 `--overwrite`가 있을 때만", R4).
+
 ## [2.2.0] - 2026-10-27
 
 ### 기능
@@ -125,18 +167,16 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
   동시 학습 잠금, 학습 강제 종료 뒤 복구, 오류/출력 계약.
 - [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
 - [ ] 260자 넘는 긴 경로
-- [ ] 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙음 (`_pred_<시각>_<시각>.csv`)
 
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
 상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
-- [ ] 불완전 vN 폴더 자동 삭제(ml_train.py:904-914)와 `--version` 기존 폴더 교체(917-921) 중단 -> STOP_RETRY + `[추천] --version v<다음>`. 필요하면 `--dry-run`/`--overwrite`
-- [ ] 원장 기록을 버전 폴더 커밋 뒤로 이동(ml_train.py:1515-1518), 커밋 후 final_dir 재검증(joblib.load, json 키) 뒤에만 `VERIFIED:`
 - [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)
 - [ ] 예측 결과와 보고서 저장 후 다시 읽어 확인(행 수, docx 열기), 실패하면 `VERIFIED:` 대신 사유
 - [ ] `run_cli`/`JsonArgumentParser.error`에서 `data/logs/errors.txt` 기록 (doc-classifier `write_error_log` 복사, 환경변수 `ML_KIT_DATA_DIR`)
-- [ ] 결과 JSON `recovered` 키(잠금 새 이름 저장, cp949 -> utf-8-sig 폴백, .xls -> .xlsx), 폴백에도 `[WARN]`, 잠금 회귀 테스트
-- [ ] ml_predict `--out`과 ml_report 기본 파일명의 덮어쓰기 방지 (기존 파일이 있으면 시각 붙인 새 이름 또는 `--overwrite`)
+- [ ] `recovered` 나머지: cp949 -> utf-8-sig 폴백, .xls -> .xlsx 저장 (잠금 새 이름 저장과 덮어쓰기 회피는 2.3.0), 폴백에도 `[WARN]`
 - [ ] `--history` 원장 0건을 `status: ok` + `record_count: 0`으로 (ml_train.py:1582, `no_history`는 별도 키로 유지), 빈 행만 있는 입력의 0행 명시 오류(ml_predict.py:444)
+- [ ] 파괴적 작업 미리보기 `--dry-run` (R8): 학습 `--overwrite`, 예측·보고서 `--overwrite` 대상
+- [ ] `--overwrite`로 버전을 교체하면 원장에 같은 version 기록이 2개 생김: `ml_report -d` 최고 버전 선택과 `is_best` 비교가 옛 기록을 볼 수 있음 (교체 표시 또는 마지막 기록 우선)
 - [ ] `--dtypes` 컬럼명을 resolve_column_names로 매칭 + `[추천]`, int 변환의 fillna(0) 제거 또는 경고(ml_train.py:237-242)
 - [ ] 예측 `--targets` 불일치(ml_predict.py:904), 보고서 버전 없음(ml_report.py:772)에 `[추천] <후보>`
 - [ ] JSON 목록 상한 + `truncated`: `--history` records, feature_types/features_used, 오류 메시지 컬럼 목록
@@ -144,6 +184,5 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] requirements.txt에 matplotlib 추가, 2행 주석을 `python -m pip install ...`로
 - [ ] 로그 태그 정리: `[PROGRESS  5%] [===]` -> `[PROGRESS] 5% ...`(러너 M14 파서 확인), 이력 표 머리 `[STATUS]`, 러너 `[준비]` -> `[INFO]`
 - [ ] 인자 alias: ml_report `--targets/-y`, 저장 `--save`(`--out` 유지)
-- [ ] tools/run_win_tests.py:206: 러너가 만든 폴더인지 표식으로 확인한 뒤에만 지우고 remove_tree 사용
-- [ ] 테스트 보강: exit 130 롤백, 성공 경로 `VERIFIED:` 검사 확대, 빈 데이터, 덮어쓰기 차단
+- [ ] 테스트 보강: exit 130 롤백, 성공 경로 `VERIFIED:` 검사 확대, 빈 데이터 (덮어쓰기 차단은 2.3.0)
 - [ ] 이 섹션 위의 완료 `[x]` 항목(Windows 러너 M1~M14)을 2.2.0 항목으로 이동
