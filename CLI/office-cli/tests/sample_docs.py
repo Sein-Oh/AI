@@ -4,6 +4,7 @@
 docx/templates/default.docx)이 암호화되어 zip이 아니게 될 수 있습니다. 그러면 인자 없는
 pptx.Presentation() / docx.Document()가 PackageNotFoundError로 실패합니다.
 - docx: 같은 내용의 폴더 템플릿(docx/templates/default-docx-template)으로 대신 만듭니다.
+  회사 PC에서는 폴더 템플릿의 docProps/thumbnail.jpeg도 지워져 있었으므로, 빠진 파일을 가리키는 관계는 빼고 엽니다.
 - pptx: 폴더 템플릿이 없으므로 그 테스트만 건너뜁니다 (나머지 테스트는 그대로 실행).
 """
 import os
@@ -31,6 +32,36 @@ def pptx_template_ok():
     return zipfile.is_zipfile(pptx_template_path())
 
 
+def docx_from_folder(folder):
+    """폴더 템플릿을 메모리 속 .docx로 묶어 엽니다. 관계(.rels)가 가리키는데 없는 파일은 관계째 뺍니다."""
+    import io
+    import posixpath
+    import xml.etree.ElementTree as ET
+    import docx
+    files = {}
+    for root, _dirs, names in os.walk(folder):
+        for n in names:
+            full = os.path.join(root, n)
+            with open(full, "rb") as f:
+                files[os.path.relpath(full, folder).replace(os.sep, "/")] = f.read()
+    ET.register_namespace("", "http://schemas.openxmlformats.org/package/2006/relationships")
+    for rels in [k for k in files if k.endswith(".rels")]:
+        base = posixpath.dirname(posixpath.dirname(rels))
+        tree = ET.fromstring(files[rels])
+        for rel in list(tree):
+            target = rel.get("Target", "")
+            part = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join(base, target))
+            if rel.get("TargetMode") != "External" and part not in files:
+                tree.remove(rel)
+        files[rels] = ET.tostring(tree, xml_declaration=True, encoding="UTF-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in sorted(files, key=lambda k: (k != "[Content_Types].xml", k)):
+            z.writestr(name, files[name])
+    buf.seek(0)
+    return docx.Document(buf)
+
+
 def new_docx():
     """빈 python-docx 문서. 기본 .docx가 zip이 아니면 폴더 템플릿을 씁니다."""
     import docx
@@ -38,7 +69,7 @@ def new_docx():
     if zipfile.is_zipfile(default):
         return docx.Document()
     if os.path.isdir(folder):
-        return docx.Document(folder)
+        return docx_from_folder(folder)
     pytest.skip(DOCX_SKIP_REASON)
 
 

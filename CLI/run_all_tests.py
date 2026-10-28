@@ -159,7 +159,11 @@ def diag_new_files(lines):
     try:
         import docx
         tdir = os.path.join(os.path.dirname(docx.__file__), "templates", "default-docx-template")
-        d = docx.Document(tdir) if os.path.isdir(tdir) else docx.Document()
+        try:
+            d = docx.Document(tdir)
+        except Exception as e:                       # 회사 PC: 폴더 템플릿에서 docProps/thumbnail.jpeg가 빠져 있었음
+            lines.append(f"python-docx 폴더 템플릿 열기 실패 ({type(e).__name__}: {e}) -> default.docx로 진단 계속")
+            d = docx.Document()
         d.add_paragraph("진단")
         p = os.path.join(work, "진단.docx")
         d.save(p)

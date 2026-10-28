@@ -2,6 +2,20 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.3.2] - 2026-10-28
+
+회사 PC 2차 실기(2.3.1, 실기 M1~M14 모두 통과) 결과 반영. 오프라인 테스트 3건 실패 수정.
+
+### 수정
+- 회사 PC의 python-docx 템플릿 폴더(`templates/default-docx-template`)에서 `docProps/thumbnail.jpeg`가 빠져 있어
+  python-docx가 폴더를 열지 못했습니다(FileNotFoundError). 보고서는 그때 `default.docx`로 넘어가 성공했지만, 폴더 템플릿을 쓰는 테스트가 실패했습니다.
+  이제 폴더를 메모리 속 .docx로 묶으면서 빠진 파일을 가리키는 관계를 빼고 엽니다 (`docx_from_template_dir`).
+  빠진 파일이 있으면 `recovered`에 "Word 내장 템플릿 폴더에 빠진 파일(...) -> 제외하고 사용"을 남깁니다.
+- 참고(회사 PC 진단): `default.docx`는 스타일 4개짜리 2716바이트 문서, `pptx/templates/default.pptx`는 파일 없음.
+
+### 테스트
+- 폴더 템플릿에서 thumbnail.jpeg를 지운 상황 재현 테스트 추가. 템플릿 손상 테스트는 폴더 템플릿 상태와 상관없이 동작.
+
 ## [2.3.1] - 2026-10-28
 
 회사 PC(Windows 11, WinPython 3.13.13, 보안 프로그램 DRM) 실기에서 `ml_report.py`가 모든 보고서에서
