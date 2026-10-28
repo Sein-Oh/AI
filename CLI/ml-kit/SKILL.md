@@ -12,12 +12,13 @@ metadata:
 
 ## 꼭 지킬 규칙
 1. 명령은 아래 **템플릿을 그대로** 쓰고 `<...>` 부분만 바꾼다. 옵션을 지어내지 않는다.
-2. 명령은 **1번만** 실행한다. 결과는 출력의 **마지막 1줄 JSON**만 읽는다. `[PROGRESS]` 줄은 무시한다.
-3. JSON의 `agent_directive` 첫 단어로 다음 행동을 정한다 (맨 아래 표).
-4. 같은 명령을 다시 실행하지 않는다. 결과 파일을 다시 열어 확인하지 않는다.
-5. 파일 경로는 `file:///C:/...` 링크로 보고한다. 이모지를 쓰지 않는다.
-6. 학습은 몇 분 걸릴 수 있다. 명령 실행 도구에 시간 제한 옵션이 있으면 600초 이상으로 준다.
+2. PowerShell에서는 명령 앞에 전역 지침의 인코딩 줄(`$env:PYTHONIOENCODING='utf-8'; ...`)을 붙인다.
+3. 명령은 **1번만** 실행한다. 결과는 출력의 **마지막 1줄 JSON**만 읽는다. `[PROGRESS]` 줄은 무시한다.
+4. JSON의 `agent_directive` 첫 단어로 다음 행동을 정한다 (맨 아래 표).
+5. 같은 명령을 다시 실행하지 않는다. 결과 파일을 다시 열어 확인하지 않는다.
+6. 학습은 몇 분 걸린다. 명령 실행 도구의 시간 제한은 600000(10분)으로 준다.
 7. `--overwrite`는 사용자가 "덮어써", "교체해"라고 말했을 때만 붙인다. 스스로 붙이지 않는다.
+8. 파일 경로는 `file:///C:/...` 링크로 보고한다. 이모지를 쓰지 않는다.
 
 `<SKILL_DIR>` = 이 SKILL.md가 있는 폴더의 절대 경로.
 
@@ -30,16 +31,19 @@ metadata:
 | "이 조건이면 얼마야?", "새 데이터 예측" | 4단계 예측 |
 | "보고서 만들어줘" | 5단계 보고서 |
 
+실행 전에 꼭 알아야 할 것: 데이터 파일 경로, 타겟(맞힐 컬럼), 피처(입력 컬럼). 모르면 사용자에게 묻는다.
+컬럼 이름을 모르는 xlsx는 office-cli로 앞부분만 읽는다: `python "<SKILL_DIR>\..\office-cli\excel.py" read --target "<데이터파일>" --range A1:Z5`
+
 ## 2단계: 학습
 
 타겟이 숫자(수율, 온도, 강도)면 회귀, 글자나 등급(양품/불량, A/B/C)이면 분류다. 모르면 사용자에게 묻는다.
 
 회귀:
-```bat
+```powershell
 python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --desc "<데이터 설명 한 줄>"
 ```
 분류:
-```bat
+```powershell
 python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,<피처3>" -y "<타겟>" --task classification --desc "<데이터 설명 한 줄>"
 ```
 
@@ -50,7 +54,7 @@ python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,
 | 엑셀 위쪽에 제목/단위 행이 있다 (예: 4행이 머리글, 5행이 단위) | `--header-row 4 --unit-row 5` |
 | 분류에서 놓치면 안 되는 값이 있다 (예: 불량) | `--positive-class 불량` |
 | 숫자로 된 코드(101, 102)를 종류로 다뤄야 한다 | `--dtypes "설비코드:str"` |
-| 피처가 10개 이상이다 | 한 줄에 하나씩 쓴 `features.txt`를 만들고 `-x "features.txt"` |
+| 피처가 10개 이상이다 | 파일 쓰기 도구로 한 줄에 피처 하나씩 쓴 `features.txt`(UTF-8)를 데이터 파일 옆에 만들고 `-x "<그 경로>"` |
 
 - 컬럼명의 단위는 빼도 된다 (`반응온도` = `반응온도(°C)`).
 - 날짜 컬럼과 글자 컬럼(라인, 설비)도 `-x`에 그대로 넣는다.
@@ -70,14 +74,14 @@ python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" -x "<피처1>,<피처2>,
 ## 4단계: 예측
 
 한 건:
-```bat
+```powershell
 python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -i "<피처1>=<값>,<피처2>=<값>,<피처3>=<값>"
 ```
 파일 전체:
-```bat
+```powershell
 python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>"
 ```
-- `<version_dir>`은 학습 결과 JSON의 `version_dir` 값을 그대로 쓴다.
+- `<version_dir>`은 학습 결과 JSON의 `version_dir` 값을 그대로 쓴다. 모르면 `python "<SKILL_DIR>\ml_train.py" -f "<데이터파일>" --history`를 실행해 `<data_root>\<best_version>`을 쓴다.
 - 알릴 것: 한 건이면 `predictions_summary.<타겟>.predictions`, 회귀는 `intervals`(90% 범위)도. 파일이면 `output_file`.
 - 아래 값이 `true`이면 옆의 문장을 덧붙인다:
 
@@ -90,11 +94,11 @@ python "<SKILL_DIR>\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>"
 
 ## 5단계: ML 결과 보고서 (Word)
 
-```bat
+```powershell
 python "<SKILL_DIR>\ml_report.py" -m "<version_dir>"
 ```
 - 알릴 것: `report_file`(링크), `overall_verdict`(적합/조건부/부적합).
-- 사용자가 보고서 문장을 직접 정해 주면, 그 문장으로 `slots.json`을 만들고 명령 끝에 `--slots "slots.json"`을 붙인다.
+- 사용자가 보고서 문장을 직접 정해 주면, 파일 쓰기 도구로 `slots.json`(UTF-8)을 만들고 명령 끝에 `--slots "<그 경로>"`를 붙인다.
   형식: `{"summary": "<요약 문장>", "operation": "<운영 문장>"}`
 
 ## 결과 처리 (모든 단계 공통)

@@ -6,6 +6,9 @@
 
 회사 PC 실기 테스트(Windows 11, Office 16.0 / Microsoft 365, WinPython 3.13.13, DRM) 결과 반영과 오류 로그(R6).
 
+### 스킬
+- SKILL.md를 PowerShell 기준으로 정리: 꼭 지킬 규칙 8개(인코딩 줄, 1회 실행, 표·여러 줄·큰따옴표 값은 파일로, `$`는 작은따옴표), PowerShell에서 따옴표가 사라지는 `--values` JSON 예시를 `--file "표.csv"`로 교체, `UNVERIFIED:` 행 추가, 유니코드 화살표 제거. 도구 동작은 바뀌지 않습니다.
+
 ### 기능 (추가만, 기존 인자·키 유지)
 - 오류 로그: 실패한 실행(exit 1, 인자 오류 exit 2)을 `<data 폴더>/logs/errors.txt`에 자동으로 덧붙입니다 (`CLI/README.md` R6, 기준 doc-classifier `write_error_log`).
   머리줄 `===== <시각> | office-cli <버전> | Python <버전> | <OS>`, `명령:`, `결과: <error_type> | <message>`, 한도를 넘긴 복구 시도는 `복구 시도:`, 내부 오류(`ERROR:`)만 `traceback:`.
