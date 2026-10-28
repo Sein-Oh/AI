@@ -48,9 +48,11 @@ class Result:
 
     def __init__(self, path):
         self.path = path
+        self.summary = []          # 단계별 한 줄 요약 (화면과 파일 끝에 출력)
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"# CLI 통합 테스트 결과 (생성 {dt.datetime.now():%Y-%m-%d %H:%M:%S})\n")
-            f.write("# 이 파일 전체를 그대로 Claude에게 전달하세요. 편집하지 마세요.\n\n")
+            f.write("# 이 파일 전체를 그대로 Claude에게 전달하세요. 편집하지 마세요.\n")
+            f.write("# 단계별 요약은 파일 맨 끝 <요약>에 있습니다.\n\n")
 
     def section(self, name, text):
         with open(self.path, "a", encoding="utf-8") as f:
@@ -182,6 +184,36 @@ def diag_new_files(lines):
     shutil.rmtree(work, ignore_errors=True)
 
 
+def diag_system(lines):
+    """Office 버전, 문서 보안(DRM)으로 보이는 프로세스, 설치된 패키지 전체 (Windows에서만 일부)."""
+    if os.name == "nt":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Office\ClickToRun\Configuration")
+            for name in ("VersionToReport", "ProductReleaseIds", "Platform"):
+                try:
+                    lines.append(f"Office {name}: {winreg.QueryValueEx(key, name)[0]}")
+                except OSError:
+                    pass
+        except OSError:
+            lines.append("Office: ClickToRun 정보 없음 (MSI 설치이거나 Office 없음)")
+        try:
+            out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, timeout=60).stdout
+            names = sorted({row.split('","')[0].strip('"') for row in out.decode("mbcs", errors="replace").splitlines() if row})
+            keys = ("drm", "fasoo", "softcamp", "markany", "nasca", "document", "secu", "guard", "protect", "dlp", "fsc", "scsk")
+            hits = [n for n in names if any(k in n.lower() for k in keys)]
+            lines.append(f"보안/DRM으로 보이는 프로세스 (이름에 drm, fasoo, softcamp, markany, secu, guard 등): {hits or '없음'}")
+        except Exception as e:
+            lines.append(f"프로세스 목록 실패: {e}")
+    try:
+        out = subprocess.run([sys.executable, "-m", "pip", "list", "--format=freeze", "--disable-pip-version-check"],
+                             capture_output=True, timeout=120, env=child_env()).stdout.decode("utf-8", errors="replace")
+        pkgs = [x for x in out.splitlines() if x.strip()]
+        lines.append(f"설치된 패키지 {len(pkgs)}개: " + ", ".join(pkgs))
+    except Exception as e:
+        lines.append(f"pip list 실패: {e}")
+
+
 def step_diag(res, args):
     lines = [
         f"OS: {platform.platform()} ({platform.version()})",
@@ -208,7 +240,7 @@ def step_diag(res, args):
                     break
         lines.append(f"  도구 {tool} {ver}")
     lines += ["", "[문서 보안(DRM) 영향 점검]"]
-    for fn in (diag_docx, diag_pptx, diag_new_files):
+    for fn in (diag_docx, diag_pptx, diag_new_files, diag_system):
         try:
             fn(lines)
         except Exception as e:
@@ -216,6 +248,8 @@ def step_diag(res, args):
     text = "\n".join(lines)
     print(text, flush=True)
     res.section("환경 진단", text)
+    broken = [x for x in lines if ("zip 형식=False" in x or "실패" in x or "Caption 있음=False" in x)]
+    res.summary.append(f"diag: 이상 {len(broken)}건" + (f" ({broken[0][:80]} ...)" if broken else " (없음)"))
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +264,8 @@ def step_pytest(res, args):
         code, out, sec, stop = run_capture([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfE"],
                                            folder, args.timeout)
         res.section(f"pytest_{tool}", f"cwd={folder} exit={code} {sec}초\n{out}")
+        tail = [x for x in out.splitlines() if x.strip()]
+        res.summary.append(f"pytest {tool}: exit={code}, {tail[-1].strip('= ') if tail else '출력 없음'}")
         if stop:
             raise KeyboardInterrupt
 
@@ -240,6 +276,17 @@ def step_pytest(res, args):
 def _newer(pattern, since):
     files = [p for p in glob.glob(pattern) if os.path.getmtime(p) >= since - 1]
     return sorted(files, key=os.path.getmtime)
+
+
+def _grep(path, prefix):
+    """파일에서 prefix로 시작하는 첫 줄."""
+    try:
+        for line in open(path, encoding="utf-8", errors="replace"):
+            if line.strip().startswith(prefix):
+                return line.strip()
+    except Exception:
+        pass
+    return f"{prefix} (못 찾음)"
 
 
 def _attach(res, name, path):
@@ -259,8 +306,10 @@ def step_ml(res, args):
     say("ml-kit 실기 테스트 시작 (10~20분, 질문 없음). Office 창을 만지지 마세요.")
     code, out, sec, stop = run_capture(cmd, folder, args.timeout)
     res.section("ml-kit 실기 테스트 화면 출력", f"$ {' '.join(cmd)}\nexit={code} {sec}초\n{out[-20000:]}")
-    for p in _newer(os.path.join(folder, "tools", "test_logs", "testlog_*.txt"), start):
+    logs = _newer(os.path.join(folder, "tools", "test_logs", "testlog_*.txt"), start)
+    for p in logs:
         _attach(res, os.path.basename(p), p)
+    res.summary.append(f"ml-kit 실기: exit={code}, " + (_grep(logs[-1], "결과:") if logs else "로그 파일 없음"))
     test_dir = args.ml_dir or r"C:\ml_test\ml 테스트"
     for p in _newer(os.path.join(test_dir, "report_*.txt"), start):
         _attach(res, os.path.basename(p), p)
@@ -288,9 +337,12 @@ def step_office(res, args):
     res.section("office-cli 실기 테스트 실행", f"$ {' '.join(cmd)}\nexit={code} {round(time.time() - t0, 1)}초"
                 + (" (Ctrl+C로 중단)" if stop else ""))
     test_dir = args.office_dir or r"C:\office_test"
+    errs = _newer(os.path.join(test_dir, "errors_*.txt"), start)
     for pat in ("errors_*.txt", "report_*.txt"):
         for p in _newer(os.path.join(test_dir, pat), start):
             _attach(res, os.path.basename(p), p)
+    res.summary.append(f"office-cli 실기: exit={code}, " + (
+        f"{_grep(errs[-1], '결과:')} / {_grep(errs[-1], '문제 항목:')}" if errs else "로그 파일 없음"))
     if stop:
         raise KeyboardInterrupt
 
@@ -349,6 +401,9 @@ def main():
         say("중단했습니다.")
     finally:
         attach_tool_error_logs(res)
+        summary = "\n".join(res.summary) or "실행된 단계 없음"
+        res.section("요약", summary)
+        print("\n" + "=" * 70 + "\n[STATUS] 요약\n" + summary + "\n" + "=" * 70, flush=True)
         say(f"끝. 이 파일 하나를 Claude에게 전달하세요: {out}")
 
 
