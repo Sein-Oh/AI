@@ -418,13 +418,32 @@ def _similar_anchor(doc: Any, anchor: str) -> Optional[str]:
     return best_text if best >= 0.6 and best_text and best_text.lower() != key else None
 
 
-def _anchor_paragraph(doc: Any, anchor: str, occurrence: Optional[int]) -> Any:
-    """앵커 단락 하나. 못 찾으면 비슷한 글 [추천], 여러 단락에 있으면 고르지 않고 [후보]로 오류."""
+def _safe_anchor_fix(anchor: str, similar: str, pos: str) -> bool:
+    """비슷한 글을 [추천](LLM이 확인 없이 1회 재시도)으로 줘도 되는지.
+    공백·대소문자만 다르면 항상, 앵커 글자 사이에 2자 이하만 끼어든 경우(예: '2026 계획' -> '2026년 계획')는
+    단락을 지우지 않는 위치에서만. 글자가 바뀌거나 빠진 경우('Q2' -> 'Q1')는 뜻이 다를 수 있어 주지 않음."""
+    a = re.sub(r"\s+", "", anchor).lower()
+    b = re.sub(r"\s+", "", similar).lower()
+    if a == b:
+        return True
+    if pos == "replace" or not 0 < len(b) - len(a) <= 2:
+        return False
+    it = iter(b)
+    return all(ch in it for ch in a)            # a가 b의 부분 수열 (끼어든 글자만 있음)
+
+
+def _anchor_paragraph(doc: Any, anchor: str, occurrence: Optional[int], pos: str = "after") -> Any:
+    """앵커 단락 하나. 못 찾으면 비슷한 글을 안내 (확실할 때만 [추천]), 여러 단락에 있으면 고르지 않고 [후보]로 오류."""
     hits = _anchor_paragraphs(doc, anchor)
     if not hits:
         similar = _similar_anchor(doc, anchor)
-        raise rt.InputError(f"문서에서 '{anchor}'을(를) 찾을 수 없습니다. word.py read로 정확한 문구를 확인하세요."
-                            + (f" [추천] {similar}" if similar else ""), no_fallback=True)
+        hint = ""
+        if similar and _safe_anchor_fix(anchor, similar, pos):
+            hint = f" [추천] {similar}"
+        elif similar:
+            hint = f" 비슷한 문구: '{similar}' (뜻이 같은지 사용자에게 확인한 뒤에만 쓰세요)"
+        raise rt.InputError(f"문서에서 '{anchor}'을(를) 찾을 수 없습니다. word.py read로 정확한 문구를 확인하세요." + hint,
+                            no_fallback=True)
     if occurrence is not None:
         if not 1 <= occurrence <= len(hits):
             raise rt.InputError(f"--occurrence는 1~{len(hits)} 사이여야 합니다 ('{anchor}'이(가) 있는 단락 {len(hits)}개).",
@@ -453,7 +472,7 @@ def _insert_position(doc: Any, anchor: Optional[str], pos: str, occurrence: Opti
         return end, "문서 끝"
     if len(anchor) > FIND_MAX:
         raise rt.InputError(f"--anchor는 {FIND_MAX}자 이하여야 합니다. 앵커 단락의 앞부분 일부만 쓰세요.")
-    para = _anchor_paragraph(doc, anchor, occurrence)
+    para = _anchor_paragraph(doc, anchor, occurrence, pos)
     if pos == "before":
         return int(para.Start), f"'{anchor}' 단락 앞"
     if pos == "replace":

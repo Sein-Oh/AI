@@ -788,7 +788,7 @@ def build_cli():
     p.add_argument("--range", help="엑셀 범위 (표로 전달)")
     p.add_argument("--sheet", help="엑셀 시트 (보낼 때: 원본 시트 / 엑셀로 받을 때: 새 시트 이름)")
     p.add_argument("--overwrite", action="store_true",
-                   help="엑셀로 받을 때 --sheet가 이미 있으면 그 시트에 덮어쓰기 (없으면 오류)")
+                   help="엑셀로 받을 때 --sheet가 이미 있으면 그 시트의 A1부터 덮어쓰기 (범위 밖 기존 셀은 남음, 시트가 없으면 새로 만듦)")
     p.add_argument("--what", choices=["text", "table"], default="text", help="워드/PPT에서 보낼 것 (기본 text)")
     p.add_argument("--table", type=int, help="표 번호 (1부터)")
     p.add_argument("--slide", help="PPT 슬라이드: 받을 때 번호 또는 new(기본), 보낼 때 표를 찾을 슬라이드")

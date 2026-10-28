@@ -17,7 +17,7 @@
 예:
     python excel.py write --range A1:B101 --header "x,sin(x)" --formula "=(ROW()-2)*4*PI()/99" "=SIN(A2)"
     python excel.py chart --range A1:B101 --type line --title "사인 2주기"
-    python excel.py write --file "결과.csv" --sheet "검색결과"
+    python excel.py write --file "결과.csv" --sheet "검색결과" --new-sheet
     python excel.py read --range A1:D20
 """
 import json

@@ -101,6 +101,24 @@ def test_anchor_not_found_recommends_similar_text(wd, capsys):
     assert code == 0
 
 
+def test_anchor_not_found_does_not_recommend_different_text(wd, capsys):
+    """글자가 바뀐 문구('2027' -> '2026')는 뜻이 다를 수 있어 [추천]하지 않음. replace는 끼어든 글자도 [추천] 안 함."""
+    before = wd["doc"].text
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "2027년 계획")
+    assert code == 1 and "[추천]" not in out["message"] and "비슷한 문구: '2026년 계획'" in out["message"]
+    code, out = run(capsys, "write", "--text", "x", "--anchor", "2026 계획", "--pos", "replace")
+    assert code == 1 and "[추천]" not in out["message"] and "비슷한 문구" in out["message"]
+    assert wd["doc"].text == before
+
+
+def test_safe_anchor_fix_rules():
+    assert word._safe_anchor_fix("2026년계획", "2026년 계획", "replace")       # 공백만 다름
+    assert word._safe_anchor_fix("2026 계획", "2026년 계획", "after")          # 끼어든 글자 1자
+    assert not word._safe_anchor_fix("2026 계획", "2026년 계획", "replace")
+    for anchor, similar in [("Q2 매출 보고", "Q1 매출 보고"), ("결론 분석", "결과 분석"),
+                            ("Sales 2025", "Sales 202"), ("3. 결과요약", "2. 결과")]:
+        assert not word._safe_anchor_fix(anchor, similar, "after"), (anchor, similar)
+
 def test_write_before_and_replace_anchor(wd, capsys):
     run(capsys, "write", "--text", "머리말", "--anchor", "추진", "--pos", "before")
     assert paras(wd["doc"])[0] == "머리말"
