@@ -1,4 +1,4 @@
-# office-cli 1.1
+# office-cli 1.2
 
 Excel, Word, PowerPoint, Outlook을 AI 에이전트(26B~30B 경량 LLM)가 명령 한 줄로 다루게 하는 CLI 도구입니다.
 PDF, HWP, EML, Office 파일은 Office 없이 읽고 검색합니다.
@@ -37,6 +37,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 - `agent_directive`:
   - `VERIFIED:` 완료
   - `STOP_RETRY:` 입력이나 대상 문제. `[추천]`이 있으면 그 값으로 1회만 다시 시도
+  - `STOP_RETRY:` + `[후보]`(`error_type: "ambiguous"`, `candidates` 목록): 후보가 둘 이상이라 도구가 고르지 않음. 사용자가 고른 값으로 다시 실행
   - `ERROR:` 내부 오류
 - 공통 키: `status`, `tool`, `command`, `preview`, `agent_directive`. 오류 시 `error_type`, `message`가 추가됩니다. COM 오류는 `hresult`도 들어갑니다.
 - `target_resolved`: 실제로 작업한 문서(앱, 이름, 경로, 시트/슬라이드)
@@ -46,7 +47,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 | 값 | 의미 |
 |---|---|
 | `active` (기본) | 그 앱에서 사용자가 보고 있는 문서 |
-| 열린 문서 이름 | 예: `보고.xlsx` (대소문자 무시) |
+| 열린 문서 이름 | 예: `보고.xlsx` (대소문자 무시). 같은 이름의 문서가 둘 이상 열려 있으면 고르지 않고 `[후보]`(전체 경로)로 오류 |
 | 파일 경로 | 닫힌 파일. 읽기는 라이브러리로, 쓰기는 사용자 창과 분리된 백그라운드 인스턴스로 열고 저장 후 닫음 |
 
 ### 화면과 안전
@@ -56,6 +57,10 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
   - 원본 문서는 저장하거나 경로를 바꾸지 않습니다.
   - `office.py undo`로 되돌립니다.
 - **읽기는 아무것도 만들거나 저장하지 않습니다.** 없는 시트나 파일을 지정하면 `[추천]`과 함께 오류를 냅니다.
+- **추측해서 쓰지 않습니다.** 쓰기 위치가 확실하지 않으면 아무것도 바꾸지 않고 오류를 냅니다.
+  - 엑셀 쓰기에서 없는 시트: 새로 만들지 않습니다. 표기만 다른 시트(`Sheet 1`과 `Sheet1`)가 있으면 `[추천]`, 비슷한 다른 시트(`Sheet2`와 `Sheet1`)면 `[후보]`, 없으면 `--new-sheet` 안내. 새 시트는 `--new-sheet`로만 만듭니다.
+  - 워드 `--anchor`가 여러 단락에 있으면 `[후보]`(번호와 단락 앞부분)로 오류. `--occurrence N`으로 고릅니다. 찾지 못하면 비슷한 문구를 `[추천]`.
+  - `office.py transfer --to excel --sheet 이름`은 새 시트 이름입니다. 이미 있으면 덮어쓰지 않고 비어 있는 이름을 `[추천]`, 덮어쓰기는 `--overwrite`.
 - **메일**: 기본은 작성 창만 띄웁니다. `--send`는 명시했을 때만 쓰고, 수신자 주소를 확인한 뒤 발송합니다.
 
 ### 파일과 폴더
@@ -77,7 +82,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 |---|---|
 | `read` | `--range`, `--sheet`, `--search 글자`(셀 주소 반환), `--max-rows`, `--save [경로.csv]` |
 | `info` | 시트별 사용 범위와 차트. `--all`: 열린 통합문서 전체. `--detail`: 차트 종류·계열 수·위치와 데이터를 가리는 차트 경고 |
-| `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(같은 머리글 생략), `--sheet`(없으면 생성) |
+| `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(같은 머리글 생략), `--sheet`, `--new-sheet`(없는 시트를 새로 만들 때만) |
 | `replace` | `--find/--replace` 또는 `--map JSON`, `--whole`, `--all-sheets`, 서식 옵션. 수식 셀은 내용 보존 |
 | `style` | `--theme navy\|slate\|teal\|emerald`, `--bg`, `--color`, `--bold`, `--align`, `--number-format`, `--border`, `--highlight ">=100:pink"`(조건부 서식), `--clear` |
 | `export` | `--save 경로.csv\|.xlsx\|.pdf`, `--columns A,C,E` |
@@ -94,7 +99,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 |---|---|
 | `read` | `--start N`, `--save [경로.md]`. 제목 구조(개요 수준) 포함. 본문 그림은 `[그림]`으로 표시 |
 | `info` | 쪽/단어/글자 수, 표, 그림, 제목 목록. `--all`. `--detail`: 그림 크기(쪽 너비 대비)와 제목 수준, 쪽보다 넓은 그림 경고 |
-| `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--theme` |
+| `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--occurrence N`(앵커가 여러 단락에 있을 때), `--theme` |
 | `replace` | `--find/--replace`(빈 문자열은 삭제) 또는 `--map`, `--match-case`, `--whole-word`, `--bold`, `--color`, `--highlight`. 머리글/바닥글/글상자 포함 |
 | `export` | `--save 경로.pdf\|.docx`, `--page-number`(사본에만) |
 
@@ -150,7 +155,7 @@ python excel.py chart --range A1:B101 --type line --title "사인 2주기"
 python office.py transfer --from excel --chart "사인 2주기" --to word,ppt
 
 :: 워드/PPT 내용 -> 엑셀
-python office.py transfer --from word --what text --to excel
+python office.py transfer --from word --what text --to excel     :: 새 시트에 받음 (--sheet 이름, 기존 시트에 덮어쓰기는 --overwrite)
 python office.py transfer --from ppt --what text --to excel
 
 :: 문서 검색 -> 워드에 넣기

@@ -76,7 +76,7 @@ def chart_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(office, "image_by_export", export)
     monkeypatch.setattr(office, "image_by_redraw", redraw)
-    monkeypatch.setattr(office, "insert_picture_word", lambda tgt, img, anchor: log["insert"].append(("word", img)) or {"app": "Word"})
+    monkeypatch.setattr(office, "insert_picture_word", lambda tgt, img, anchor, occurrence=None: log["insert"].append(("word", img)) or {"app": "Word"})
     monkeypatch.setattr(office, "insert_picture_ppt", lambda tgt, img, slide, title: log["insert"].append(("ppt", img)) or {"app": "PowerPoint"})
     monkeypatch.setattr(rt, "load_config", lambda: {})
     return log
@@ -129,6 +129,38 @@ def test_word_text_to_new_excel_sheet_with_unique_name(monkeypatch, capsys):
     assert code == 0 and out["sheet"] == "Word 내용 2" and out["rows"] == 3
     ws = wb.Worksheets("Word 내용 2")
     assert ws.values[(3, 4)] == "내용입니다"
+
+
+def test_transfer_to_existing_excel_sheet_does_not_overwrite(monkeypatch, capsys):
+    app = FakeXlApp()
+    wb = FakeExcelWorkbook(app, sheets=("Sheet1", "결과"))
+    fake, _ = make_win32com()
+    monkeypatch.setattr(off, "win32com", fake)
+    monkeypatch.setattr(off, "pythoncom", None)
+    monkeypatch.setattr(off, "list_open", lambda kind: [])
+    monkeypatch.setattr(off, "get_active", lambda kind: {"name": wb.Name, "path": wb.FullName, "app": app, "doc": wb})
+    monkeypatch.setattr(off, "save_snapshot", lambda *a, **k: None)
+    wb.Worksheets("결과").values[(1, 1)] = "기존"
+    monkeypatch.setattr(office, "_word_rows", lambda args: ([["a", "b"], [1, 2]], "계획.docx"))
+    code, out = run(capsys, "transfer", "--from", "word", "--to", "excel", "--sheet", "결과")
+    assert code == 1 and out["message"].endswith("[추천] 결과 2") and "--overwrite" in out["message"]
+    assert wb.Worksheets("결과").values[(1, 1)] == "기존"
+    code, out = run(capsys, "transfer", "--from", "word", "--to", "excel", "--sheet", "결과", "--overwrite")
+    assert code == 0 and out["sheet"] == "결과" and wb.Worksheets("결과").values[(1, 1)] == "a"
+    code, out = run(capsys, "transfer", "--from", "word", "--to", "excel", "--sheet", "새 결과")
+    assert code == 0 and out["sheet"] == "새 결과"                       # --sheet는 새 시트 이름: 없으면 만듦
+
+
+def test_chart_transfer_stops_on_ambiguous_anchor_without_trying_other_methods(chart_env, capsys, monkeypatch):
+    calls = []
+
+    def ambiguous_anchor(tgt, img, anchor, occurrence=None):
+        calls.append(img)
+        raise rt.ambiguous("'계획'이(가) 단락 2개에 있어 어느 곳인지 고를 수 없습니다.", ["1: 계획 A", "2: 계획 B"])
+    monkeypatch.setattr(office, "insert_picture_word", ambiguous_anchor)
+    code, out = run(capsys, "transfer", "--from", "excel", "--chart", "사인 2주기", "--to", "word", "--anchor", "계획")
+    assert code == 1 and out["error_type"] == "ambiguous" and out["candidates"] == ["1: 계획 A", "2: 계획 B"]
+    assert len(calls) == 1                                                # 다른 방식으로 넘어가지 않음
 
 
 # ---------------------------------------------------------------------------

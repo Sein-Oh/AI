@@ -82,7 +82,7 @@ def test_write_csv_new_sheet_and_append_skips_header(xl, capsys, tmp_path):
     app, wb = xl
     f = tmp_path / "d.csv"
     f.write_text("코드,금액\n001,1200\n002,800\n", encoding="utf-8")
-    code, out = run(capsys, "write", "--file", str(f), "--sheet", "검색결과")
+    code, out = run(capsys, "write", "--file", str(f), "--sheet", "검색결과", "--new-sheet")
     assert code == 0 and out["sheet"] == "검색결과" and out["range_written"] == "A1:B3"
     ws = ws_of(wb, "검색결과")
     assert ws.values[(2, 1)] == "001" and ws.values[(2, 2)] == 1200
@@ -90,6 +90,46 @@ def test_write_csv_new_sheet_and_append_skips_header(xl, capsys, tmp_path):
     f2.write_text("코드,금액\n003,500\n", encoding="utf-8")
     code, out = run(capsys, "write", "--file", str(f2), "--sheet", "검색결과", "--append")
     assert out["range_written"] == "A4:B4" and ws.values[(4, 1)] == "003"
+
+
+def _sheet_names(wb):
+    return [wb.Worksheets(i).Name for i in range(1, wb.Worksheets.Count + 1)]
+
+
+def test_write_missing_sheet_is_not_created_without_flag(xl, capsys):
+    app, wb = xl
+    code, out = run(capsys, "write", "--sheet", "결과표", "--value", "1")
+    assert code == 1 and out["agent_directive"].startswith("STOP_RETRY:")
+    assert "--new-sheet" in out["message"] and "[추천]" not in out["message"]
+    assert _sheet_names(wb) == ["Sheet1", "요약"]                       # 새 시트 없음
+    code, out = run(capsys, "write", "--range", "'결과표'!A1", "--value", "1")
+    assert code == 1 and _sheet_names(wb) == ["Sheet1", "요약"]
+
+
+def test_write_sheet_differs_only_in_spacing_recommends_existing(xl, capsys):
+    app, wb = xl
+    code, out = run(capsys, "write", "--sheet", "Sheet 1", "--value", "1")
+    assert code == 1 and out["error_type"] == "input" and out["message"].endswith("[추천] Sheet1")
+    assert _sheet_names(wb) == ["Sheet1", "요약"]
+
+
+def test_write_similar_but_different_sheet_asks_user(xl, capsys):
+    # Sheet2를 Sheet1의 오타로 단정해 덮어쓰지 않음: [후보]로 사용자에게 고르게 함
+    app, wb = xl
+    code, out = run(capsys, "write", "--sheet", "Sheet2", "--value", "1")
+    assert code == 1 and out["error_type"] == "ambiguous" and "[후보] Sheet1" in out["message"]
+    assert "Sheet1" in out["candidates"] and any("--new-sheet" in c for c in out["candidates"])
+    assert _sheet_names(wb) == ["Sheet1", "요약"] and (1, 1) not in ws_of(wb, "Sheet1").values
+
+
+def test_write_new_sheet_flag_rules(xl, capsys):
+    app, wb = xl
+    code, out = run(capsys, "write", "--sheet", "요약", "--new-sheet", "--value", "1")
+    assert code == 1 and "이미 있어" in out["message"] and (1, 1) not in ws_of(wb, "요약").values
+    code, out = run(capsys, "write", "--new-sheet", "--value", "1")
+    assert code == 1 and "새 시트 이름" in out["message"]
+    code, out = run(capsys, "write", "--range", "'새시트'!B2", "--new-sheet", "--value", "7")
+    assert code == 0 and out["sheet"] == "새시트" and ws_of(wb, "새시트").values[(2, 2)] == 7
 
 
 def test_write_requires_content(xl, capsys):

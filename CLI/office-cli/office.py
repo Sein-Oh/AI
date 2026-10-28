@@ -233,10 +233,10 @@ def image_by_redraw(chart_obj: Any, stem: str) -> str:
 # 3. 삽입 도우미
 # ==============================================================================
 
-def insert_picture_word(target: str, image: str, anchor: Optional[str]) -> Dict[str, Any]:
+def insert_picture_word(target: str, image: str, anchor: Optional[str], occurrence: Optional[int] = None) -> Dict[str, Any]:
     import word
     with off.open_target("word", target, readonly=False, create=True, tool=TOOL, command="transfer") as t:
-        start, _ = word._insert_position(t.doc, anchor, "after" if anchor else "end")
+        start, _ = word._insert_position(t.doc, anchor, "after" if anchor else "end", occurrence)
         w = word.Writer(t.doc, start, None)
         w.image(image, None)
         t.set_focus()
@@ -265,7 +265,7 @@ def insert_picture_ppt(target: str, image: str, slide: Optional[str], title: str
 
 
 def relay_chart(chart_obj: Any, to_word: Optional[str], to_ppt: Optional[str], anchor: Optional[str],
-                slide: Optional[str], title: str) -> Dict[str, Dict[str, Any]]:
+                slide: Optional[str], title: str, occurrence: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     """클립보드 경유: 엑셀 차트 -> 워드(대상 또는 임시 문서) -> PPT."""
     import word
     done: Dict[str, Dict[str, Any]] = {}
@@ -275,7 +275,7 @@ def relay_chart(chart_obj: Any, to_word: Optional[str], to_ppt: Optional[str], a
     try:
         if to_word:
             with off.open_target("word", to_word, readonly=False, create=True, tool=TOOL, command="transfer") as t:
-                start, _ = word._insert_position(t.doc, anchor, "after" if anchor else "end")
+                start, _ = word._insert_position(t.doc, anchor, "after" if anchor else "end", occurrence)
                 rng = t.doc.Range(start, start)
                 rng.InsertAfter("\r")
                 rng = t.doc.Range(start, start)
@@ -369,17 +369,20 @@ def _excel_chart_transfer(args, targets: List[str]) -> Dict[str, Any]:
                 try:
                     if method == "relay":
                         done = relay_chart(chart_obj, args.to_target if kind == "word" else None,
-                                           args.to_target if kind == "ppt" else None, args.anchor, args.slide, title)
+                                           args.to_target if kind == "ppt" else None, args.anchor, args.slide, title,
+                                           args.occurrence)
                         results[kind] = {"method": "relay", "target_resolved": done[kind]}
                     else:
                         if method not in images:
                             images[method] = (image_by_export if method == "export" else image_by_redraw)(chart_obj, stem)
                         img = images[method]
-                        resolved = (insert_picture_word(args.to_target, img, args.anchor) if kind == "word"
+                        resolved = (insert_picture_word(args.to_target, img, args.anchor, args.occurrence) if kind == "word"
                                     else insert_picture_ppt(args.to_target, img, args.slide, title))
                         results[kind] = {"method": method, "target_resolved": resolved, "image_file": img}
                     pending.remove(kind)
                 except Exception as e:
+                    if isinstance(e, rt.InputError) and e.no_fallback:
+                        raise                           # 앵커/대상 문제는 다른 방식으로 바꿔도 같음
                     msg = rt.error_payload(e)["message"]
                     rt.log("WARN", f"{off.APP_LABEL[kind]}로 전달 실패 ({method}): {msg} -> 다음 방식 시도")
                     tried.append(f"{method}: {msg}")
@@ -423,7 +426,7 @@ def _excel_range_transfer(args, targets: List[str]) -> Dict[str, Any]:
     for kind in targets:
         if kind == "word":
             with off.open_target("word", args.to_target, readonly=False, create=True, tool=TOOL, command="transfer") as t:
-                start, _ = word._insert_position(t.doc, args.anchor, "after" if args.anchor else "end")
+                start, _ = word._insert_position(t.doc, args.anchor, "after" if args.anchor else "end", args.occurrence)
                 word.Writer(t.doc, start, off.get_theme(args.theme)).table(rows)
                 t.set_focus()
                 results["word"] = {"method": "table", "target_resolved": t.resolved()}
@@ -529,7 +532,16 @@ def _to_excel(args, rows: List[List[Any]], sheet_base: str) -> Dict[str, Any]:
         while rt.find_name(name, names) and not args.sheet:
             name = f"{sheet_base[:27]} {k}"
             k += 1
-        ws = t.sheet(name, create=True)
+        existing = rt.find_name(name, names)
+        if existing is not None and not args.overwrite:
+            # --sheet는 "새 시트 이름": 이미 있는 시트에 A1부터 덮어쓰지 않습니다
+            free, k = name, 2
+            while rt.find_name(free, names):
+                free = f"{name[:27]} {k}"
+                k += 1
+            raise rt.InputError(f"시트 '{existing}'이(가) 이미 있어 덮어쓰지 않았습니다. 새 이름으로 받거나, 기존 시트에 덮어쓰려면 "
+                                f"사용자 확인 후 --overwrite를 붙이세요. [추천] {free}")
+        ws = t.sheet(existing or name, create=existing is None)
         width = max(len(r) for r in rows)
         data = tuple(tuple(list(r) + [""] * (width - len(r))) for r in rows)
         with off.excel_batch(t.app):
@@ -775,10 +787,13 @@ def build_cli():
     p.add_argument("--chart", help="엑셀 차트 이름 또는 제목 (excel.py chart --action list로 확인)")
     p.add_argument("--range", help="엑셀 범위 (표로 전달)")
     p.add_argument("--sheet", help="엑셀 시트 (보낼 때: 원본 시트 / 엑셀로 받을 때: 새 시트 이름)")
+    p.add_argument("--overwrite", action="store_true",
+                   help="엑셀로 받을 때 --sheet가 이미 있으면 그 시트에 덮어쓰기 (없으면 오류)")
     p.add_argument("--what", choices=["text", "table"], default="text", help="워드/PPT에서 보낼 것 (기본 text)")
     p.add_argument("--table", type=int, help="표 번호 (1부터)")
     p.add_argument("--slide", help="PPT 슬라이드: 받을 때 번호 또는 new(기본), 보낼 때 표를 찾을 슬라이드")
     p.add_argument("--anchor", help="워드에서 이 글이 있는 단락 뒤에 넣기 (기본: 문서 끝)")
+    p.add_argument("--occurrence", type=int, help="--anchor가 여러 단락에 있을 때 몇 번째인지 (1부터, 오류의 [후보] 번호)")
     p.add_argument("--method", choices=["auto"] + list(METHODS), default="auto", help="차트 그림 방식 (기본 auto)")
     p.add_argument("--theme", help=f"표 색: {', '.join(off.THEMES)}")
     p.add_argument("--probe", action="store_true", help="이 PC에서 되는 차트 전달 방식을 시험해 저장")

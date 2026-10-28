@@ -17,6 +17,7 @@
     python word.py replace --find "초안" --replace "최종본" --bold
     python word.py export --save report.pdf --page-number
 """
+import difflib
 import json
 import os
 import re
@@ -64,6 +65,8 @@ def _closed_docx(target: str) -> Optional[str]:
     try:
         if off.win32com is not None and off.match_open("word", raw) is not None:
             return None
+    except rt.InputError:
+        return None   # 같은 이름의 열린 문서가 여럿: 파일을 읽지 않고 COM 경로에서 [후보] 오류로 안내
     except Exception:
         pass
     return raw
@@ -361,8 +364,84 @@ def _find(rng: Any, text: str, match_case: bool = False, whole_word: bool = Fals
                           MatchSoundsLike=False, MatchAllWordForms=False, Forward=True, Wrap=0, Format=False))
 
 
-def _insert_position(doc: Any, anchor: Optional[str], pos: str) -> Tuple[int, str]:
-    """삽입 위치(문자 오프셋)와 설명. 앵커가 있으면 그 단락의 앞/뒤, replace면 앵커 단락을 지우고 그 자리."""
+ANCHOR_MAX_HITS = 50     # 앵커가 들어간 단락을 이 개수까지만 셉니다
+_CONTROL = re.compile(r"[\x00-\x1f]")
+
+
+def _preview(text: str, n: int = 30) -> str:
+    t = re.sub(r"\s+", " ", _CONTROL.sub(" ", text)).strip().replace(",", " ")
+    return t if len(t) <= n else t[:n] + "..."
+
+
+def _anchor_paragraphs(doc: Any, anchor: str) -> List[Any]:
+    """앵커 글이 들어간 단락 Range 목록 (문서 순서, 같은 단락은 한 번)."""
+    found: List[Any] = []
+    seen = set()
+    pos, end = 0, int(doc.Content.End)
+    while len(found) < ANCHOR_MAX_HITS and pos < end:
+        rng = doc.Range(pos, end)
+        if not _find(rng, anchor):
+            break
+        para = rng.Paragraphs(1).Range
+        if int(para.Start) not in seen:
+            seen.add(int(para.Start))
+            found.append(para)
+        pos = max(int(rng.End), pos + 1)
+    return found
+
+
+def _similar_anchor(doc: Any, anchor: str) -> Optional[str]:
+    """찾지 못한 앵커와 가장 비슷한 문서 속 글 (그대로 다시 찾을 수 있는 원문 일부). 충분히 비슷하지 않으면 None."""
+    key = anchor.strip().lower()
+    if len(key) < 2:
+        return None
+    paras = [p for p in str(doc.Content.Text).split("\r") if p.strip()][:5000]
+    scored = []
+    for p in paras:
+        m = difflib.SequenceMatcher(None, key, p.lower(), autojunk=False)
+        size = m.find_longest_match(0, len(key), 0, len(p)).size
+        if size:
+            scored.append((size, p))
+    best, best_text = 0.0, None
+    for _, p in sorted(scored, key=lambda x: -x[0])[:5]:
+        low = p.lower()
+        for width in (len(key) - 1, len(key), len(key) + 1):
+            if width < 2:
+                continue
+            for i in range(0, max(1, len(p) - width + 1)):
+                piece = p[i:i + width]
+                if _CONTROL.search(piece):
+                    continue
+                r = difflib.SequenceMatcher(None, key, low[i:i + width], autojunk=False).ratio()
+                if r > best:
+                    best, best_text = r, piece.strip()
+    return best_text if best >= 0.6 and best_text and best_text.lower() != key else None
+
+
+def _anchor_paragraph(doc: Any, anchor: str, occurrence: Optional[int]) -> Any:
+    """앵커 단락 하나. 못 찾으면 비슷한 글 [추천], 여러 단락에 있으면 고르지 않고 [후보]로 오류."""
+    hits = _anchor_paragraphs(doc, anchor)
+    if not hits:
+        similar = _similar_anchor(doc, anchor)
+        raise rt.InputError(f"문서에서 '{anchor}'을(를) 찾을 수 없습니다. word.py read로 정확한 문구를 확인하세요."
+                            + (f" [추천] {similar}" if similar else ""), no_fallback=True)
+    if occurrence is not None:
+        if not 1 <= occurrence <= len(hits):
+            raise rt.InputError(f"--occurrence는 1~{len(hits)} 사이여야 합니다 ('{anchor}'이(가) 있는 단락 {len(hits)}개).",
+                                no_fallback=True)
+        return hits[occurrence - 1]
+    if len(hits) > 1:
+        more = "개 이상" if len(hits) >= ANCHOR_MAX_HITS else "개"
+        raise rt.ambiguous(
+            f"'{anchor}'이(가) 단락 {len(hits)}{more}에 있어 어느 곳인지 고를 수 없습니다. 사용자에게 번호를 고르게 한 뒤 "
+            "--occurrence 번호를 붙이거나, 한 곳에만 있는 더 긴 문구를 --anchor로 쓰세요.",
+            [f"{i}: {_preview(str(h.Text))}" for i, h in enumerate(hits, 1)])
+    return hits[0]
+
+
+def _insert_position(doc: Any, anchor: Optional[str], pos: str, occurrence: Optional[int] = None) -> Tuple[int, str]:
+    """삽입 위치(문자 오프셋)와 설명. 앵커가 있으면 그 단락의 앞/뒤, replace면 앵커 단락을 지우고 그 자리.
+    앵커가 여러 단락에 있으면 occurrence(1부터)로 고른 단락, 없으면 오류 (첫 번째를 임의로 고르지 않음)."""
     if not anchor:
         end = doc.Content.End - 1
         last = doc.Range(end, end).Paragraphs(1).Range
@@ -374,10 +453,7 @@ def _insert_position(doc: Any, anchor: Optional[str], pos: str) -> Tuple[int, st
         return end, "문서 끝"
     if len(anchor) > FIND_MAX:
         raise rt.InputError(f"--anchor는 {FIND_MAX}자 이하여야 합니다. 앵커 단락의 앞부분 일부만 쓰세요.")
-    rng = doc.Content
-    if not _find(rng, anchor):
-        raise rt.InputError(f"문서에서 '{anchor}'을(를) 찾을 수 없습니다. word.py read로 정확한 문구를 확인하세요.")
-    para = rng.Paragraphs(1).Range
+    para = _anchor_paragraph(doc, anchor, occurrence)
     if pos == "before":
         return int(para.Start), f"'{anchor}' 단락 앞"
     if pos == "replace":
@@ -408,7 +484,7 @@ def cmd_write(args) -> Dict[str, Any]:
     with off.open_target("word", args.target, readonly=False, focus=not args.no_focus, create=True,
                          tool=TOOL, command="write") as t:
         doc = t.doc
-        start, where = _insert_position(doc, args.anchor, args.pos)
+        start, where = _insert_position(doc, args.anchor, args.pos, args.occurrence)
         w = Writer(doc, start, theme)
         if args.page_break:
             w.page_break()
@@ -633,6 +709,8 @@ def build_cli():
     p.add_argument("--toc", action="store_true", help="목차 넣기")
     p.add_argument("--page-break", action="store_true", help="넣기 전에 페이지 나누기")
     p.add_argument("--anchor", help="이 글이 있는 단락을 기준으로 넣기")
+    p.add_argument("--occurrence", type=int,
+                   help="--anchor가 여러 단락에 있을 때 몇 번째 단락인지 (1부터, 오류의 [후보] 번호)")
     p.add_argument("--pos", choices=["after", "before", "replace", "end", "start"], default="after",
                    help="앵커 기준 위치 (앵커 없으면 end/start만 의미, 기본: 문서 끝)")
     p.add_argument("--theme", help=f"표/요약 상자 색: {', '.join(off.THEMES)}")
