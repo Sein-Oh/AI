@@ -24,15 +24,16 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr. `-h/--help` 텍스트도 stderr로 보내고 stdout에는 JSON 1줄.
    - 사람용 실기 테스트 러너(`tools/run_win_tests.py`)는 계약 대상이 아니다. 단, 에이전트용 모드(`--agent` 등)는 계약을 지킨다.
 2. exit 0 = ok, 1 = error, 2 = 인자 오류, 130 = 중단.
-   - 성공: `"status": "ok"`, `agent_directive`는 `VERIFIED:`로 시작.
-   - 실패: `"status": "error"`, `agent_directive`는 `STOP_RETRY:`(입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도) 또는 `ERROR:`(내부 오류, 재시도 금지).
+   - 성공: `"status": "ok"`, `agent_directive`는 `VERIFIED:`(도구가 결과를 확인함) 또는 `UNVERIFIED:`(확인하지 못함, 재시도 없이 보고)로 시작.
+   - 실패: `"status": "error"`, `agent_directive`는 `STOP_RETRY:`(입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도, `[후보]`면 사용자에게 선택 요청) 또는 `ERROR:`(내부 오류, 재시도 금지).
+   - 공통 키·문구·함수의 구현 규칙은 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)을 따른다.
 3. 모든 진입점은 공통 런타임의 `run_cli()` + `JsonArgumentParser`를 사용한다.
 4. 기존 CLI 인자·JSON 키는 삭제/의미 변경 금지 (추가는 OK). 바꿔야 하면 alias 유지.
 5. 문자 규칙(아래)을 지킨다.
 
 ## ACI 설계 권장
 1. **사후 확인**: `VERIFIED:`는 결과를 실제로 확인했을 때만 붙인다. 쓰기 작업은 저장 후 다시 읽어 기대값과 비교하고,
-   확인하지 못했으면 `ok`여도 `VERIFIED:` 대신 무엇을 확인하지 못했는지 적는다.
+   확인하지 못했으면 `ok`여도 `UNVERIFIED:`로 시작하고 무엇을 확인하지 못했는지 적는다 (R1).
 2. **빈 결과 명시**: 0건도 성공이다. `"count": 0`과 "찾은 항목 없음"을 `agent_directive`에 분명히 적는다. 빈 배열만 주지 않는다.
 3. **다음 행동 제시**: 이어서 할 일이 있으면 `next_commands`에 그대로 실행 가능한 전체 명령을 넣는다.
    LLM이 인자를 조합하거나 문서를 다시 읽지 않아도 되게 한다.
@@ -58,7 +59,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
    | 선택 라이브러리 없음 | 대체 경로가 있으면 사용, 없으면 해당 기능만 `STOP_RETRY:`로 설치 명령(`python -m pip install ...`) 안내 |
 2. 복구 한도: 재시도는 횟수와 시간 상한을 둔다. 무한 루프 금지. 한도를 넘으면 오류 JSON을 낸다.
 3. 복구 금지 (사용자 확인이 필요한 경우): 덮어쓰기, 삭제, 원본 수정, 후보가 둘 이상인 추측, 데이터 값을 바꾸는 보정.
-   이때는 `STOP_RETRY:` + message에 `[추천] <값>`을 넣는다.
+   이때는 `STOP_RETRY:` + message에 `[추천] <값>`(하나) 또는 `[후보] a, b`(여럿)를 넣는다. 덮어쓰기는 `--overwrite`가 있을 때만 한다 (R4).
 4. 복구는 숨기지 않는다.
    - stderr에 `[WARN] <무엇이 실패했고 어떻게 복구했는지>`.
    - stdout JSON에 `recovered` 배열 키를 추가한다 (예: `["잠김 -> report_20261028_101500.xlsx로 저장"]`). 복구가 없으면 생략.

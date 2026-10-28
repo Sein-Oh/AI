@@ -125,7 +125,7 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 - [ ] 1.1 후보: 증분 스캔(바뀐 폴더만), peek 확인 결과를 학습 데이터로 한 파일명 n-gram 분류기, 압축 파일 내부 목록, 내용 해시 중복
 
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
-상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`.
+상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
 - [ ] `scan --resume`(--root만)에서 미완료 작업이 2개 이상이면 STOP_RETRY + `[추천] <가장 최근 job>`과 후보 목록 (doc_classifier.py:54-61)
 - [ ] `rt.ok()`의 `VERIFIED:` 강제 제거. `summary --save`는 xlsx를 read_only로 다시 열어 시트 수 확인, CSV는 쓴 행 수 == total 확인
 - [ ] `summary --save --dry-run`(덮어쓸 xlsx, 새 CSV, 지울 이전 CSV 목록), 실제 삭제·덮어쓰기는 JSON `removed_files`/`overwritten`, 이전 CSV 삭제 로그를 `[WARN]`으로

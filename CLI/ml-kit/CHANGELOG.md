@@ -128,7 +128,7 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙음 (`_pred_<시각>_<시각>.csv`)
 
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
-상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`.
+상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
 - [ ] 불완전 vN 폴더 자동 삭제(ml_train.py:904-914)와 `--version` 기존 폴더 교체(917-921) 중단 -> STOP_RETRY + `[추천] --version v<다음>`. 필요하면 `--dry-run`/`--overwrite`
 - [ ] 원장 기록을 버전 폴더 커밋 뒤로 이동(ml_train.py:1515-1518), 커밋 후 final_dir 재검증(joblib.load, json 키) 뒤에만 `VERIFIED:`
 - [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)

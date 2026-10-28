@@ -87,7 +87,12 @@ JIT 자가복구 3번(복구 금지: 삭제, 덮어쓰기, 후보가 둘 이상�
 - 인자 오류(exit 2)는 `run_cli()`가 아니라 `JsonArgumentParser.error()`가 기록한다 (doc-classifier 구현에 맞춤).
 - 가운뎃점(·), 곱셈(×), 도(°) 같은 CP949 일반 기호는 허용한다고 명시.
 
-## 6. 참고 (지침 위반은 아님)
+## 6. 공통 구현 규칙
+
+3절 공통 문제의 구현 방식은 [`CLI/README.md`](../CLI/README.md) "공통 런타임 구현 규칙"(R1~R9)으로 정했다.
+각 도구의 "남은 할 일" 중 `VERIFIED:`, `recovered`, `retry_fs`/`remove_tree`, 오류 로그, `require_lib`, `-h`, `--dry-run`, 빈 결과, `truncated` 항목은 그 규칙대로 구현한다.
+
+## 7. 참고 (지침 위반은 아님)
 
 - office-cli `WORK_PLAN.md`에 예전 파일명(`_cache.py` 등)이 남아 있다.
 - doc-classifier `SKILL.md:69`는 LLM에게 `<SKILL_DIR>\data\logs\errors.txt`를 고정 경로로 안내한다. `DOCCLS_DATA_DIR`를 바꾸면 틀린 경로가 된다.

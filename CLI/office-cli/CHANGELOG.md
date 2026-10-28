@@ -94,7 +94,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
 
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
-상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 우선순위 순.
+상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
 - [ ] excel write/transfer에서 없는 `--sheet`를 새 시트로 자동 생성하지 않기, 비슷한 시트가 있으면 STOP_RETRY + `[추천]` (excel.py:426,430). 새 시트는 명시 플래그로만
 - [ ] word `--anchor`가 여러 곳에 맞으면 STOP_RETRY(후보 수 + `[추천]`), 못 찾으면 비슷한 단락 `[추천]` (word.py:378-388). `match_open` 같은 파일명 중복도 STOP_RETRY (_office.py:216)
 - [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
