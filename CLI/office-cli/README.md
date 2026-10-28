@@ -64,6 +64,9 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
     | 저장한 적 없는 엑셀/PPT 문서, 열려 있음 | `replaced_untitled_document` | 현재 상태를 `pre_undo_backup`에 보관, 스냅샷을 새 제목 없는 문서로 열고 바뀐 문서는 저장하지 않고 닫음 (문서 수 그대로, 창 이름은 바뀜) |
     | 저장한 적 없는 문서가 닫혔거나 같은 이름의 저장 안 된 문서가 둘 이상 | `new_untitled_document` | 고르지 않고 스냅샷을 새 제목 없는 문서로만 엶. `preview`에 이유를 적음 |
   - 저장한 적 없는 문서는 스냅샷 때의 문서 이름(`문서1`, `Book1`)으로 찾습니다(1.2.2, 시나리오 12). 이전에는 항상 새 문서로 열어 바뀐 문서가 그대로 남았습니다.
+  - 스냅샷을 만들지 못한 쓰기(DRM, 50MB 초과)와 새로 만든 파일에 쓰기는 "되돌릴 지점 없음" 표식을 남깁니다. 직전 작업이 그렇다면 `undo`는 더 오래된 지점으로 넘어가지 않고 `needs_user_decision`(사용자가 `--list`에서 고른 `--pick N`만 실행).
+  - 되돌리기 지점 뒤에 파일이 다시 저장되었으면(지점 2분 뒤 이후의 수정 시각) 그 사이 저장한 내용이 사라지므로 `needs_user_decision`. 사용자가 원하면 `--overwrite`.
+  - 열린 문서를 닫은 뒤 파일 복사가 실패하면(백신·잠금) 원본을 다시 열고 `undo_failed` 오류에 `pre_undo_backup`을 줍니다.
 - **읽기는 아무것도 만들거나 저장하지 않습니다.** 없는 시트나 파일을 지정하면 `[추천]`과 함께 오류를 냅니다.
 - **추측해서 쓰지 않습니다.** 쓰기 위치가 확실하지 않으면 아무것도 바꾸지 않고 오류를 냅니다.
   - 엑셀 쓰기에서 없는 시트: 새로 만들지 않습니다. 표기만 다른 시트(`Sheet 1`과 `Sheet1`)가 있으면 `[추천]`. 그 밖에는 `error_type: "needs_user_decision"`으로 있는 시트 목록을 알리고, 비슷한 기존 시트(`Sheet2`와 `Sheet1`)가 있으면 그 이름만 `[후보]`에 넣습니다. 새 시트는 `--new-sheet`로만 만듭니다.
@@ -99,12 +102,12 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 |---|---|
 | `read` | `--range`, `--sheet`, `--search 글자`(셀 주소 반환), `--max-rows`, `--save [경로.csv]` |
 | `info` | 시트별 사용 범위와 차트. `--all`: 열린 통합문서 전체. `--detail`: 차트 종류·계열 수·위치와 데이터를 가리는 차트 경고 |
-| `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(같은 머리글 생략), `--sheet`, `--new-sheet`(없는 시트를 새로 만들 때만) |
+| `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(쓸 열 전체에서 가장 아래 행 다음에, 시작 행의 머리글과 같으면 생략), `--sheet`, `--new-sheet`(없는 시트를 새로 만들 때만). Excel이 다른 값으로 바꿔 버릴 글자(앞자리 0 코드 `01234`, 15자리 초과 숫자, `1-2`·`3/4`, `(100)`, `1E5`)는 글자 그대로 씁니다 |
 | `replace` | `--find/--replace` 또는 `--map JSON`, `--whole`, `--all-sheets`, 서식 옵션. 수식 셀은 내용 보존 |
 | `style` | `--theme navy\|slate\|teal\|emerald`, `--bg`, `--color`, `--bold`, `--align`, `--number-format`, `--border`, `--highlight ">=100:pink"`(조건부 서식), `--clear` |
 | `export` | `--save 경로.csv\|.xlsx\|.pdf`, `--columns A,C,E` |
 | `sheet` | `--action list\|add\|rename\|copy\|delete\|select --name --new-name` |
-| `range` | `--action autofit\|width\|height\|merge\|unmerge\|freeze\|unfreeze\|hide\|unhide\|clear\|copy\|move\|border` |
+| `range` | `--action autofit\|width\|height\|merge\|unmerge\|freeze\|unfreeze\|hide\|unhide\|clear\|copy\|move\|border`. `clear`는 `--range` 필수(시트 전체를 실수로 지우지 않게). `merge`는 값이 있는 칸이 둘 이상이면, `copy`/`move`는 대상에 값이 있으면 `needs_user_decision`(사용자가 원하면 `--overwrite`). `hide`/`unhide`/`autofit`의 `--axis`를 생략하면 `5:7` 같은 행 주소는 행, 그 밖은 열 |
 | `chart` | `--action create\|list\|delete`, `--range`, `--type column\|bar\|line\|line_markers\|pie\|area\|scatter\|scatter_lines\|combo`, `--title`, `--at`, `--labels`, `--legend`, `--theme` |
 
 - 수식이 1개면 범위 전체에 넣고 상대참조가 자동으로 조정됩니다. 여러 개면 열마다 하나씩 넣습니다.
@@ -119,7 +122,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 | `comment` | `--anchor`/`--text`/`--file`이 있으면 `--action add`가 없어도 메모 달기. `--action list`(기본): 메모마다 `no, author, date, page, target_text`(메모를 단 글), `text, done, reply_to`. 100개씩 `--start`. `--action add --anchor 글 --text 메모`(또는 `--file 메모.txt`): 기준 글이 든 단락을 `write`의 앵커와 같은 규칙으로 고르고(여러 곳이면 `[후보]` + `--occurrence`) 그 글 자체에 메모를 답니다. `--file 메모.csv`(열: 기준 글, 메모 내용[, 몇 번째 단락])는 여러 메모를 한 번에 달며, 기준 글 하나라도 정할 수 없으면 하나도 달지 않습니다. 단 뒤 다시 읽어 확인(`verified`) |
 | `revisions` | 변경 내용 추적 목록: `no, type`(삽입/삭제/서식 변경 등), `author, date, page, text`, `track_changes`(추적 켜짐 여부). 100개씩 `--start`. 읽기만 합니다(수락·거부는 Word에서) |
 | `info` | 쪽/단어/글자 수, 표, 그림, 제목 목록. `--all`. `--detail`: 그림 크기(쪽 너비 대비)와 제목 수준, 쪽보다 넓은 그림 경고 |
-| `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--occurrence N`(앵커가 여러 단락에 있을 때), `--theme` |
+| `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--occurrence N`(앵커가 여러 단락에 있을 때), `--theme`. 앵커가 표 칸 안이면 `after`는 표 뒤에 넣고 `before`/`replace`는 거절(칸 안에 들어가지 않게). 문서가 표로 시작하면 `--pos start` 거절 |
 | `replace` | `--find/--replace`(빈 문자열은 삭제) 또는 `--map`, `--match-case`, `--whole-word`, `--bold`, `--color`, `--highlight`. 머리글/바닥글/글상자 포함 |
 | `export` | `--save 경로.pdf\|.docx`, `--page-number`(사본에만) |
 
@@ -217,7 +220,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 - `windows`: 열린 Office 문서 목록과 실행 중인 Office 버전, PDF 내보내기 가능 여부(`office`). PDF 기능이 없는 Office에서는 `export --save *.pdf`가 시도 없이 바로 안내합니다
 - `focus --app excel|word|ppt [--name]`: 창을 앞으로 가져옵니다. 최대화 상태는 유지합니다.
 - `transfer`: 아래 4절 참고
-- `undo [--app] [--list] [--pick N]`
+- `undo [--app] [--list] [--pick N] [--overwrite]`
 
 ## 4. 앱 간 전달 (transfer)과 회사 DRM
 

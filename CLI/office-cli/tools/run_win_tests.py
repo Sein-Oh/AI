@@ -998,10 +998,14 @@ def test_E(ctx):
 
     def e3():
         activate_xl("A.xlsx", "E_TEST")
-        data, code, raw, err = run_cli("excel.py", "range", "--action", "merge", "--range", "A10:B10")
+        d0 = run_cli("excel.py", "range", "--action", "merge", "--range", "A10:B10")[0]       # 값 2개: 사용자 확인 필요
+        held = not com_retry(lambda: bool(e_ws().Range("A10").MergeCells)) and com_retry(lambda: e_ws().Range("B10").Value) == "병합2"
+        data, code, raw, err = run_cli("excel.py", "range", "--action", "merge", "--range", "A10:B10", "--overwrite")
         merged = com_retry(lambda: bool(e_ws().Range("A10").MergeCells))
-        ok = (data or {}).get("status") == "ok" and merged and code != "TIMEOUT"
-        record(ctx, "E3", "값이 있는 셀 병합 시 대화상자 없이 완료", ok, f"병합됨={merged}", data, code, raw, err)
+        ok = (d0 or {}).get("error_type") == "needs_user_decision" and held \
+            and (data or {}).get("status") == "ok" and merged and code != "TIMEOUT"
+        record(ctx, "E3", "값이 있는 셀 병합: 확인 없이는 멈춤, --overwrite면 대화상자 없이 완료", ok,
+               f"확인 요청={(d0 or {}).get('error_type')}, 값 유지={held}, 병합됨={merged}", data, code, raw, err)
 
     def e4():
         activate_xl("A.xlsx", "E_TEST")

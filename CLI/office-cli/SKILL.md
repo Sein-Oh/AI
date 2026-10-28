@@ -63,7 +63,7 @@ metadata:
 | `UNVERIFIED:` | 실행은 됐지만 확인하지 못했다. 다시 실행하지 않고 `unverified` 내용을 그대로 알린다. |
 | `STOP_RETRY:` + message에 `[후보]` | 다시 실행하지 않는다. `[후보]`를 보여 주고 사용자가 고르게 한 뒤, 고른 값으로 실행한다 (시트: `--sheet 이름`, 앵커·장절: `--occurrence 번호`, 문서: `--target 전체경로`). 사용자가 새 시트를 원한다고 답한 경우에만 `--new-sheet`. |
 | `STOP_RETRY:` + message에 `[추천]` | 추천된 값으로 **1번만** 다시 실행한다. 또 실패하면 message를 그대로 알린다. |
-| `STOP_RETRY:` (위 둘 없음) | 다시 실행하지 않는다. message를 그대로 알린다. 없는 시트(`needs_user_decision`)면 새 시트를 만들지 사용자에게 묻는다. |
+| `STOP_RETRY:` (위 둘 없음) | 다시 실행하지 않는다. message를 그대로 알린다. `needs_user_decision`(없는 시트, 지워질 값, 덮어쓸 칸, 되돌리기 위험)이면 사용자에게 묻고, 사용자가 원할 때만 directive가 말한 옵션을 붙여 1번 실행한다. |
 | `ERROR:` | 다시 실행하지 않는다. message를 그대로 알린다. |
 
 - JSON에 `recovered`가 있으면 그 문장을 그대로 알린다.

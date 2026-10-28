@@ -19,6 +19,7 @@
 import os
 import sys
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -779,6 +780,7 @@ def restore_snapshot(snap: Dict[str, Any]) -> Dict[str, Any]:
         pass
     if open_item is not None:
         app, doc = open_item["app"], open_item["doc"]
+        opener = {"word": lambda: app.Documents, "excel": lambda: app.Workbooks, "ppt": lambda: app.Presentations}[kind]
         if kind == "word":
             backup = _backup_path(kind, ".xml")
             with open(backup, "w", encoding="utf-8") as f:
@@ -786,15 +788,24 @@ def restore_snapshot(snap: Dict[str, Any]) -> Dict[str, Any]:
             doc.Close(SaveChanges=0)
             if snap.get("snapshot_format") == "flat_xml":
                 _word_from_flat_xml(app, data, orig)
-            else:
-                shutil.copy2(data, orig)
-                app.Documents.Open(os.path.normpath(orig))
+                return {"restored_as": "reopened_in_office", "pre_undo_backup": backup}
         else:
             backup = _backup_path(kind, ext)
             doc.SaveCopyAs(backup)
             doc.Close(SaveChanges=False) if kind == "excel" else doc.Close()
-            shutil.copy2(data, orig)
-            (app.Workbooks if kind == "excel" else app.Presentations).Open(os.path.normpath(orig))
+        try:
+            # Office가 닫은 직후 잠금을 늦게 풀거나 백신이 잡고 있을 수 있음
+            rt.retry_fs(lambda: shutil.copy2(data, orig))
+        except OSError as e:
+            try:
+                opener().Open(os.path.normpath(orig))       # 사용자 문서를 닫힌 채로 두지 않음
+            except Exception:
+                pass
+            raise rt.InputError(f"되돌린 파일을 원본 자리에 복사하지 못해 되돌리지 않았습니다 ({type(e).__name__}). 원본은 그대로 다시 열었고, "
+                                f"되돌리기 직전 상태는 pre_undo_backup에 있습니다.",
+                                directive="되돌리지 못했습니다. message와 pre_undo_backup 경로를 사용자에게 그대로 알리세요.",
+                                error_type="undo_failed", fields={"pre_undo_backup": backup})
+        opener().Open(os.path.normpath(orig))
         return {"restored_as": "reopened_in_office", "pre_undo_backup": backup}
     backup = ""
     if os.path.exists(orig):
@@ -818,8 +829,10 @@ def cmd_undo(args) -> Dict[str, Any]:
     snaps = off.list_snapshots(kind)
     if args.list:
         items = [{"pick": i, "app": off.APP_LABEL[s["app"]], "name": s["name"], "created_at": s.get("created_at", "")[:15],
-                  "by": s.get("by", "")} for i, s in enumerate(snaps[:20], 1)]
-        return rt.ok(TOOL, "undo", f"되돌릴 수 있는 지점 {len(snaps)}개", snapshots=items)
+                  "by": s.get("by", "")} | ({"undo_available": False, "reason": s.get("reason", "")} if s.get("barrier") else {})
+                 for i, s in enumerate(snaps[:20], 1)]
+        return rt.ok(TOOL, "undo", f"되돌릴 수 있는 지점 {sum(1 for s in snaps if not s.get('barrier'))}개", snapshots=items,
+                     count=len(snaps), shown=len(items), truncated=len(snaps) > len(items))
     if not snaps:
         return rt.ok(TOOL, "undo", "되돌릴 스냅샷이 없습니다",
                      "VERIFIED: 되돌릴 수 있는 작업이 없습니다. 사용자에게 알리세요.", restored=False)
@@ -827,6 +840,22 @@ def cmd_undo(args) -> Dict[str, Any]:
     if not 1 <= pick <= len(snaps):
         raise rt.InputError(f"--pick은 1~{len(snaps)} 사이여야 합니다 (office.py undo --list로 확인).")
     snap = snaps[pick - 1]
+    if snap.get("barrier"):
+        if args.pick:
+            raise rt.InputError(f"{pick}번은 되돌릴 지점이 없는 작업입니다 ({snap.get('reason', '')}). office.py undo --list에서 다른 번호를 고르세요.")
+        raise rt.UserDecisionError(
+            f"직전 작업('{snap['name']}' {snap.get('by', '')})은 되돌릴 지점이 없습니다: {snap.get('reason', '')}. "
+            "그보다 앞 지점으로 되돌리면 그 사이의 작업도 함께 사라집니다. 되돌리지 않았습니다.",
+            "되돌리지 않았습니다. message를 사용자에게 알리고, 사용자가 더 앞 지점으로 되돌리길 원하면 "
+            "office.py undo --list를 보여 준 뒤 사용자가 고른 번호로 --pick을 붙여 실행하세요.")
+    orig = snap.get("original_path", "")
+    created = float(snap.get("created_ts") or 0)
+    if orig and created and not args.overwrite and os.path.exists(orig) and os.path.getmtime(orig) > created + 120:
+        changed = datetime.fromtimestamp(os.path.getmtime(orig)).strftime("%Y-%m-%d %H:%M")
+        raise rt.UserDecisionError(
+            f"'{snap['name']}'은(는) 이 되돌리기 지점({snap.get('created_at', '')[:15]}) 뒤에 다시 저장되었습니다 (마지막 저장 {changed}). "
+            "되돌리면 그 사이에 저장한 내용이 사라집니다. 되돌리지 않았습니다.",
+            "되돌리지 않았습니다. message를 사용자에게 알리고, 사용자가 그래도 되돌리길 원하면 같은 명령에 --overwrite를 붙여 실행하세요.")
     off.require_com()
     off.init_com()
     info = restore_snapshot(snap)
@@ -877,6 +906,8 @@ def build_cli():
     p.add_argument("--app", help="이 앱의 작업만 (excel, word, ppt)")
     p.add_argument("--list", action="store_true", help="되돌릴 수 있는 지점 목록")
     p.add_argument("--pick", type=int, help="--list의 번호 (기본 1 = 가장 최근)")
+    p.add_argument("--overwrite", action="store_true",
+                   help="되돌리기 지점 뒤에 파일이 다시 저장되었어도 되돌리기 (그 사이 저장한 내용이 사라짐, 사용자가 원할 때만)")
     return parser
 
 

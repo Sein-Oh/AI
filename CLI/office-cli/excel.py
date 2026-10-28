@@ -111,7 +111,7 @@ _NUM_RE = re.compile(r"^[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$")
 
 
 def coerce(s: Any) -> Any:
-    """CSV 문자열 -> Excel 값. 숫자는 숫자로, 앞자리 0이 있는 코드(001)는 문자 그대로."""
+    """CSV 문자열 -> Excel 값. 숫자는 숫자로, 앞자리 0이 있는 코드(001)와 15자리를 넘는 숫자는 문자 그대로."""
     if not isinstance(s, str):
         return s
     t = s.strip()
@@ -121,9 +121,23 @@ def coerce(s: Any) -> Any:
         digits = t.lstrip("+-").replace(",", "")
         if len(digits) > 1 and digits[0] == "0" and not digits.startswith("0."):
             return t
+        if len(digits.replace(".", "")) > 15:       # Excel 숫자 정밀도(15자리)를 넘으면 값이 바뀜
+            return t
         num = float(digits) * (-1 if t.startswith("-") else 1)
         return int(num) if num.is_integer() and "." not in digits else num
     return s
+
+
+# Excel이 COM으로 받은 글자를 직접 입력한 것처럼 다시 해석해 값이 바뀌는 모양:
+# 앞자리 0 코드(01234 -> 1234), 15자리 초과 숫자, 월-일/분수처럼 보이는 글(1-2, 3/4 -> 날짜), 괄호 숫자((100) -> -100), 지수(1E5)
+_REINTERPRETED = re.compile(r"^(?:0\d+(?:\.\d+)?|[+-]?\d{16,}(?:\.\d+)?|\d{1,2}\s*[-/]\s*\d{1,2}|\(\s*[\d.,]+\s*\)|\d+(?:\.\d+)?[eE][+-]?\d+)$")
+
+
+def xl_text(v: Any) -> Any:
+    """셀에 쓸 값. 글자인데 Excel이 숫자/날짜로 바꿔 버릴 모양이면 앞에 '를 붙여 글자 그대로 둡니다 ('는 셀 값에 남지 않음)."""
+    if isinstance(v, str) and _REINTERPRETED.match(v.strip()):
+        return "'" + v
+    return v
 
 
 def rect(rows: List[List[Any]]) -> List[List[Any]]:
@@ -446,22 +460,27 @@ def cmd_write(args) -> Dict[str, Any]:
         r2c2 = parse_cell(parts[1]) if len(parts) > 1 else None
 
         if args.append:
-            last = _last_used_row(ws, c1)
-            if last and table and header is None and last >= 1:
-                first_existing = [out_value(v) for v in off.range_to_matrix(
-                    ws.Range(ws.Cells(1, c1), ws.Cells(1, c1 + len(table[0]) - 1)).Value)[0]]
-                if [str(x) for x in first_existing] == [str(out_value(x)) for x in table[0]]:
-                    table = table[1:]       # 같은 헤더는 반복하지 않음
+            width = max(len(header) if header else 0, len(rect(table)[0]) if table else 1)
+            # 쓸 열 전체에서 가장 아래 행 (한 열만 보면 그 열이 비어 있는 행에 다른 열 데이터를 덮어씀)
+            last = max(_last_used_row(ws, c) for c in range(c1, c1 + width))
+            if last >= r1:
+                # 같은 머리글은 반복하지 않음: 표의 머리글 행(시작 행)과 비교 (--header도 같음)
+                existing = [str(out_value(v)) for v in off.range_to_matrix(
+                    ws.Range(ws.Cells(r1, c1), ws.Cells(r1, c1 + width - 1)).Value)[0]]
+                if header and existing[:len(header)] == [str(h) for h in header]:
+                    header = None
+                if table and existing[:len(table[0])] == [str(out_value(x)) for x in table[0]]:
+                    table = table[1:]
                     if not table:
                         raise rt.InputError("추가할 데이터 행이 없습니다 (입력 파일에 헤더만 있음).")
-            if r2c2:
-                r2c2 = (r2c2[0] - r1 + last + 1, r2c2[1])
-            r1 = last + 1
+                if r2c2:
+                    r2c2 = (r2c2[0] - r1 + last + 1, r2c2[1])
+                r1 = last + 1
 
         written: List[str] = []
         with off.excel_batch(t.app):
             if header:
-                ws.Range(ws.Cells(r1, c1), ws.Cells(r1, c1 + len(header) - 1)).Value = (tuple(header),)
+                ws.Range(ws.Cells(r1, c1), ws.Cells(r1, c1 + len(header) - 1)).Value = (tuple(xl_text(h) for h in header),)
                 written.append(addr(r1, c1, r1, c1 + len(header) - 1))
                 r1 += 1
 
@@ -485,7 +504,7 @@ def cmd_write(args) -> Dict[str, Any]:
                     raise rt.InputError(f"수식 {len(formulas)}개와 범위의 열 수 {ncols}가 다릅니다. 열마다 수식 1개씩 주세요.")
                 written.append(addr(r1, c1, r2, c2))
             elif args.value is not None:
-                v = coerce(args.value)
+                v = xl_text(coerce(args.value))
                 if r2c2:
                     ws.Range(ws.Cells(r1, c1), ws.Cells(*r2c2)).Value = v
                     written.append(addr(r1, c1, *r2c2))
@@ -495,7 +514,8 @@ def cmd_write(args) -> Dict[str, Any]:
             else:
                 data = rect(table)
                 nrows, ncols = len(data), len(data[0])
-                ws.Range(ws.Cells(r1, c1), ws.Cells(r1 + nrows - 1, c1 + ncols - 1)).Value = tuple(tuple(r) for r in data)
+                ws.Range(ws.Cells(r1, c1), ws.Cells(r1 + nrows - 1, c1 + ncols - 1)).Value = tuple(
+                    tuple(xl_text(v) for v in r) for r in data)
                 written.append(addr(r1, c1, r1 + nrows - 1, c1 + ncols - 1))
 
         first = parse_cell(written[0].split(":")[0])
@@ -577,7 +597,7 @@ def cmd_replace(args) -> Dict[str, Any]:
                         if isinstance(f, str) and f.startswith("="):
                             skipped_formulas.append(cell_ref)      # 수식은 보존, 서식만
                         elif new != s:
-                            cell.Value = coerce(new) if not isinstance(v, str) else new
+                            cell.Value = xl_text(coerce(new) if not isinstance(v, str) else new)
                         if fmt:
                             _apply_format(cell, fmt)
                         replaced.append(cell_ref)
@@ -892,10 +912,40 @@ def cmd_sheet(args) -> Dict[str, Any]:
     return rt.ok(TOOL, "sheet", msg, target_resolved=resolved, sheets=names)
 
 
+def _filled_cells(ws: Any, rng: Any) -> List[Tuple[str, Any]]:
+    """범위에서 값이 있는 칸 [(주소, 값)] (문서 순서)."""
+    r0, c0 = int(rng.Row), int(rng.Column)
+    out = []
+    for i, row in enumerate(off.range_to_matrix(rng.Value)):
+        for j, v in enumerate(row):
+            if v is not None and str(v) != "":
+                out.append((addr(r0 + i, c0 + j), v))
+    return out
+
+
+def _axis(args) -> str:
+    """--axis 생략 시 주소로 판단: '5:7', '5'처럼 행 번호만 있으면 rows (cols로 하면 시트의 모든 열이 숨겨짐)."""
+    if args.axis:
+        return args.axis
+    cells = split_sheet(args.range or "")[1].replace("$", "")
+    return "rows" if re.fullmatch(r"\d+(?::\d+)?", cells) else "cols"
+
+
+def _inside(cell: Tuple[int, int], box: Tuple[int, int, int, int]) -> bool:
+    return box[0] <= cell[0] <= box[2] and box[1] <= cell[1] <= box[3]
+
+
+def _short(v: Any, n: int = 15) -> str:
+    s = str(out_value(v)).replace(",", " ")
+    return s if len(s) <= n else s[:n] + "..."
+
+
 def cmd_range(args) -> Dict[str, Any]:
     a = args.action
-    if a in ("merge", "unmerge", "width", "height", "hide", "unhide", "copy", "move") and not args.range:
-        raise rt.InputError(f"range {a}에는 --range가 필요합니다.")
+    if a in ("merge", "unmerge", "width", "height", "hide", "unhide", "copy", "move", "clear") and not args.range:
+        raise rt.InputError(f"range {a}에는 --range가 필요합니다." + (
+            " 시트 전체를 지우려면 사용자에게 확인한 뒤 excel.py info로 사용 범위를 보고 그 범위를 --range로 지정하세요."
+            if a == "clear" else ""))
     with write_session(args, "range") as t:
         ws = t.sheet(args.sheet)
         rng = target_range(t, ws, args.range) if args.range or a not in ("freeze", "unfreeze") else None
@@ -904,7 +954,7 @@ def cmd_range(args) -> Dict[str, Any]:
         detail = ""
         if a == "autofit":
             rng.Columns.AutoFit()
-            if args.axis == "rows":
+            if _axis(args) == "rows":
                 rng.Rows.AutoFit()
         elif a in ("width", "height"):
             if args.size is None:
@@ -914,6 +964,13 @@ def cmd_range(args) -> Dict[str, Any]:
             else:
                 rng.RowHeight = float(args.size)
         elif a in ("merge", "unmerge"):
+            if a == "merge" and not args.overwrite:
+                filled = _filled_cells(ws, rng)
+                if len(filled) > 1:          # 병합하면 왼쪽 위 값만 남음
+                    raise rt.UserDecisionError(
+                        f"병합하면 왼쪽 위 칸만 남고 값 {len(filled) - 1}개가 지워집니다: "
+                        + ", ".join(f"{c}={_short(v)}" for c, v in filled[1:6]) + (" ..." if len(filled) > 6 else ""),
+                        "병합하지 않았습니다. 지워질 값을 사용자에게 보여 주고, 사용자가 지워도 된다고 하면 --overwrite를 붙여 다시 실행하세요.")
             prev = t.app.DisplayAlerts
             t.app.DisplayAlerts = False        # '왼쪽 위 값만 유지' 확인창 방지
             try:
@@ -932,7 +989,7 @@ def cmd_range(args) -> Dict[str, Any]:
                 win.FreezePanes = True
                 detail = f"{cell} 위/왼쪽 고정"
         elif a in ("hide", "unhide"):
-            target = rng.EntireRow if args.axis == "rows" else rng.EntireColumn
+            target = rng.EntireRow if _axis(args) == "rows" else rng.EntireColumn
             target.Hidden = a == "hide"
         elif a == "clear":
             rng = rng if rng is not None else ws.UsedRange
@@ -944,6 +1001,20 @@ def cmd_range(args) -> Dict[str, Any]:
             dsheet, dcell = split_sheet(args.dest)
             dws = t.sheet(dsheet) if dsheet else ws
             dest = dws.Range(dcell)
+            if not args.overwrite:
+                dr, dc = parse_cell(dcell.replace("$", "").split(":")[0])
+                nr, nc = int(rng.Rows.Count), int(rng.Columns.Count)
+                block = dws.Range(dws.Cells(dr, dc), dws.Cells(dr + nr - 1, dc + nc - 1))
+                src = (int(rng.Row), int(rng.Column), int(rng.Row) + nr - 1, int(rng.Column) + nc - 1)
+                same_sheet = str(dws.Name) == str(ws.Name)
+                filled = [(c, v) for c, v in _filled_cells(dws, block)
+                          if not (same_sheet and _inside(parse_cell(c), src))]   # 원본과 겹치는 칸은 옮겨지는 값
+                if filled:
+                    raise rt.UserDecisionError(
+                        f"대상 {dws.Name}!{addr(dr, dc, dr + nr - 1, dc + nc - 1)}에 값이 있는 칸 {len(filled)}개가 덮어써집니다: "
+                        + ", ".join(f"{c}={_short(v)}" for c, v in filled[:5]) + (" ..." if len(filled) > 5 else ""),
+                        "옮기지 않았습니다. 덮어쓸 칸을 사용자에게 보여 주고, 사용자가 덮어써도 된다고 하면 --overwrite를 붙여 "
+                        "다시 실행하세요. 아니면 비어 있는 다른 --dest를 쓰세요.")
             if a == "copy":
                 rng.Copy(Destination=dest)
             else:
@@ -1191,10 +1262,12 @@ def build_cli():
     p.add_argument("--range", "-r", help="대상 범위 (freeze는 기준 셀, 기본 A2)")
     p.add_argument("--dest", help="copy/move 목적지 (예: B2, 'Sheet2'!A1)")
     p.add_argument("--size", type=float, help="width/height 값")
-    p.add_argument("--axis", choices=["rows", "cols"], default="cols", help="hide/unhide/autofit 대상")
+    p.add_argument("--axis", choices=["rows", "cols"], help="hide/unhide/autofit 대상 (생략: '5:7'처럼 행 주소면 rows, 아니면 cols)")
     p.add_argument("--type", choices=["all", "contents", "formats"], default="all", help="clear 종류")
     p.add_argument("--weight", choices=list(XL_WEIGHT) + ["none"], default="thin", help="border 굵기")
     p.add_argument("--box", action="store_true", help="border: 외곽선만")
+    p.add_argument("--overwrite", action="store_true",
+                   help="merge: 왼쪽 위 밖의 값을 지우고 병합 / copy·move: 값이 있는 대상 칸을 덮어쓰기 (사용자가 원할 때만)")
 
     p = sub.add_parser("chart", help="차트")
     common(p, write=True)

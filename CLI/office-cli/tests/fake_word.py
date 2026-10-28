@@ -66,6 +66,15 @@ class FakeRange:
     def Style(self, value):
         self.doc.log.append(("style", self.doc.text[self.Start:self.End], value))
 
+    def Information(self, kind):
+        if kind == 12:                                   # wdWithInTable
+            return any(s <= self.Start < e for s, e in self.doc.table_spans)
+        raise AssertionError(kind)
+
+    def Tables(self, i):
+        s, e = next((s, e) for s, e in self.doc.table_spans if s <= self.Start < e)
+        return type("T", (), {"Range": FakeRange(self.doc, s, e)})()
+
     def InsertAfter(self, s):
         self.doc.replace(self.End, self.End, s)
         self.End += len(s)
@@ -173,6 +182,7 @@ class FakeWordDocument:
         self.Styles = FakeStyles()
         self.WordOpenXML = "<xml/>"
         self.Comments = FakeComments(self)
+        self.table_spans = []        # 표 영역 [(시작, 끝)] (끝 = 표 다음 단락의 시작)
 
     def replace(self, s, e, v):
         self.text = self.text[:s] + v + self.text[e:]

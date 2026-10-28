@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
@@ -356,7 +357,7 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
         if not os.path.exists(data_file):
             return None
         meta = {"app": kind, "name": name, "original_path": path, "snapshot_file": data_file,
-                "snapshot_format": fmt, "created_at": stamp, "by": f"{tool} {command}".strip(),
+                "snapshot_format": fmt, "created_at": stamp, "created_ts": time.time(), "by": f"{tool} {command}".strip(),
                 "doc_created": doc_identity(path),
                 "untitled": not path}   # 저장한 적 없는 문서: undo가 열린 문서 중 같은 이름의 '저장 안 된' 문서를 찾아 되돌림
         rt.safe_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
@@ -366,6 +367,24 @@ def save_snapshot(kind: str, doc: Any, tool: str = "", command: str = "") -> Opt
     except Exception as e:
         rt.log("WARN", f"되돌리기용 스냅샷을 만들지 못했습니다 (작업은 계속): {e}")
         return None
+
+
+def save_barrier(kind: str, doc: Any, reason: str, tool: str = "", command: str = "") -> None:
+    """되돌릴 지점을 만들지 못한 쓰기를 기록합니다. undo가 이 작업을 건너뛰고 더 오래된 지점으로 되돌려
+    그 사이 작업까지 사라지게 하지 않도록 합니다 (기록 실패는 무시)."""
+    try:
+        name = str(doc.Name)
+        full = str(getattr(doc, "FullName", "") or "")
+        path = full if os.path.isabs(full) else ""
+        key = hashlib.sha1((path or name).lower().encode("utf-8")).hexdigest()[:10]
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = os.path.join(_snapshot_dir(), f"{kind}_{key}_{stamp}")
+        meta = {"app": kind, "name": name, "original_path": path, "barrier": True, "reason": reason,
+                "created_at": stamp, "created_ts": time.time(), "by": f"{tool} {command}".strip()}
+        rt.safe_write_text(base + ".json", json.dumps(meta, ensure_ascii=False))
+        _rotate_snapshots(kind, key)
+    except Exception:
+        pass
 
 
 def delete_snapshot(meta_file: str) -> None:
@@ -394,7 +413,7 @@ def list_snapshots(kind: Optional[str] = None) -> List[Dict[str, Any]]:
     for mf in sorted(files, key=lambda f: os.path.basename(f).split("_", 2)[-1], reverse=True):  # 문서 무관 시각 순
         try:
             meta = json.loads(rt.read_text_file(mf))
-            if not os.path.exists(meta.get("snapshot_file", "")):
+            if not meta.get("barrier") and not os.path.exists(meta.get("snapshot_file", "")):
                 continue
             orig, recorded = meta.get("original_path", ""), meta.get("doc_created")
             if orig and recorded:
@@ -594,6 +613,12 @@ def open_target(kind: str, target: str = "active", readonly: bool = True, snapsh
                 if not exists and (readonly or not create):
                     raise rt.not_found(f"{APP_LABEL[kind]} 문서", target, [d["name"] for d in docs],
                                        extra=" (열린 문서 이름도 아니고 파일도 없음)")
+                if not exists and not os.path.isabs(target.strip('"')):
+                    # 열린 문서 이름의 오타로 새 파일이 생기고 거기에 쓰는 것을 막음 (새 파일은 전체 경로일 때만 바로 만듦)
+                    similar = rt.suggest(os.path.basename(target), [d["name"] for d in docs])
+                    if similar:
+                        raise rt.ambiguous(f"'{target}'은(는) 열린 문서도 파일도 아닙니다. 이름이 비슷한 열린 문서가 있어 새 파일을 만들지 "
+                                           "않았습니다. 사용자에게 고르게 하고, 새 파일이 맞으면 전체 경로로 다시 실행하세요.", similar)
                 ext = os.path.splitext(path)[1].lower()
                 if ext not in EXTENSIONS[kind]:
                     raise rt.InputError(f"{APP_LABEL[kind]} 파일 확장자가 아닙니다: {ext} (지원: {', '.join(EXTENSIONS[kind])})")
@@ -611,8 +636,11 @@ def open_target(kind: str, target: str = "active", readonly: bool = True, snapsh
                 owns_doc = True
                 t = OfficeTarget(kind, app, doc, "file" if exists else "new", readonly)
 
-        if snapshot and not readonly and t.source != "new":
-            save_snapshot(kind, t.doc, tool, command)
+        if snapshot and not readonly:
+            if t.source == "new":
+                save_barrier(kind, t.doc, "새로 만든 파일이라 되돌릴 이전 상태가 없음", tool, command)
+            elif save_snapshot(kind, t.doc, tool, command) is None:
+                save_barrier(kind, t.doc, "되돌리기용 스냅샷을 만들지 못함 (DRM, 크기 초과 등)", tool, command)
 
         yield t
 

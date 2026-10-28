@@ -283,3 +283,24 @@ def test_require_com_message(monkeypatch):
     with pytest.raises(rt.InputError) as ei:
         off.require_com()
     assert "reader.py" in str(ei.value)
+
+
+def test_write_session_without_snapshot_leaves_barrier(tmp_path, fake_com, monkeypatch):
+    wb = FakeWorkbook(str(tmp_path / "보고.xlsx"))
+    (tmp_path / "보고.xlsx").write_bytes(b"x")
+    fake_com["active"]["excel"] = {"name": wb.Name, "path": wb.FullName, "app": FakeExcelApp(), "doc": wb}
+    monkeypatch.setattr(off, "SNAPSHOT_MAX_BYTES", 0)                    # 스냅샷 실패
+    with off.open_target("excel", readonly=False, tool="excel", command="write"):
+        pass
+    snaps = off.list_snapshots("excel")
+    assert len(snaps) == 1 and snaps[0]["barrier"] is True and "스냅샷" in snaps[0]["reason"]
+
+
+def test_write_target_typo_of_open_document_does_not_create_new_file(tmp_path, fake_com, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(off, "list_open", lambda kind: [{"name": "주간보고.docx", "path": "C:/x/주간보고.docx"}])
+    monkeypatch.setattr(off, "match_open", lambda kind, target, docs=None: None)
+    with pytest.raises(rt.InputError) as ei:
+        with off.open_target("word", "주간보고서.docx", readonly=False, create=True):
+            pass
+    assert "[후보] 주간보고.docx" in str(ei.value) and not (tmp_path / "주간보고서.docx").exists()

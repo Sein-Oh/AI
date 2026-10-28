@@ -196,3 +196,44 @@ def test_read_closed_docx_with_python_docx(tmp_path, capsys, monkeypatch):
 def test_highlight_color_suggestion(wd, capsys):
     code, out = run(capsys, "replace", "--find", "계획", "--highlight", "yelow")
     assert code == 1 and "[추천] yellow" in out["message"]
+
+
+# ---------------------------------------------------------------------------
+# 점검 반영: 표 안 앵커, 마지막 단락 앵커
+# ---------------------------------------------------------------------------
+
+def _doc_with_table():
+    doc = FakeWordDocument("머리말\r시험 온도\r25도\r표 뒤 문단")
+    doc.table_spans = [(doc.text.index("시험 온도"), doc.text.index("표 뒤 문단"))]   # '시험 온도', '25도' 두 칸
+    return doc
+
+
+def test_anchor_in_table_cell_inserts_after_table_not_next_cell(wd, capsys):
+    wd["doc"] = _doc_with_table()
+    code, out = run(capsys, "write", "--text", "비고 문단", "--anchor", "시험 온도", "--pos", "after")
+    assert code == 0, out
+    assert paras(wd["doc"])[:5] == ["머리말", "시험 온도", "25도", "비고 문단", "표 뒤 문단"]
+    assert "표 뒤" in out["preview"]
+
+
+def test_anchor_in_table_cell_before_or_replace_is_refused(wd, capsys):
+    wd["doc"] = _doc_with_table()
+    before = wd["doc"].text
+    for pos in ("before", "replace"):
+        code, out = run(capsys, "write", "--text", "x", "--anchor", "시험 온도", "--pos", pos)
+        assert code == 1 and "표 안" in out["message"] and wd["doc"].text == before
+
+
+def test_start_of_document_that_begins_with_table_is_refused(wd, capsys):
+    doc = FakeWordDocument("칸1\r칸2\r본문")
+    doc.table_spans = [(0, doc.text.index("본문"))]
+    wd["doc"] = doc
+    code, out = run(capsys, "write", "--text", "제목", "--pos", "start")
+    assert code == 1 and "표로 시작" in out["message"] and doc.text.startswith("칸1")
+
+
+def test_anchor_on_last_paragraph_makes_new_paragraph(wd, capsys):
+    code, out = run(capsys, "write", "--text", "끝에 붙일 문단", "--anchor", "일정", "--pos", "after")
+    assert code == 0, out
+    p = paras(wd["doc"])
+    assert "일정" in p and "끝에 붙일 문단" in p and p.index("끝에 붙일 문단") == p.index("일정") + 1

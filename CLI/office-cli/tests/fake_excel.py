@@ -275,6 +275,7 @@ class FakeWorksheet:
         self.wb = wb
         self.Name = name
         self.values = {}
+        self.prefixed = set()        # '를 붙여 글자로 쓴 칸
         self.formulas = {}
         self.styles = {}
         self.fcs = {}
@@ -285,6 +286,9 @@ class FakeWorksheet:
         self.Rows = Count(1048576)
 
     def set(self, r, c, v):
+        if isinstance(v, str) and v.startswith("'"):      # Excel: 앞의 '는 "글자로 두기" 표시라 값에 남지 않음
+            self.prefixed.add((r, c))
+            v = v[1:]
         self.values[(r, c)] = v
         self.formulas.pop((r, c), None)
 

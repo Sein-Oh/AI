@@ -36,6 +36,22 @@
 - `word.py read --paragraphs`에 떨어진 범위(예: `1-12,20`)를 주고 결과가 잘리면 오류가 나던 문제. 이어 읽기는 남은 단락 번호로 줍니다.
 - `ppt.py read/info/notes --slides` 형식 오류 문구가 `--pages`를 안내하던 문제.
 
+### 점검 반영 2: 데이터 손상 방지
+- 엑셀 쓰기(`write`, `replace`): Excel이 COM으로 받은 글자를 직접 입력한 것처럼 다시 해석해 값이 바뀌던 문제. 앞자리 0 코드(`01234` -> 1234),
+  15자리 초과 숫자, 월-일·분수처럼 보이는 글(`1-2`, `3/4` -> 날짜), 괄호 숫자(`(100)` -> -100), 지수(`1E5`)는 앞에 `'`를 붙여 글자 그대로 씁니다(`'`는 셀 값에 남지 않음).
+  15자리를 넘는 숫자 글자는 숫자로 바꾸지 않습니다(정밀도 손실). 연도가 있는 날짜(`2026-10-28`)는 계속 날짜로 바뀝니다.
+- `excel.py range --action clear`: `--range`를 빼면 시트 전체를 지우던 문제. `--range`가 필요합니다.
+- `range --action merge`: 값이 있는 칸이 둘 이상이면 왼쪽 위 밖의 값이 지워지므로 병합하지 않고 `needs_user_decision`(지워질 칸과 값). `--overwrite`로만 병합.
+- `range --action copy/move`: 대상 범위에 값이 있으면 덮어쓰지 않고 `needs_user_decision`(원본과 겹치는 칸은 제외). `--overwrite`로만 덮어씀.
+- `range --action hide/unhide/autofit`: `--axis`를 생략하고 `5:7`처럼 행 주소를 주면 시트의 모든 열이 숨겨지던 문제. 행 주소면 행으로 판단합니다.
+- `write --append`: 시작 열 하나만 보고 마지막 행을 찾아 다른 열의 데이터를 덮어쓰던 문제(쓸 열 전체에서 가장 아래 행). 머리글 비교를 1행이 아니라 시작 행과 하고, `--header`도 같은 머리글이면 생략. 시작 행 위쪽에 쓰던 문제.
+- `word.py write --anchor`: 앵커가 표 칸 안이면 `after`는 옆 칸이 아니라 표 뒤에 넣고, `before`/`replace`는 거절합니다. 문서 마지막 단락이 앵커일 때 앵커 단락에 글이 붙고 스타일이 바뀌던 문제. 표로 시작하는 문서의 `--pos start` 거절.
+- `office.py undo`:
+  - 스냅샷을 만들지 못한 쓰기와 새 파일 쓰기는 "되돌릴 지점 없음" 표식을 남깁니다. 직전 작업이 그렇다면 더 오래된 지점으로 넘어가 그 사이 작업까지 지우지 않고 `needs_user_decision`(`--list`에 `undo_available: false`).
+  - 되돌리기 지점 뒤에 파일이 다시 저장되었으면 `needs_user_decision`(`--overwrite`로만 되돌림).
+  - 열린 문서를 닫은 뒤 복사가 실패하면 원본을 다시 열고 `undo_failed` 오류에 `pre_undo_backup` 경로. 복사는 `retry_fs`로 재시도.
+- 쓰기 대상(`--target`, transfer 대상)이 열린 문서도 파일도 아니고 이름이 비슷한 열린 문서가 있으면 새 파일을 만들지 않고 `[후보]`. 새 파일은 전체 경로일 때만 바로 만듭니다.
+
 ### 테스트 러너 (`tools/run_win_tests.py`)
 - K 그룹 추가(K1~K5): outline·장절, 쪽·단락 범위, 메모 달기·목록, 변경 추적 목록, PPT 노트. 가짜 COM 테스트로는 Word 쪽 계산(`GoTo`, `Information`)과 `Comments.Add`, 노트 개체틀이 실제와 같은지 확인할 수 없어 회사 PC 실기로 확인합니다.
 

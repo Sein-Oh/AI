@@ -894,6 +894,9 @@ def _insert_position(doc: Any, anchor: Optional[str], pos: str, occurrence: Opti
         end = doc.Content.End - 1
         last = doc.Range(end, end).Paragraphs(1).Range
         if pos == "start":
+            if _in_table(doc.Range(0, 0)):
+                raise rt.InputError("문서가 표로 시작해 맨 앞에 넣으면 첫 칸 안에 들어갑니다. 표 뒤 단락의 글을 --anchor로 지정해 "
+                                    "--pos before로 넣거나, Word에서 표 앞에 빈 줄을 만든 뒤 다시 실행하세요.", no_fallback=True)
             return 0, "문서 처음"
         if str(last.Text).strip():                    # 마지막 단락에 내용이 있으면 새 단락에서 시작
             doc.Range(end, end).InsertAfter("\r")
@@ -902,6 +905,12 @@ def _insert_position(doc: Any, anchor: Optional[str], pos: str, occurrence: Opti
     if len(anchor) > FIND_MAX:
         raise rt.InputError(f"--anchor는 {FIND_MAX}자 이하여야 합니다. 앵커 단락의 앞부분 일부만 쓰세요.")
     para = _anchor_paragraph(doc, anchor, occurrence, pos)
+    if _in_table(para):
+        # 셀 단락의 End는 다음 셀의 시작이라 그대로 넣으면 옆 칸에 들어감: 표 바깥(표 뒤)에 넣습니다
+        if pos != "after":
+            raise rt.InputError(f"'{anchor}'은(는) 표 안에 있어 --pos {pos}로 넣으면 표 칸 안에 들어갑니다. --pos after(표 뒤에 넣기)를 쓰거나, "
+                                "칸 안의 글만 바꾸려면 word.py replace를 쓰세요.", no_fallback=True)
+        return int(para.Tables(1).Range.End), f"'{anchor}'이(가) 있는 표 뒤"
     if pos == "before":
         return int(para.Start), f"'{anchor}' 단락 앞"
     if pos == "replace":
@@ -911,7 +920,19 @@ def _insert_position(doc: Any, anchor: Optional[str], pos: str, occurrence: Opti
         else:
             doc.Range(para.Start, para.End - 1).Delete()  # 마지막 단락은 단락 기호를 남김
         return start, f"'{anchor}' 단락 자리"
+    if int(para.End) >= int(doc.Content.End):
+        # 마지막 단락 뒤에는 글을 둘 수 없어 그대로 넣으면 앵커 단락에 붙고 스타일이 바뀜: 새 단락을 먼저 만듦
+        end = int(doc.Content.End) - 1
+        doc.Range(end, end).InsertAfter("\r")
+        return int(doc.Content.End) - 1, f"'{anchor}' 단락 뒤"
     return int(para.End), f"'{anchor}' 단락 뒤"
+
+
+def _in_table(rng: Any) -> bool:
+    try:
+        return bool(rng.Information(12))          # wdWithInTable
+    except Exception:
+        return False
 
 
 def cmd_write(args) -> Dict[str, Any]:
