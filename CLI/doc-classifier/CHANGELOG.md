@@ -123,5 +123,21 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 - [ ] 실제 OneDrive 클라우드 자리표시자로 `cloud` 판정과 peek 제외 확인 (S12, 집 PC에는 자리표시자 파일이 없었음)
 - [ ] 회사 PC DRM 문서: HWP/HWPX가 olefile/zip으로 읽히는지, 공유 중인 파일을 다른 PC가 열고 있을 때 peek 동작 (WORK_PLAN 9절 남은 확인)
 - [ ] 1.1 후보: 증분 스캔(바뀐 폴더만), peek 확인 결과를 학습 데이터로 한 파일명 n-gram 분류기, 압축 파일 내부 목록, 내용 해시 중복
-- [ ] 저장소 지침(AGENTS.md, 2026-10-28) 반영: 결과 JSON `recovered` 키(중단 후 이어하기, 잠긴 보고서 새 이름 저장 등),
-  `retry_fs`/`remove_tree` 보강, 빈 결과 문구와 `VERIFIED:` 사후 확인 점검, 이전 CSV를 지우는 `summary --save`의 `--dry-run` 검토
+
+### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
+상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`.
+- [ ] `scan --resume`(--root만)에서 미완료 작업이 2개 이상이면 STOP_RETRY + `[추천] <가장 최근 job>`과 후보 목록 (doc_classifier.py:54-61)
+- [ ] `rt.ok()`의 `VERIFIED:` 강제 제거. `summary --save`는 xlsx를 read_only로 다시 열어 시트 수 확인, CSV는 쓴 행 수 == total 확인
+- [ ] `summary --save --dry-run`(덮어쓸 xlsx, 새 CSV, 지울 이전 CSV 목록), 실제 삭제·덮어쓰기는 JSON `removed_files`/`overwritten`, 이전 CSV 삭제 로그를 `[WARN]`으로
+- [ ] `scan --overwrite --dry-run`, 기존 DB 삭제 여부 JSON 보고, classify `peek_cleared`를 JSON 키로
+- [ ] `_dc_runtime.py`에 `retry_fs`/`remove_tree`(6회) 추가, `_remove_db`/`_remove_stale_csv`/JobLock 해제/로그 회전/`save_with_lock_fallback` 내부 replace에 적용 (잠금이면 재시도 후 새 이름)
+- [ ] 결과 JSON `recovered` 배열 (잠긴 보고서/CSV 새 이름 저장), scan 재개와 peek 작업 프로세스 재시작은 `recovered`/`warnings` 중 결정
+- [ ] 0건 directive: jobs/scan/list/peek/summary에 `count: 0`과 "찾은 항목 없음", list 0건에 "다음 페이지" 문구 제거, scan 0개에 classify 권하지 않기
+- [ ] `truncated`를 bool로 바꾸고 상세는 `truncated_detail`(기존 키 의미 변경이므로 alias 방침 결정), jobs 목록 상한
+- [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
+- [ ] `[추천]` 보강: 완료 작업 중복(`--job <이름>_2`), resume 대상 없음, openpyxl 없음(`python -m pip install openpyxl`), 알 수 없는 옵션
+- [ ] jobs가 열리지 않는 DB를 조용히 빼는 문제(_dc_store.py:220-223) -> `unreadable_jobs`
+- [ ] `write_error_log`: 로그 회전 실패가 그 회차 기록까지 삼키지 않게 분리, JIT 한도 초과 시 `복구 시도:` 줄
+- [ ] `SKILL.md:69`의 고정 로그 경로 안내 재검토 (`DOCCLS_DATA_DIR` 변경 시 틀림)
+- [ ] tools/run_win_tests.py:636: `--dir`을 러너가 만든 폴더 표식 없이 rmtree하지 않기
+- [ ] 테스트 도우미에 `pytest.importorskip("pymupdf")` 등 (tests/dc_samples.py:128)

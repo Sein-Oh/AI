@@ -16,7 +16,8 @@ AI_WORK/
 ├── constraints.txt            # 표준 사용자 환경 라이브러리 버전 고정
 ├── docs/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
-│   └── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
+│   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
+│   └── COMPLIANCE_REVIEW_*.md # 도구별 지침 준수 검토 결과
 └── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
     ├── ml-kit/                # 회귀·분류 ML 툴킷 (2.2.0)

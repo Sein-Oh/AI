@@ -126,5 +126,24 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
 - [ ] 260자 넘는 긴 경로
 - [ ] 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙음 (`_pred_<시각>_<시각>.csv`)
-- [ ] 저장소 지침(AGENTS.md, 2026-10-28) 반영: 실패 실행을 `data/logs/errors.txt`에 기록, 결과 JSON `recovered` 키(잠금 새 이름 저장 등),
-  빈 결과 문구와 `VERIFIED:` 사후 확인 점검, 기존 버전 폴더를 지우는 작업의 `--dry-run` 검토
+
+### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
+상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`.
+- [ ] 불완전 vN 폴더 자동 삭제(ml_train.py:904-914)와 `--version` 기존 폴더 교체(917-921) 중단 -> STOP_RETRY + `[추천] --version v<다음>`. 필요하면 `--dry-run`/`--overwrite`
+- [ ] 원장 기록을 버전 폴더 커밋 뒤로 이동(ml_train.py:1515-1518), 커밋 후 final_dir 재검증(joblib.load, json 키) 뒤에만 `VERIFIED:`
+- [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)
+- [ ] 예측 결과와 보고서 저장 후 다시 읽어 확인(행 수, docx 열기), 실패하면 `VERIFIED:` 대신 사유
+- [ ] `run_cli`/`JsonArgumentParser.error`에서 `data/logs/errors.txt` 기록 (doc-classifier `write_error_log` 복사, 환경변수 `ML_KIT_DATA_DIR`)
+- [ ] 결과 JSON `recovered` 키(잠금 새 이름 저장, cp949 -> utf-8-sig 폴백, .xls -> .xlsx), 폴백에도 `[WARN]`, 잠금 회귀 테스트
+- [ ] ml_predict `--out`과 ml_report 기본 파일명의 덮어쓰기 방지 (기존 파일이 있으면 시각 붙인 새 이름 또는 `--overwrite`)
+- [ ] `--history` 원장 0건을 `status: ok` + `record_count: 0`으로 (ml_train.py:1582, `no_history`는 별도 키로 유지), 빈 행만 있는 입력의 0행 명시 오류(ml_predict.py:444)
+- [ ] `--dtypes` 컬럼명을 resolve_column_names로 매칭 + `[추천]`, int 변환의 fillna(0) 제거 또는 경고(ml_train.py:237-242)
+- [ ] 예측 `--targets` 불일치(ml_predict.py:904), 보고서 버전 없음(ml_report.py:772)에 `[추천] <후보>`
+- [ ] JSON 목록 상한 + `truncated`: `--history` records, feature_types/features_used, 오류 메시지 컬럼 목록
+- [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
+- [ ] requirements.txt에 matplotlib 추가, 2행 주석을 `python -m pip install ...`로
+- [ ] 로그 태그 정리: `[PROGRESS  5%] [===]` -> `[PROGRESS] 5% ...`(러너 M14 파서 확인), 이력 표 머리 `[STATUS]`, 러너 `[준비]` -> `[INFO]`
+- [ ] 인자 alias: ml_report `--targets/-y`, 저장 `--save`(`--out` 유지)
+- [ ] tools/run_win_tests.py:206: 러너가 만든 폴더인지 표식으로 확인한 뒤에만 지우고 remove_tree 사용
+- [ ] 테스트 보강: exit 130 롤백, 성공 경로 `VERIFIED:` 검사 확대, 빈 데이터, 덮어쓰기 차단
+- [ ] 이 섹션 위의 완료 `[x]` 항목(Windows 러너 M1~M14)을 2.2.0 항목으로 이동
