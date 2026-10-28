@@ -120,12 +120,62 @@ def test_csv_file_list_is_split_for_excel_and_stale_parts_removed(job, run, tmp_
         paths.update(ln.split(",")[0] for ln in lines[1:])
     assert counts == [5, 5, 4] and len(paths) == 14                           # 빠짐·중복 없이 이어짐
     assert out["report"]["file_list_csv"] == files[0]
-    monkeypatch.setattr(rp, "CSV_ROWS", 10)                                    # 다시 저장해 2개로 줄면 3번째는 지움
-    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"))
+    monkeypatch.setattr(rp, "CSV_ROWS", 10)                                    # --overwrite로 다시 저장해 2개로 줄면 3번째는 지움
+    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"), "--overwrite")
     assert len(out["report"]["file_list_files"]) == 2 and not (tmp_path / "d_파일목록_3.csv").exists()
+    assert out["applied"] == ["덮어쓰기: d.xlsx", "덮어쓰기: d_파일목록_1.csv", "덮어쓰기: d_파일목록_2.csv",
+                              "삭제: d_파일목록_3.csv (같은 이름의 이전 목록 CSV)"]
     monkeypatch.setattr(rp, "CSV_ROWS", 100)                                   # 1개면 번호 없는 이름
-    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"))
+    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "d.xlsx"), "--overwrite")
     assert sorted(p for p in os.listdir(tmp_path) if p.startswith("d_파일목록")) == ["d_파일목록.csv"]
+
+
+def _snapshot(folder):
+    """보고서와 목록 CSV 파일의 (크기, 수정 시각)."""
+    return {p: (os.path.getsize(os.path.join(folder, p)), os.path.getmtime(os.path.join(folder, p)))
+            for p in os.listdir(folder) if p.endswith((".xlsx", ".csv"))}
+
+
+def test_existing_report_is_not_overwritten_without_flag(job, run, tmp_path, monkeypatch, capsys):
+    """AGENTS.md 복구 금지(덮어쓰기, 삭제): 기본은 시각을 붙인 새 이름, 이전 파일은 그대로 (CLI/README.md R4)."""
+    monkeypatch.setattr(rp, "CSV_THRESHOLD", 10)
+    monkeypatch.setattr(rp, "CSV_ROWS", 5)
+    run("summary", "--job", "r", "--save", str(tmp_path / "e.xlsx"))           # e.xlsx + CSV 3개
+    before = _snapshot(tmp_path)
+    monkeypatch.setattr(rp, "CSV_ROWS", 10)
+    code, out = run("summary", "--job", "r", "--save", str(tmp_path / "e.xlsx"))
+    saved = out["report"]["report_file"]
+    assert code == 0 and os.path.basename(saved).startswith("e_") and saved.endswith(".xlsx")
+    assert all(os.path.basename(f).startswith(os.path.basename(saved)[:-5] + "_파일목록_") for f in out["report"]["file_list_files"])
+    assert out["applied"] == [] and "이미 있음" in out["recovered"][0] and "--overwrite" in out["recovered"][0]
+    after = _snapshot(tmp_path)
+    assert {p: after[p] for p in before} == before                            # 이전 보고서와 CSV 3개는 그대로
+    code, out = run("summary", "--job", "r", "--save", saved)                  # 시각 붙은 이름을 다시 저장해도 시각을 두 번 붙이지 않음
+    import re
+    assert re.fullmatch(r"e_\d{8}_\d{6}(_\d+)?\.xlsx", os.path.basename(out["report"]["report_file"]))
+    assert out["report"]["report_file"] != saved
+
+
+def test_summary_dry_run_changes_nothing_and_lists_plan(job, run, tmp_path, monkeypatch):
+    monkeypatch.setattr(rp, "CSV_THRESHOLD", 10)
+    monkeypatch.setattr(rp, "CSV_ROWS", 5)
+    target = str(tmp_path / "f.xlsx")
+    code, out = run("summary", "--job", "r", "--save", target, "--dry-run")
+    assert code == 0 and out["dry_run"] is True and _snapshot(tmp_path) == {}       # 아무 파일도 만들지 않음
+    assert out["planned"] == ["새 파일: f.xlsx", "새 파일: f_파일목록_1.csv", "새 파일: f_파일목록_2.csv", "새 파일: f_파일목록_3.csv"]
+    assert out["agent_directive"].startswith("VERIFIED: 미리보기만") and "--dry-run" not in out["next_commands"][0]["command"]
+    run("summary", "--job", "r", "--save", target)
+    monkeypatch.setattr(rp, "CSV_ROWS", 10)
+    before = _snapshot(tmp_path)
+    code, out = run("summary", "--job", "r", "--save", target, "--overwrite", "--dry-run")
+    assert out["planned"] == ["덮어쓰기: f.xlsx", "덮어쓰기: f_파일목록_1.csv", "덮어쓰기: f_파일목록_2.csv",
+                              "삭제: f_파일목록_3.csv (같은 이름의 이전 목록 CSV)"]
+    assert _snapshot(tmp_path) == before
+    assert out["next_commands"][0]["command"].endswith("--overwrite")
+    code, out = run("summary", "--job", "r", "--save", target, "--dry-run")    # --overwrite 없으면 새 이름 계획
+    assert out["planned"][0].startswith("새 파일: f_") and not any(p.startswith(("덮어쓰기", "삭제")) for p in out["planned"])
+    code, out = run("summary", "--job", "r", "--dry-run")
+    assert code == 1 and "--save" in out["message"] and "[추천]" in out["message"]
 
 
 def test_default_threshold_moves_large_lists_to_csv():
@@ -143,7 +193,10 @@ def test_locked_report_is_saved_under_new_name(tmp_path, monkeypatch):
             raise PermissionError(13, "다른 프로세스가 사용 중")
         return real(src, dst)
     monkeypatch.setattr(rt.os, "replace", locked)
+    rt.reset_run_state()
     saved = rt.save_with_lock_fallback(str(target), lambda p: open(p, "wb").write(b"new"))
+    assert rt._RECOVERED == [f"잠김.xlsx 잠김(열려 있음) -> {os.path.basename(saved)}로 저장"]          # R3 recovered
+    rt.reset_run_state()
     assert saved != str(target) and os.path.basename(saved).startswith("잠김_") and open(saved, "rb").read() == b"new"
     assert target.read_bytes() == b"old" and not [p for p in os.listdir(tmp_path) if ".saving" in p]
 

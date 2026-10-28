@@ -2,6 +2,40 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 설계는 [WORK_PLAN.md](WORK_PLAN.md).
 
+## [0.9.3] - 2026-10-28
+
+저장소 지침 반영 1차: 사용자 확인 없이 지우거나 덮어쓰거나 추측하던 동작 (AGENTS.md JIT 복구 금지,
+근거 `docs/COMPLIANCE_REVIEW_2026-10-28.md` 2절, 구현은 `CLI/README.md` R3·R4·R8).
+
+### 수정
+- `scan --root ... --resume`: 같은 폴더의 미완료 작업이 둘 이상이면 가장 최근 것을 고르지 않고 `STOP_RETRY` + `[후보] a, b`
+  + JSON `candidates`(최근 순, 최대 10개). directive는 재시도하지 말고 사용자에게 고르게 하라고 안내.
+  체크리스트의 "`[추천] <가장 최근 job>`"은 R8(`[추천]`은 LLM이 바로 재시도하는 값)과 충돌해 추측이 그대로 남으므로 `[후보]`만 씀.
+- `scan --overwrite`: 이전 작업 DB를 작업 잠금을 잡기 **전에** 지우던 순서를 바꿈. 이제 잠금을 잡은 뒤에만 지우므로 다른 곳에서 목록화 중인 DB를 지우지 않음.
+  지운 DB는 stderr `[WARN]`과 JSON `applied`(`삭제: <작업>.db (이전 작업: 파일 N개, 목록화 .., 분류 ..)`)로 보고.
+- `summary --save`: 같은 이름의 보고서나 목록 CSV가 있으면 **덮어쓰지 않고** `<이름>_<YYYYMMDD_HHMMSS>.xlsx`로 저장하고 `recovered`로 알림 (R4).
+  이전에는 말없이 덮어쓰고 같은 이름의 이전 CSV를 지웠음(보고는 `[INFO]` 로그뿐). 덮어쓰기와 이전 CSV 삭제는 새 옵션 `--overwrite`일 때만,
+  stderr `[WARN]`과 JSON `applied`(`덮어쓰기: ..`, `삭제: ..`)로 보고. 이름이 이미 시각으로 끝나면 시각을 바꿔 붙임(두 번 붙이지 않음).
+- `classify`: 규칙이 바뀌어 이전 peek 결과를 지울 때 preview뿐 아니라 JSON `peek_cleared`(개수)와 `applied`로도 보고.
+- Windows 실기 러너: `--dir`을 확인 없이 `rmtree`하던 것을, 러너가 만든 폴더(표식 파일 `.created_by_doc-classifier`)일 때만 비우도록 바꿈.
+  표식 없이 내용이 있는 폴더는 지우지 않고 종료코드 2로 거부 (0.9.2 이하가 만든 `C:\dc_test`는 한 번 직접 지워야 함).
+
+### 기능
+- `--dry-run` (R8): `scan`(새 작업, `--overwrite`, `--resume`)과 `summary --save`(`--overwrite` 포함).
+  검증까지 하고 아무것도 바꾸지 않으며 `dry_run: true`, `planned`(`새 파일:`/`덮어쓰기:`/`삭제:`/`이어서:`),
+  `next_commands[0]` = `--dry-run`을 뺀 같은 명령, directive `VERIFIED: 미리보기만 했습니다(변경 없음) ...`.
+- 런타임: `CandidatesError`(`[후보]` + `candidates`), `note_recovered`/`recovered` 키(R3, 성공·오류 응답 모두), `timestamped_path`,
+  `dry_run_result`. 잠긴 보고서를 새 이름으로 저장할 때도 `recovered`로 보고. `VERSION` 0.9.3.
+- 새 인자: `scan --dry-run`, `summary --overwrite`, `summary --dry-run`. 새 JSON 키: `applied`(scan, classify, summary), `candidates`,
+  `peek_cleared`, `dry_run`, `planned`, `recovered`. 기존 인자와 키는 그대로.
+- SKILL.md: 결과 처리 표에 `[후보]`와 `dry_run` 행, 지우거나 덮어쓰는 옵션은 `--dry-run`으로 먼저 확인받기, `applied`/`recovered` 보고.
+
+### 테스트
+- 회귀 테스트 추가: 미완료 작업 둘이면 `[후보]`로 거부하고 어느 작업도 진행하지 않음, `scan --dry-run`/`--overwrite --dry-run`이 DB를 바꾸지 않음,
+  `--overwrite`의 `applied`, 잠금 중인 작업의 DB를 지우지 않음, 기존 보고서·CSV를 덮어쓰지 않고 새 이름(`recovered`),
+  `summary --dry-run`이 파일을 만들거나 지우지 않음과 `planned`, `--overwrite`의 `applied`, classify `peek_cleared`/`applied`,
+  잠긴 보고서의 `recovered`, 러너 `--dir`이 사용자 폴더를 거부하고 표식 폴더만 비움.
+
 ## [0.9.2] - 2026-10-27
 
 실기 결과와 실제 사용 중 오류를 AI가 읽고 판단할 수 있게 자동 기록, 경량 LLM용 SKILL.md 재작성.
@@ -126,12 +160,9 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
 상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
-- [ ] `scan --resume`(--root만)에서 미완료 작업이 2개 이상이면 STOP_RETRY + `[추천] <가장 최근 job>`과 후보 목록 (doc_classifier.py:54-61)
 - [ ] `rt.ok()`의 `VERIFIED:` 강제 제거. `summary --save`는 xlsx를 read_only로 다시 열어 시트 수 확인, CSV는 쓴 행 수 == total 확인
-- [ ] `summary --save --dry-run`(덮어쓸 xlsx, 새 CSV, 지울 이전 CSV 목록), 실제 삭제·덮어쓰기는 JSON `removed_files`/`overwritten`, 이전 CSV 삭제 로그를 `[WARN]`으로
-- [ ] `scan --overwrite --dry-run`, 기존 DB 삭제 여부 JSON 보고, classify `peek_cleared`를 JSON 키로
 - [ ] `_dc_runtime.py`에 `retry_fs`/`remove_tree`(6회) 추가, `_remove_db`/`_remove_stale_csv`/JobLock 해제/로그 회전/`save_with_lock_fallback` 내부 replace에 적용 (잠금이면 재시도 후 새 이름)
-- [ ] 결과 JSON `recovered` 배열 (잠긴 보고서/CSV 새 이름 저장), scan 재개와 peek 작업 프로세스 재시작은 `recovered`/`warnings` 중 결정
+- [ ] 결과 JSON `recovered`: 잠긴 보고서와 기존 보고서의 새 이름 저장은 0.9.3에서 처리. 남은 것: scan 재개와 peek 작업 프로세스 재시작을 `recovered`/`warnings` 중 어디에 둘지 결정
 - [ ] 0건 directive: jobs/scan/list/peek/summary에 `count: 0`과 "찾은 항목 없음", list 0건에 "다음 페이지" 문구 제거, scan 0개에 classify 권하지 않기
 - [ ] `truncated`를 bool로 바꾸고 상세는 `truncated_detail`(기존 키 의미 변경이므로 alias 방침 결정), jobs 목록 상한
 - [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
@@ -139,5 +170,4 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 - [ ] jobs가 열리지 않는 DB를 조용히 빼는 문제(_dc_store.py:220-223) -> `unreadable_jobs`
 - [ ] `write_error_log`: 로그 회전 실패가 그 회차 기록까지 삼키지 않게 분리, JIT 한도 초과 시 `복구 시도:` 줄
 - [ ] `SKILL.md:69`의 고정 로그 경로 안내 재검토 (`DOCCLS_DATA_DIR` 변경 시 틀림)
-- [ ] tools/run_win_tests.py:636: `--dir`을 러너가 만든 폴더 표식 없이 rmtree하지 않기
 - [ ] 테스트 도우미에 `pytest.importorskip("pymupdf")` 등 (tests/dc_samples.py:128)

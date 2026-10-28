@@ -52,13 +52,20 @@ def _same_path(a: Optional[str], b: Optional[str]) -> bool:
 
 
 def _find_resumable(root: str) -> Optional[str]:
-    """같은 폴더를 대상으로 끝나지 않은 가장 최근 작업."""
+    """같은 폴더를 대상으로 끝나지 않은 작업. 둘 이상이면 고르지 않고 [후보]로 사용자에게 묻게 합니다
+    (AGENTS.md JIT 복구 금지: 후보가 둘 이상인 추측)."""
     found = []
     for job in st.list_jobs():
         s = st.job_summary(job)
         if s and _same_path(s.get("root"), root) and s.get("scan_status") != "complete":
-            found.append((s.get("updated_at") or "", job))
-    return max(found)[1] if found else None
+            found.append((s.get("updated_at") or "", job, s))
+    if len(found) > 1:
+        found.sort(reverse=True)
+        raise rt.CandidatesError(
+            f"이 폴더({root})의 끝나지 않은 작업이 {len(found)}개라 어느 것을 이어서 할지 고르지 않았습니다 (최근 순: "
+            + ", ".join(f"{j}(파일 {x['files']:,}개, {u or '시각 없음'})" for u, j, x in found[:10])
+            + "). 고른 작업으로 scan --job <작업> --resume 을 실행하세요.", [j for _, j, _ in found])
+    return found[0][1] if found else None
 
 
 def _remove_db(path: str) -> None:
@@ -69,8 +76,8 @@ def _remove_db(path: str) -> None:
             pass
 
 
-def _prepare_job(args) -> Dict[str, Any]:
-    """작업 이름/DB를 정하고 새로 시작할지 이어서 할지 판단합니다."""
+def _plan_job(args) -> Dict[str, Any]:
+    """작업 이름/DB를 정하고 새로 시작할지 이어서 할지 판단합니다. 아직 아무것도 지우거나 만들지 않습니다."""
     root = _resolve_root(args.root) if args.root else None
     job = st.safe_job(args.job) if args.job else None
     if args.resume and not job:
@@ -89,22 +96,16 @@ def _prepare_job(args) -> Dict[str, Any]:
     if args.resume:
         if not exists:
             raise rt.not_found("작업", job, st.list_jobs())
-        con = st.connect(path)
-        meta = st.get_meta(con)
-        if root and not _same_path(meta.get("root"), root):
-            con.close()
-            raise rt.InputError(f"작업 '{job}'의 대상 폴더는 {meta.get('root')}입니다 (--root {root}와 다름).")
-        if meta.get("scan_status") == "complete":
-            con.close()
+        s = st.job_summary(job) or {}
+        if root and not _same_path(s.get("root"), root):
+            raise rt.InputError(f"작업 '{job}'의 대상 폴더는 {s.get('root')}입니다 (--root {root}와 다름).")
+        if s.get("scan_status") == "complete":
             raise rt.InputError(f"작업 '{job}'은(는) 이미 목록화가 끝났습니다. 다시 하려면 --overwrite를 쓰세요.")
-        return {"job": job, "path": path, "con": con, "root": meta["root"], "options": meta.get("options") or {},
-                "resumed": True}
+        return {"job": job, "path": path, "root": s.get("root"), "resumed": True, "old": s}
 
+    old = st.job_summary(job) if exists else None
     if exists and not args.overwrite:
-        con = st.connect(path)
-        meta = st.get_meta(con)
-        con.close()
-        if meta.get("scan_status") != "complete":
+        if (old or {}).get("scan_status") != "complete":
             err = rt.InputError(f"작업 '{job}'이(가) 끝나지 않은 채 있습니다. 이어서 하려면 --resume, 처음부터 하려면 --overwrite를 쓰세요. "
                                 f"[추천] {rt.next_command(sc.resume_args(job), '이어서 목록화')['command']}")
         else:
@@ -112,16 +113,45 @@ def _prepare_job(args) -> Dict[str, Any]:
         raise err
     if not root:
         raise rt.InputError("새 작업에는 --root(목록을 만들 폴더)가 필요합니다.")
-    if exists:
+    return {"job": job, "path": path, "root": root, "resumed": False, "old": old, "exists": exists}
+
+
+def _old_job_text(plan: Dict[str, Any]) -> str:
+    old = plan.get("old")
+    if not old:
+        return f"삭제: {os.path.basename(plan['path'])} (이전 작업: 열 수 없는 DB)"
+    return (f"삭제: {os.path.basename(plan['path'])} (이전 작업: 파일 {old.get('files', 0):,}개, 목록화 {old.get('scan_status')}, "
+            f"분류 {old.get('classify_status') or '안 함'})")
+
+
+def _scan_planned(plan: Dict[str, Any]) -> List[str]:
+    name = os.path.basename(plan["path"])
+    if plan["resumed"]:
+        return [f"이어서: {name} (파일 {plan['old'].get('files', 0):,}개 기록됨, 남은 폴더 {plan['old'].get('dirs_pending', 0):,}개)"]
+    out = [_old_job_text(plan)] if plan.get("exists") else []
+    return out + [f"새 파일: {name} (대상 {plan['root']})"]
+
+
+def _open_job(plan: Dict[str, Any], args) -> Dict[str, Any]:
+    """작업 잠금을 잡은 뒤 호출: 이어서면 DB를 열고, 새로 하면(--overwrite면 이전 DB를 지우고) 만듭니다."""
+    path, job = plan["path"], plan["job"]
+    applied: List[str] = []
+    if plan["resumed"]:
+        con = st.connect(path)
+        meta = st.get_meta(con)
+        return dict(plan, con=con, root=meta["root"], options=meta.get("options") or {}, applied=applied)
+    if plan.get("exists"):
         _remove_db(path)
+        applied.append(_old_job_text(plan))
+        rt.log("WARN", applied[-1])
     con = st.connect(path)
     options = sc.option_snapshot(args)
     con.execute("BEGIN")
-    st.set_meta(con, schema_version=st.SCHEMA_VERSION, job=job, root=root, options=options, scan_status="scanning",
+    st.set_meta(con, schema_version=st.SCHEMA_VERSION, job=job, root=plan["root"], options=options, scan_status="scanning",
                 created_at=dt.datetime.now().isoformat(timespec="seconds"))
-    con.execute("INSERT INTO dirs(parent_id, path, depth, status) VALUES (NULL, ?, 0, 'pending')", (root,))
+    con.execute("INSERT INTO dirs(parent_id, path, depth, status) VALUES (NULL, ?, 0, 'pending')", (plan["root"],))
     con.execute("COMMIT")
-    return {"job": job, "path": path, "con": con, "root": root, "options": options, "resumed": False}
+    return dict(plan, con=con, options=options, applied=applied)
 
 
 def _scan_result(prep: Dict[str, Any], scanner: sc.Scanner, stopped: Optional[str], priority: bool) -> Dict[str, Any]:
@@ -136,7 +166,7 @@ def _scan_result(prep: Dict[str, Any], scanner: sc.Scanner, stopped: Optional[st
     run = dict(scanner.run, seconds=secs, files_per_sec=round(scanner.run["files"] / secs) if secs else None,
                size=rt.human_size(scanner.run["bytes"]))
     result: Dict[str, Any] = {
-        "job": job, "db_file": prep["path"], "root": prep["root"], "resumed": prep["resumed"],
+        "job": job, "db_file": prep["path"], "root": prep["root"], "resumed": prep["resumed"], "applied": prep["applied"],
         "complete": complete, "stopped_reason": stopped, "this_run": run, "totals": counts,
         "by_extension": st.by_extension(con),
         "skipped": {"by_reason": st.reason_counts(con, "skipped"), "examples": st.dir_samples(con, "skipped")},
@@ -171,8 +201,12 @@ def cmd_scan(args) -> Dict[str, Any]:
         v = getattr(args, name)
         if v is not None and v < 0:
             raise rt.InputError(f"--{name.replace('_', '-')}는 0 이상이어야 합니다.")
-    prep = _prepare_job(args)
-    with st.JobLock(prep["job"]):
+    plan = _plan_job(args)
+    if args.dry_run:
+        return rt.dry_run_result("scan", f"미리보기 [{plan['job']}]: " + "; ".join(_scan_planned(plan)), _scan_planned(plan),
+                                 args._argv, job=plan["job"], db_file=plan["path"])
+    with st.JobLock(plan["job"]):
+        prep = _open_job(plan, args)
         priority = sc.set_background_priority() if args.priority == "background" else False
         scanner = sc.Scanner(prep["con"], prep["options"], max_files=args.max_files,
                              time_limit=args.time_limit, throttle_ms=args.throttle_ms)
@@ -241,8 +275,10 @@ def cmd_classify(args) -> Dict[str, Any]:
             preview += ". " + ", ".join(f"{c['category']} {c['files']:,}" for c in top)
         if not scan_complete:
             preview += " (목록화가 끝나지 않은 작업: 지금까지 목록화된 파일만 분류)"
+        applied: List[str] = []
         if run["peek_cleared"]:
             preview += f" 규칙이 바뀌어 이전 확인(peek) 결과 {run['peek_cleared']}개를 지웠습니다."
+            applied.append(f"삭제: 확인(peek) 결과 {run['peek_cleared']}개 (규칙이 바뀌어 판정 기준이 달라짐, peek로 다시 확인 가능)")
         nexts = [rt.next_command(["peek", "--job", job], f"분류별 표본 {est['files']}개를 살짝 읽어 확인 (약 {cl.time_text(est['seconds_estimate'])})"),
                  rt.next_command(["summary", "--job", job, "--save"], "요약과 엑셀 보고서")]
         if not scan_complete:
@@ -257,7 +293,8 @@ def cmd_classify(args) -> Dict[str, Any]:
                                                             "files_per_sec": run["files_per_sec"]},
                      by_category=cats, by_kind=cl.kind_counts(con), keyword_hits=run["keyword_hits"],
                      unclassified_words=run["unclassified_words"][:15], duplicates=dups,
-                     peek_estimate=est, peak_memory_mb=sc.peak_memory_mb(), next_commands=nexts)
+                     peek_estimate=est, peek_cleared=run["peek_cleared"], applied=applied,
+                     peak_memory_mb=sc.peak_memory_mb(), next_commands=nexts)
     finally:
         con.close()
 
@@ -335,18 +372,28 @@ def _default_report_path(job: str) -> str:
 
 def cmd_summary(args) -> Dict[str, Any]:
     job = st.safe_job(args.job)
+    if (args.dry_run or args.overwrite) and args.save is None:
+        raise rt.InputError(f"--dry-run과 --overwrite는 보고서 저장(--save)과 함께 씁니다. "
+                            f"[추천] {rt.next_command(args._argv + ['--save'], '보고서 저장')['command']}")
     con, meta = _open_scanned(job)
     try:
         meta = st.require_classified(con, job, "summary")
-        s = rp.build_summary(con, job, meta, top=args.top)
-        nexts: List[Dict[str, Any]] = []
+        plan = None
         if args.save is not None:
             path = os.path.abspath(args.save) if args.save else _default_report_path(job)
             if os.path.splitext(path)[1].lower() != ".xlsx":
                 raise rt.InputError(f"보고서는 .xlsx로만 저장합니다: {path}. [추천] {os.path.splitext(path)[0]}.xlsx")
             if os.path.isdir(path):
                 raise rt.InputError(f"--save에 폴더를 주었습니다: {path}. 파일 이름(.xlsx)을 지정하세요.")
-            s["report"] = rp.write_report(con, job, meta, s, path, args.file_list)
+            plan = rp.plan_report(path, st.scan_counts(con)["files"], args.file_list, args.overwrite)
+            if args.dry_run:
+                return rt.dry_run_result("summary", f"보고서 미리보기 [{job}]: " + "; ".join(plan["planned"]), plan["planned"],
+                                         args._argv, job=job, report_file=plan["path"], file_list=plan["mode"])
+        s = rp.build_summary(con, job, meta, top=args.top)
+        nexts: List[Dict[str, Any]] = []
+        if plan is not None:
+            s["report"] = rp.write_report(con, job, meta, s, plan)
+            s["applied"] = s["report"].pop("applied")
         else:
             nexts.append(rt.next_command(["summary", "--job", job, "--save"], "엑셀 보고서 저장"))
         if not meta.get("peek_files"):
@@ -444,7 +491,8 @@ def build_cli():
     p.add_argument("--root", help="목록을 만들 폴더 (예: D:\\자료, D:)")
     p.add_argument("--job", help="작업 이름 (생략 시 폴더명_날짜)")
     p.add_argument("--resume", action="store_true", help="끝나지 않은 작업을 이어서")
-    p.add_argument("--overwrite", action="store_true", help="같은 이름의 작업을 지우고 처음부터")
+    p.add_argument("--overwrite", action="store_true", help="같은 이름의 작업을 지우고 처음부터 (먼저 --dry-run으로 확인 권장)")
+    p.add_argument("--dry-run", action="store_true", help="지우거나 만들 것만 보여 주고 실행하지 않음 (planned)")
     p.add_argument("--exclude", action="append", help="제외할 경로 패턴 (여러 번 지정 가능, 예: *\\node_modules*)")
     p.add_argument("--max-depth", type=int, help="이 깊이까지만 (대상 폴더 = 0)")
     p.add_argument("--max-files", type=int, help="이번 실행에서 이 파일 수에 도달하면 멈춤 (이어서 가능)")
@@ -475,6 +523,9 @@ def build_cli():
     p.add_argument("--file-list", choices=["auto", "xlsx", "csv", "none"], default="auto",
                    help="보고서의 전체 파일 목록 (auto: 10만 개 이하는 엑셀 시트, 넘으면 104만 행씩 나눈 CSV)")
     p.add_argument("--top", type=int, default=10, help="JSON에 넣을 상위 폴더 수 (기본 10)")
+    p.add_argument("--overwrite", action="store_true",
+                   help="같은 이름의 보고서/목록 CSV를 덮어쓰고 남는 이전 목록 CSV를 지움 (없으면 시각을 붙인 새 이름으로 저장)")
+    p.add_argument("--dry-run", action="store_true", help="저장·덮어쓰기·삭제할 파일만 보여 주고 실행하지 않음 (planned)")
 
     p = sub.add_parser("list", help="조건으로 파일 목록 조회 (페이지 단위)")
     p.add_argument("--job", required=True, help="작업 이름")
@@ -501,6 +552,7 @@ def build_cli():
 
 def main(argv: Optional[List[str]] = None) -> None:
     rt.setup_console()
+    rt.reset_run_state()
     rt.CURRENT_ARGV = list(argv) if argv is not None else sys.argv[1:]
     args = build_cli().parse_args(argv)
     args._argv = list(argv) if argv is not None else sys.argv[1:]

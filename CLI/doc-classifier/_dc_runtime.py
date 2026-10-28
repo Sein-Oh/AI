@@ -12,11 +12,12 @@ import difflib
 import json
 import math
 import os
+import re
 import sys
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 TOOL = "doc_classifier"
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024          # 오류 로그가 이보다 커지면 errors.old.txt로 넘기고 새로 시작
 CURRENT_ARGV: Optional[List[str]] = None  # 진입점이 채움 (인자 오류 기록에도 실제 명령을 남기려고)
@@ -62,6 +63,35 @@ class InputError(ValueError):
     """인자/대상/데이터 문제. 같은 인자로 재시도해도 소용없음 (STOP_RETRY)."""
 
 
+class CandidatesError(InputError):
+    """후보가 둘 이상이라 도구가 고르지 않는 경우 (CLI/README.md R8 [후보]). 응답에 candidates 키를 붙입니다."""
+
+    def __init__(self, message: str, candidates: Sequence[str]):
+        self.candidates = list(candidates)[:10]
+        super().__init__(f"{message} [후보] {', '.join(self.candidates)}")
+
+
+# 실행 중 JIT 복구 기록 (CLI/README.md R3). 진입점이 실행마다 reset_run_state()로 비웁니다.
+_RECOVERED: List[str] = []
+
+
+def reset_run_state() -> None:
+    _RECOVERED.clear()
+
+
+def note_recovered(msg: str) -> None:
+    """복구한 일을 stderr [WARN]으로 알리고, 응답 JSON의 recovered 배열에 담습니다 (200자 이하, 경로는 파일 이름만)."""
+    msg = msg[:200]
+    log("WARN", msg)
+    _RECOVERED.append(msg)
+
+
+def _attach_recovered(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if _RECOVERED:
+        payload["recovered"] = list(_RECOVERED)
+    return payload
+
+
 _STOP_RETRY_ERRORS = (InputError, ValueError, KeyError, FileNotFoundError, NotADirectoryError,
                       IsADirectoryError, PermissionError)
 
@@ -97,7 +127,7 @@ def ok(command: str, preview: str, directive: str = "", **fields: Any) -> Dict[s
     elif not directive.startswith("VERIFIED:"):
         directive = "VERIFIED: " + directive
     payload["agent_directive"] = directive
-    return payload
+    return _attach_recovered(payload)
 
 
 INTERRUPTED_DIRECTIVE = ("STOP_RETRY: 실행이 중단되었습니다. 지금까지 결과는 저장되어 있습니다. "
@@ -106,11 +136,17 @@ INTERRUPTED_DIRECTIVE = ("STOP_RETRY: 실행이 중단되었습니다. 지금까
 
 def error_payload(exc: BaseException, command: str = "") -> Dict[str, Any]:
     base: Dict[str, Any] = {"status": "error", "tool": TOOL, "command": command}
+    _attach_recovered(base)
     if isinstance(exc, KeyboardInterrupt):
         base.update(error_type="interrupted", message="사용자 또는 상위 프로세스에 의해 실행이 중단되었습니다.",
                     agent_directive=INTERRUPTED_DIRECTIVE)
         return base
     msg = str(exc) or type(exc).__name__
+    if isinstance(exc, CandidatesError):
+        base.update(error_type="input", message=msg, candidates=exc.candidates,
+                    agent_directive="STOP_RETRY: 후보가 둘 이상이라 도구가 고르지 않았습니다. 재시도하지 말고 [후보](candidates)를 "
+                                    "사용자에게 보여 주고 하나를 고르게 한 뒤, 고른 값으로 실행하세요.")
+        return base
     if isinstance(exc, _STOP_RETRY_ERRORS):
         base.update(error_type="input", message=msg,
                     agent_directive="STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 "
@@ -228,6 +264,20 @@ def read_text_file(path: str) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+_STAMP_TAIL = re.compile(r"_\d{8}_\d{6}(_\d+)?$")
+
+
+def timestamped_path(path: str) -> str:
+    """'<이름>_<YYYYMMDD_HHMMSS><확장자>'. 이름이 이미 시각으로 끝나면 바꿔 붙이고(두 번 붙이지 않음),
+    같은 이름이 있으면 _2, _3 ...을 붙입니다."""
+    stem, ext = os.path.splitext(os.path.abspath(path))
+    base = f"{_STAMP_TAIL.sub('', stem)}_{timestamp()}"
+    cand, n = base + ext, 2
+    while os.path.exists(cand):
+        cand, n = f"{base}_{n}{ext}", n + 1
+    return cand
+
+
 def save_with_lock_fallback(path: str, write: Callable[[str], None]) -> str:
     """임시 파일에 쓴 뒤 바꿔 넣습니다. 대상이 열려 있어 잠겼으면(엑셀) 이름 뒤에 시각을 붙여 따로 저장합니다.
     실제로 저장한 경로를 돌려줍니다."""
@@ -241,9 +291,9 @@ def save_with_lock_fallback(path: str, write: Callable[[str], None]) -> str:
             os.replace(tmp, path)
             return os.path.abspath(path)
         except PermissionError:
-            alt = f"{stem}_{timestamp()}{ext}"
+            alt = timestamped_path(path)
             os.replace(tmp, alt)
-            log("WARN", f"{os.path.basename(path)} 파일이 열려 있어(잠김) {os.path.basename(alt)}(으)로 저장했습니다.")
+            note_recovered(f"{os.path.basename(path)} 잠김(열려 있음) -> {os.path.basename(alt)}로 저장")
             return alt
     finally:
         if os.path.exists(tmp):
@@ -300,6 +350,18 @@ def quote_arg(value: Any) -> str:
     if s and all(ch not in s for ch in ' \t"&|<>^()%,;='):
         return s
     return '"' + s.replace('"', '\\"') + '"'
+
+
+def without_flag(argv: Sequence[str], flag: str) -> List[str]:
+    return [a for a in argv if a != flag]
+
+
+def dry_run_result(command: str, preview: str, planned: List[str], argv: Sequence[str], **fields: Any) -> Dict[str, Any]:
+    """--dry-run 응답 (CLI/README.md R8): 바꾼 것 없이 planned만 보여 주고, next_commands[0]은 --dry-run을 뺀 같은 명령."""
+    return ok(command, preview,
+              "VERIFIED: 미리보기만 했습니다(변경 없음). planned를 사용자에게 보여주고 확인을 받은 뒤 next_commands[0]을 실행하세요.",
+              dry_run=True, planned=planned,
+              next_commands=[next_command(without_flag(argv, "--dry-run"), "미리보기한 작업 실제로 실행")], **fields)
 
 
 def next_command(args: Sequence[Any], purpose: str, needs_input: bool = False,

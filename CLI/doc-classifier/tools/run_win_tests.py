@@ -623,9 +623,34 @@ def write_diag(ctx, stamp, note=""):
     return path
 
 
+MARKER = ".created_by_doc-classifier"
+
+
+class RefusedDir(Exception):
+    pass
+
+
+def prepare_test_dir(path):
+    """테스트 폴더를 비워 새로 시작합니다. 러너가 만든 폴더(표식 파일 MARKER가 있는 폴더)만 지웁니다.
+    사용자 폴더를 잘못 주었을 때 지우지 않도록, 표식 없이 내용이 있는 폴더는 거부합니다 (CLI/README.md R4)."""
+    path = os.path.abspath(path)
+    if os.path.isfile(path):
+        raise RefusedDir(f"--dir {path} 은(는) 파일입니다. 테스트용 새 폴더 경로를 주세요.")
+    if os.path.isdir(path) and os.listdir(path):
+        if not os.path.exists(os.path.join(path, MARKER)):
+            raise RefusedDir(f"--dir {path} 에 다른 파일이 있고 러너가 만든 폴더가 아니어서(표식 {MARKER} 없음) 지우지 않았습니다. "
+                             "비어 있는 새 폴더를 주거나(예: --dir C:\\dc_test2), 이전 러너 결과 폴더라면 직접 지운 뒤 다시 실행하세요.")
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, MARKER), "w", encoding="utf-8") as f:
+        f.write("doc-classifier tools/run_win_tests.py 가 만든 테스트 폴더입니다. 다음 실행 때 통째로 지워집니다.\n")
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description="doc-classifier Windows 실기 테스트 러너")
-    parser.add_argument("--dir", default=r"C:\dc_test", help="테스트 폴더 (실행 때마다 새로 만듦)")
+    parser.add_argument("--dir", default=r"C:\dc_test",
+                        help="테스트 폴더. 없거나 비었으면 만들고, 러너가 만든 폴더면 비우고 다시 씀. 다른 폴더는 지우지 않고 거부")
     parser.add_argument("--only", help="실행할 항목 (예: S1,S3)")
     parser.add_argument("--files", type=int, default=100000, help="S1 대량 트리 파일 수 (기본 10만)")
     parser.add_argument("--drive", default="D:\\", help="S7 실제 드라이브 (기본 D:\\)")
@@ -633,7 +658,11 @@ def main():
     parser.add_argument("--peek-limit", type=int, default=600, help="S15 표본 확인 시간 상한(초)")
     args = parser.parse_args()
     ctx = Ctx(args)
-    shutil.rmtree(ctx.dir, ignore_errors=True)
+    try:
+        prepare_test_dir(ctx.dir)
+    except RefusedDir as e:
+        log("[ERROR] " + str(e))
+        sys.exit(2)
     os.makedirs(ctx.jobs, exist_ok=True)
     only = {x.strip().upper() for x in args.only.split(",")} if args.only else None
     log("=" * 70)

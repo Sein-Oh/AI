@@ -249,17 +249,58 @@ def _file_values(r: Tuple[Any, ...]) -> List[Any]:
             pk.STATUS_TEXT.get(peek, peek) if peek else None, (flags or "열지 않음") if no_read else None]
 
 
-def write_report(con: Any, job: str, meta: Dict[str, Any], summary: Dict[str, Any], path: str,
-                 file_list: str = "auto") -> Dict[str, Any]:
-    total = summary["totals"]["files"]
+def _stale_csv(base: str, keep: List[str]) -> List[str]:
+    """같은 보고서 이름으로 전에 만든 목록 CSV 중 이번에 쓸 파일이 아닌 것 (나눈 개수가 줄었거나 목록을 시트로 넣는 경우)."""
+    folder, stem = os.path.split(base)
+    pat = re.compile(re.escape(stem) + r"_파일목록(_\d+)?\.csv$")
+    keep_names = {os.path.basename(p) for p in keep}
+    try:
+        names = sorted(os.listdir(folder or "."))
+    except OSError:
+        return []
+    return [os.path.join(folder, n) for n in names if pat.match(n) and n not in keep_names]
+
+
+def plan_report(path: str, total: int, file_list: str = "auto", overwrite: bool = False) -> Dict[str, Any]:
+    """보고서와 목록 CSV를 어디에 쓸지 정합니다 (아직 아무것도 쓰거나 지우지 않음).
+
+    같은 이름의 보고서나 목록 CSV가 이미 있으면 기본은 시각을 붙인 새 이름으로 저장합니다(CLI/README.md R4).
+    --overwrite일 때만 덮어쓰고, 같은 이름의 남는 이전 목록 CSV를 지웁니다."""
     mode = file_list
     if mode == "auto":
         mode = "xlsx" if total <= CSV_THRESHOLD else "csv"
+    path = os.path.abspath(path)
+
+    def targets(p: str) -> Tuple[List[str], List[str]]:
+        base = os.path.splitext(p)[0]
+        csvs = csv_file_paths(base, total) if mode == "csv" else []
+        return csvs, _stale_csv(base, csvs)
+
+    csvs, stale = targets(path)
+    existing = [p for p in [path] + csvs if os.path.exists(p)]
+    renamed_from = None
+    if (existing or stale) and not overwrite:
+        renamed_from = path
+        path = rt.timestamped_path(path)
+        csvs, stale = targets(path)
+        existing = [p for p in [path] + csvs if os.path.exists(p)]
+    planned = [f"덮어쓰기: {os.path.basename(p)}" for p in existing]
+    planned += [f"새 파일: {os.path.basename(p)}" for p in [path] + csvs if p not in existing]
+    planned += [f"삭제: {os.path.basename(p)} (같은 이름의 이전 목록 CSV)" for p in stale]
+    return {"mode": mode, "path": path, "csv_paths": csvs, "overwrite": existing, "stale": stale,
+            "renamed_from": renamed_from, "planned": planned, "folder": os.path.dirname(path)}
+
+
+def write_report(con: Any, job: str, meta: Dict[str, Any], summary: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+    """plan_report대로 보고서(와 목록 CSV)를 씁니다. 실제로 덮어쓰거나 지운 파일은 applied에 남깁니다."""
+    total = summary["totals"]["files"]
+    mode, path, csv_paths = plan["mode"], plan["path"], plan["csv_paths"]
     rules = rules_from_meta(meta)
-    out: Dict[str, Any] = {"file_list": mode}
+    out: Dict[str, Any] = {"file_list": mode, "applied": []}
     t0 = time.time()
-    csv_base = os.path.splitext(os.path.abspath(path))[0]
-    csv_paths = csv_file_paths(csv_base, total) if mode == "csv" else []
+    if plan["renamed_from"]:
+        rt.note_recovered(f"{os.path.basename(plan['renamed_from'])} 이미 있음 -> {os.path.basename(path)}로 저장 "
+                          "(덮어쓰려면 --overwrite)")
     if csv_paths:
         summary = dict(summary, file_list_note=f"파일 목록 {total:,}행은 CSV {len(csv_paths)}개로 따로 저장: "
                        + ", ".join(os.path.basename(p) for p in csv_paths))
@@ -276,12 +317,26 @@ def write_report(con: Any, job: str, meta: Dict[str, Any], summary: Dict[str, An
             out["file_list_sheets"] = _sheet_files(b, con, total)
         b.wb.save(tmp)
 
+    def mark_overwrite(intended: str, saved: str) -> None:
+        if intended in plan["overwrite"] and os.path.abspath(saved) == intended:
+            out["applied"].append(f"덮어쓰기: {os.path.basename(saved)}")
+            rt.log("WARN", f"덮어썼습니다: {os.path.basename(saved)}")
+
     rt.log("INFO", f"엑셀 보고서 작성 중 (파일 {total:,}개, 목록 {mode})")
     out["report_file"] = rt.save_with_lock_fallback(path, write)
+    mark_overwrite(path, out["report_file"])
     if csv_paths:
         out["file_list_files"] = _write_csv_files(con, csv_paths, total)
         out["file_list_csv"] = out["file_list_files"][0]
-        _remove_stale_csv(csv_base, csv_paths)
+        for intended, saved in zip(csv_paths, out["file_list_files"]):
+            mark_overwrite(intended, saved)
+    for p in plan["stale"]:
+        try:
+            os.remove(p)
+            out["applied"].append(f"삭제: {os.path.basename(p)} (같은 이름의 이전 목록 CSV)")
+            rt.log("WARN", f"이전 목록 CSV를 지웠습니다: {os.path.basename(p)}")
+        except OSError as e:
+            rt.log("WARN", f"이전 목록 CSV를 지우지 못했습니다: {os.path.basename(p)} ({e.strerror or e})")
     out["seconds"] = round(time.time() - t0, 1)
     return out
 
@@ -292,20 +347,6 @@ def csv_file_paths(base: str, total: int) -> List[str]:
     if n == 1:
         return [f"{base}_파일목록.csv"]
     return [f"{base}_파일목록_{i}.csv" for i in range(1, n + 1)]
-
-
-def _remove_stale_csv(base: str, keep: List[str]) -> None:
-    """같은 보고서 이름으로 전에 만든 목록 CSV 중 이번 실행에 해당하지 않는 것(나눈 개수가 줄어든 경우)을 지웁니다."""
-    folder, stem = os.path.split(base)
-    pat = re.compile(re.escape(stem) + r"_파일목록(_\d+)?\.csv$")
-    keep_names = {os.path.basename(p) for p in keep}
-    for name in os.listdir(folder or "."):
-        if pat.match(name) and name not in keep_names:
-            try:
-                os.remove(os.path.join(folder, name))
-                rt.log("INFO", f"이전 실행의 목록 파일을 지웠습니다: {name}")
-            except OSError:
-                pass
 
 
 def _sheet_summary(b: Book, s: Dict[str, Any]) -> None:

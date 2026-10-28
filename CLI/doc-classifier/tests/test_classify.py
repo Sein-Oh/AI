@@ -96,6 +96,7 @@ def test_changed_rules_reclassify_and_clear_old_peek_results(tmp_path, run, data
     con.commit()
     code, out = run("classify", "--job", "c", "--rules", path)             # 같은 규칙: peek 결과 유지
     assert out["this_run"]["files"] == len(SPEC) and "지웠습니다" not in out["preview"]
+    assert out["peek_cleared"] == 0 and out["applied"] == []
     assert con.execute("SELECT COUNT(*) FROM files WHERE peek_status IS NOT NULL").fetchone()[0] == 3
     rules = dict(RULES, 계약서={"keywords": ["계약", "MOU"], "exclude": ["초안"]})     # exclude만 바뀌어도 규칙 변경
     code, out = run("classify", "--job", "c", "--rules", _rules(tmp_path, rules))
@@ -105,6 +106,7 @@ def test_changed_rules_reclassify_and_clear_old_peek_results(tmp_path, run, data
     rules = dict(RULES, 인사=["인사발령"])
     code, out = run("classify", "--job", "c", "--rules", _rules(tmp_path, rules))
     assert code == 0 and "2개를 지웠습니다" in out["preview"]
+    assert out["peek_cleared"] == 2 and out["applied"][0].startswith("삭제: 확인(peek) 결과 2개")
     assert {c["category"]: c["files"] for c in out["by_category"]}["인사"] == 2
     assert con.execute("SELECT COUNT(*) FROM files WHERE peek_status IS NOT NULL").fetchone()[0] == 0
 

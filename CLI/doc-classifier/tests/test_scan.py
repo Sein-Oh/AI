@@ -265,3 +265,64 @@ def test_error_log_rotates_and_never_breaks_output(tmp_path, run, data_dir, monk
     monkeypatch.setattr(rt, "error_log_path", lambda: str(tmp_path / "없는" / "\0잘못된경로"))
     code, out = run("scan", "--root", str(tmp_path / "없음3"))               # 기록에 실패해도 JSON 응답은 그대로
     assert code == 1 and out["error_type"] == "input"
+
+
+def test_resume_by_root_refuses_to_guess_between_unfinished_jobs(tmp_path, run, data_dir):
+    """AGENTS.md 복구 금지(후보가 둘 이상인 추측): 같은 폴더의 미완료 작업이 둘이면 고르지 않고 [후보]."""
+    root = tmp_path / "둘"
+    make_tree(str(root), {f"d{i}/f.txt": 1 for i in range(4)})
+    run("scan", "--root", str(root), "--job", "첫째", "--max-files", "1")
+    run("scan", "--root", str(root), "--job", "둘째", "--max-files", "1")
+    code, out = run("scan", "--root", str(root), "--resume")
+    assert code == 1 and out["agent_directive"].startswith("STOP_RETRY:") and "재시도하지 말고" in out["agent_directive"]
+    assert sorted(out["candidates"]) == ["둘째", "첫째"] and "[후보]" in out["message"] and "[추천]" not in out["message"]
+    for job in ("첫째", "둘째"):                                                # 아무 작업도 이어서 하지 않음
+        assert st.job_summary(job)["files"] == 1
+    code, out = run("scan", "--job", "둘째", "--resume")                       # 사용자가 고르면 그대로
+    assert code == 0 and out["complete"] and out["job"] == "둘째"
+    code, out = run("scan", "--root", str(root), "--resume")                   # 하나만 남으면 그것을 이어서
+    assert code == 0 and out["job"] == "첫째"
+
+
+def test_scan_dry_run_changes_nothing(tmp_path, run, data_dir):
+    root = tmp_path / "미리"
+    make_tree(str(root), {"a/1.txt": 1, "b/2.txt": 1})
+    code, out = run("scan", "--root", str(root), "--job", "m", "--dry-run")
+    assert code == 0 and out["dry_run"] is True and out["planned"] == [f"새 파일: m.db (대상 {root})"]
+    assert not (data_dir / "m.db").exists()
+    assert out["next_commands"][0]["command"].endswith("scan --root " + rt_quote(str(root)) + " --job m")
+    run("scan", "--root", str(root), "--job", "m")
+    db = data_dir / "m.db"
+    before = (db.stat().st_size, db.stat().st_mtime)
+    code, out = run("scan", "--root", str(root), "--job", "m", "--overwrite", "--dry-run")
+    assert out["planned"][0].startswith("삭제: m.db (이전 작업: 파일 2개, 목록화 complete") and len(out["planned"]) == 2
+    assert (db.stat().st_size, db.stat().st_mtime) == before and st.job_summary("m")["files"] == 2
+    code, out = run("scan", "--root", str(root), "--job", "m", "--overwrite")   # 실제 삭제는 applied로 보고
+    assert code == 0 and out["applied"] == [out["applied"][0]] and out["applied"][0].startswith("삭제: m.db (이전 작업")
+    code, out = run("scan", "--root", str(root), "--job", "새것")
+    assert out["applied"] == []
+
+
+def test_overwrite_does_not_delete_db_of_running_job(tmp_path, run, data_dir):
+    """--overwrite는 작업 잠금을 잡은 뒤에만 지웁니다 (다른 곳에서 목록화 중인 DB를 지우지 않음)."""
+    root = tmp_path / "잠금2"
+    make_tree(str(root), {"a.txt": 1})
+    run("scan", "--root", str(root), "--job", "busy2")
+    with st.JobLock("busy2"):
+        code, out = run("scan", "--root", str(root), "--job", "busy2", "--overwrite")
+    assert code == 1 and "실행 중" in out["message"] and st.job_summary("busy2")["files"] == 1
+
+
+def rt_quote(s):
+    import _dc_runtime as rt
+    return rt.quote_arg(s)
+
+
+def test_overwrite_replaces_unreadable_db(tmp_path, run, data_dir):
+    root = tmp_path / "깨짐"
+    make_tree(str(root), {"a.txt": 1})
+    (data_dir / "broken.db").write_bytes(b"this is not sqlite" * 100)
+    code, out = run("scan", "--root", str(root), "--job", "broken", "--overwrite", "--dry-run")
+    assert out["planned"][0] == "삭제: broken.db (이전 작업: 열 수 없는 DB)"
+    code, out = run("scan", "--root", str(root), "--job", "broken", "--overwrite")
+    assert code == 0 and out["totals"]["files"] == 1 and out["applied"] == ["삭제: broken.db (이전 작업: 열 수 없는 DB)"]

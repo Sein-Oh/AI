@@ -4,7 +4,7 @@ description: Windows 폴더(하위 전체, 드라이브 전체 가능)의 파일
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "0.9.2"
+  version: "0.9.3"
   platform: windows
 ---
 
@@ -28,7 +28,9 @@ metadata:
 - `<job>` 은 scan 결과 JSON 의 `job` 값이다. 사용자가 이름을 주면 scan 에 `--job <이름>` 을 붙인다.
 - 드라이브 전체는 오래 걸린다(수십 분~수 시간). `complete: false` 면 사용자에게 알리고, 계속하라고 하면 `next_commands[0]` 을 실행한다.
 - 보고서: `report.report_file`(엑셀). 파일이 10만 개를 넘으면 전체 목록은 CSV(`report.file_list_files`)로 따로 저장된다.
-  엑셀/CSV 내용을 직접 읽지 않는다. 경로만 알린다.
+  엑셀/CSV 내용을 직접 읽지 않는다. 경로만 알린다. 같은 이름의 보고서가 있으면 시각을 붙인 새 이름으로 저장된다(`recovered`).
+- 지우거나 덮어쓰는 옵션(`scan --overwrite`, `summary --save --overwrite`)은 사용자가 원할 때만 쓰고, 먼저 `--dry-run` 을 붙여
+  `planned` 를 보여 주고 확인을 받는다.
 
 ## 2. 분류 규칙 파일 만들기 (사용자가 분류 기준을 말했을 때)
 
@@ -52,6 +54,7 @@ metadata:
 | classify | `preview` (종류별 개수, 미분류 비율). `unclassified_words` 상위 5개를 "규칙에 추가할 만한 단어"로 함께 |
 | peek | `preview` (확인율). `weak_categories` 가 있으면 "이 종류는 파일명만으로는 부정확" 이라고 함께 |
 | summary | `preview` + `recommendations` 전부 + 보고서 경로 |
+| 모든 명령 | `applied`(실제로 지우거나 덮어쓴 것), `recovered`(도구가 대신 처리한 것)가 있으면 그대로 함께 |
 | list | `total` 과 `items` 의 `path` 몇 개. 더 보려면 `next_commands` 의 다음 페이지 |
 
 - 파일 경로는 `file:///D:/자료/보고서.xlsx` 형식 링크로 쓴다. 이모지 금지.
@@ -63,8 +66,10 @@ metadata:
 |---|---|
 | `VERIFIED:` (`complete` 없음 또는 `true`) | 완료. 3절대로 보고. 같은 명령을 다시 실행하지 않는다. |
 | `VERIFIED:` + `complete: false` | 일부만 됨(저장됨). 알리고, 계속하라고 하면 `next_commands[0]` 실행. |
+| `VERIFIED:` + `dry_run: true` | 미리보기(변경 없음). `planned` 를 보여 주고 사용자가 동의하면 `next_commands[0]` 실행. |
 | `STOP_RETRY:` + `error_type: interrupted` | 중단됨(저장됨). 사용자에게 물은 뒤에만 `next_commands[0]` 실행. |
 | `STOP_RETRY:` + `message` 에 `[추천]` | `[추천]` 뒤의 값(명령/이름/경로)으로 **1회만** 다시 실행. 또 실패하면 보고. |
+| `STOP_RETRY:` + `message` 에 `[후보]` | 재시도 금지. `candidates` 를 보여 주고 사용자가 고른 값으로 실행 (예: `scan --job <고른 작업> --resume`). |
 | `STOP_RETRY:` (추천 없음) | 재시도 금지. `message` 를 그대로 보고. |
 | `ERROR:` | 재시도 금지. `message` 와 오류 기록 파일 `<SKILL_DIR>\data\logs\errors.txt` 경로를 보고. |
 
