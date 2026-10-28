@@ -1,0 +1,2226 @@
+<testlog_PC_20261028_130619.txt>
+
+==============================================================================
+ml-kit 실기 테스트 로그 (AI 판독용)  라벨=회사PC  생성=20261028_130619
+==============================================================================
+결과: ERROR=1, FAIL=1, PASS=12
+
+[판정 표]
+  PASS  M1        8.5s  Excel이 만든 xlsx (제목/단위 행, 날짜 셀, 범주, 한글 경로+공백)
+  PASS  M2       15.6s  입력 xlsx가 Excel에 열려 있어도 학습 + 설명 자동 상속
+  PASS  M3        7.3s  Excel이 저장한 CSV(CP949) 입력
+  PASS  M4       12.9s  xlsx 배치 예측 -> 결과 CSV를 Excel로 열면 한글 정상
+  PASS  M5        4.5s  결과 CSV가 Excel에 열려 있으면 새 이름으로 저장
+  FAIL  M6        2.0s  Word 보고서를 실제 Word로 열기
+  ERROR M7        5.4s  보고서 잠금
+  PASS  M8       25.8s  next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호) + needs_input 표시
+  PASS  M9        3.0s  단독 배포 폴더(ml_predict.py + v1만)에서 예측
+  PASS  M10      15.7s  2만 행 학습/예측 시간 (기준: 학습 300초, 예측 60초 미만)
+  PASS  M11      12.0s  같은 데이터 동시 학습 -> 두 번째는 STOP_RETRY, 첫 번째는 완료
+  PASS  M12      17.2s  학습 중 강제 종료 -> 다음 학습이 잠금/임시 폴더 정리 후 정상
+  PASS  M13       9.0s  이력 조회 / 오타 추천(exit 1) / 잘못된 옵션(exit 2)도 1줄 JSON
+  PASS  M14       0.0s  모든 호출의 stdout 1줄 JSON / stderr 줄 단위 진행 로그
+
+[환경]
+  OS: Windows-11-10.0.26200-SP0 (10.0.26200)
+  Python: 3.13.13 (C:\WPy64-313130\python\python.exe)
+  패키지: numpy 2.5.2, pandas 3.0.5, scikit-learn 1.9.0, joblib 1.5.3, openpyxl 3.1.5, python-docx 1.2.0, matplotlib 3.11.1, pywin32 312
+  Office: Excel 16.0
+  ml-kit: SKILL.md version 2.3.0, git ?, 커밋 안 된 변경 ?개
+  인코딩: locale=cp949, stdout=utf-8, Active code page: 949
+  테스트 폴더: C:\ml_test\ml 테스트
+
+[실패 상세] 2건
+
+------------------------------------------------------------------------------
+[FAIL] M6 Word 보고서를 실제 Word로 열기
+  통과 기준: 보고서 status=ok, Word로 열림, 표 5개 이상, 문서 첫 문단에 '보고서' 포함
+  관측 결과: Word 판독=None
+  호출 1: $ python ml_report.py -d C:\ml_test\ml 테스트\공정 데이터_ml_data
+    cwd=C:\CLI\ml-kit  exit=1  2.0s
+    stdout JSON: {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+    stderr(끝부분):
+      [INFO] 보고서 버전 자동 선택: v1 (최근 학습과 같은 타겟 조합 중 최고 점수)
+      
+      [ERROR] "no style with name 'Caption'"
+
+------------------------------------------------------------------------------
+[ERROR] M7 보고서 잠금
+  통과 기준: 보고서가 Word에 열려 있으면 (--overwrite를 줘도) status=ok, report_file이 기존 파일과 다른 새 파일, recovered에 '잠김'
+  관측 결과: com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+  예외 traceback:
+    Traceback (most recent call last):
+      File "C:\CLI\ml-kit\tools\run_win_tests.py", line 159, in run_test
+        fn()
+        ~~^^
+      File "C:\CLI\ml-kit\tools\run_win_tests.py", line 359, in m7
+        doc = wd.app.Documents.Open(rep, ReadOnly=False, AddToRecentFiles=False, Visible=False)   # Word가 잠금
+      File "<COMObject <unknown>>", line 5, in Open
+    pywintypes.com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+
+[출력 계약 위반]
+  없음
+
+[전체 호출 기록] (항목, 호출, 종료코드, 시간, status / agent_directive 앞부분)
+  M1     ml_train.py                              exit=0          8.5s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M2     ml_train.py                              exit=0          8.2s  ok / VERIFIED: v2 competitive training completed. Champion models and leade
+  M3     ml_train.py                              exit=0          7.3s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M4     ml_predict.py                            exit=0          3.3s  ok / VERIFIED: Prediction completed for 1 target(s). Output saved to 공정 데이터
+  M5     ml_predict.py                            exit=0          3.4s  ok / VERIFIED: Prediction completed for 1 target(s). Output saved to 공정 데이터
+  M6     ml_report.py                             exit=1          2.0s  error / STOP_RETRY: Argument or data schema validation failed. If the message 
+  M8     ml_train.py                              exit=0          8.4s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M8     next_commands via cmd                    exit=0          9.0s  ok / VERIFIED: v2 competitive training completed. Champion models and leade
+  M8     next_commands via powershell             exit=0          8.4s  ok / VERIFIED: v3 competitive training completed. Champion models and leade
+  M9     ml_predict.py (배포 폴더)                    exit=0          2.9s  ok / VERIFIED: Prediction completed for 1 target(s). Inline predictions ret
+  M10    ml_train.py                              exit=0         11.9s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M10    ml_predict.py                            exit=0          3.8s  ok / VERIFIED: Prediction completed for 1 target(s). Output saved to 대용량 2만
+  M11    ml_train.py                              exit=1          3.9s  error / STOP_RETRY: Argument or data schema validation failed. If the message 
+  M11    ml_train.py (동시A)                        exit=0         Nones  ok / VERIFIED: v2 competitive training completed. Champion models and leade
+  M12    ml_train.py                              exit=0         11.2s  ok / VERIFIED: v3 competitive training completed. Champion models and leade
+  M13    ml_train.py                              exit=0          2.8s  ok / VERIFIED: History summary returned. Do not re-read history.json for th
+  M13    ml_train.py                              exit=1          3.1s  error / STOP_RETRY: Argument or data schema validation failed. If the message 
+  M13    ml_train.py                              exit=2          3.1s  error / STOP_RETRY: Invalid CLI arguments. Check the option names in SKILL.md 
+
+<pytest_office-cli.txt>
+........................................................................ [ 47%]
+...................F....EEEEEE....EEE.E.EE.............................. [ 94%]
+........                                                                 [100%]
+=================================== ERRORS ====================================
+_________ ERROR at setup of test_docx_order_heading_and_merged_cells __________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_docx_order_heading_and_me0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+________ ERROR at setup of test_pptx_real_slide_order_runs_table_notes ________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_pptx_real_slide_order_run0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+___________ ERROR at setup of test_xlsx_rows_skip_empty_and_numbers ___________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_xlsx_rows_skip_empty_and_0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+______________________ ERROR at setup of test_pdf_pages _______________________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_pdf_pages0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+__________ ERROR at setup of test_eml_charset_headers_and_forwarded ___________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_eml_charset_headers_and_f0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+___ ERROR at setup of test_hwpx_paragraphs_nested_tables_and_section_order ____
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_hwpx_paragraphs_nested_ta0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+_____________ ERROR at setup of test_cache_reused_and_invalidated _____________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_cache_reused_and_invalida0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+______________ ERROR at setup of test_cli_read_pages_and_summary ______________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_cli_read_pages_and_summar0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+__________ ERROR at setup of test_cli_read_save_gives_write_commands __________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_cli_read_save_gives_write0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+______ ERROR at setup of test_cli_search_index_folder_save_and_no_match _______
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_cli_search_index_folder_s0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+_______________________ ERROR at setup of test_cli_list _______________________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_cli_list0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+______________ ERROR at setup of test_cli_missing_file_suggests _______________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_cli_missing_file_suggests0')
+
+    @pytest.fixture
+    def samples(tmp_path):
+        files = {
+            "docx": tmp_path / "계획서.docx", "pptx": tmp_path / "발표.pptx", "xlsx": tmp_path / "매출.xlsx",
+            "pdf": tmp_path / "여행.pdf", "eml": tmp_path / "메일.eml", "hwpx": tmp_path / "양식.hwpx",
+        }
+        make_docx(str(files["docx"]))
+>       make_pptx(str(files["pptx"]))
+
+tests\test_reader.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\test_reader.py:40: in make_pptx
+    prs = pptx.Presentation()
+          ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+================================== FAILURES ===================================
+___________________ test_read_closed_pptx_uses_python_pptx ____________________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-0/test_read_closed_pptx_uses_pyt0')
+capsys = <_pytest.capture.CaptureFixture object at 0x0000019312B367D0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000019312A5B9A0>
+
+    def test_read_closed_pptx_uses_python_pptx(tmp_path, capsys, monkeypatch):
+        import pptx
+        p = tmp_path / "d.pptx"
+>       prs = pptx.Presentation()
+              ^^^^^^^^^^^^^^^^^^^
+
+tests\test_ppt.py:201: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\WPy64-313130\python\Lib\site-packages\pptx\api.py:31: in Presentation
+    presentation_part = Package.open(pptx).main_document_part
+                        ^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:82: in open
+    return cls(pkg_file)._load()
+           ^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:160: in _load
+    pkg_xml_rels, parts = _PackageLoader.load(self._pkg_file, cast("Package", self))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:190: in load
+    return cls(pkg_file, package)._load()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:194: in _load
+    parts, xml_rels = self._parts, self._xml_rels
+                      ^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:222: in _parts
+    content_types = self._content_types
+                    ^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\package.py:207: in _content_types
+    return _ContentTypeMap.from_xml(self._package_reader[CONTENT_TYPES_URI])
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:38: in __getitem__
+    return self._blob_reader[pack_uri]
+           ^^^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\util.py:191: in __get__
+    value = self._fget(obj)
+            ^^^^^^^^^^^^^^^
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:52: in _blob_reader
+    return _PhysPkgReader.factory(self._pkg_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'pptx.opc.serialized._PhysPkgReader'>
+pkg_file = 'C:\\WPy64-313130\\python\\Lib\\site-packages\\pptx\\templates\\default.pptx'
+
+    @classmethod
+    def factory(cls, pkg_file: str | IO[bytes]) -> _PhysPkgReader:
+        """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
+        # --- for pkg_file other than str, assume it's a stream and pass it to Zip
+        # --- reader to sort out
+        if not isinstance(pkg_file, str):
+            return _ZipPkgReader(pkg_file)
+    
+        # --- otherwise we treat `pkg_file` as a path ---
+        if os.path.isdir(pkg_file):
+            return _DirPkgReader(pkg_file)
+    
+        if zipfile.is_zipfile(pkg_file):
+            return _ZipPkgReader(pkg_file)
+    
+>       raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+E       pptx.exc.PackageNotFoundError: Package not found at 'C:\WPy64-313130\python\Lib\site-packages\pptx\templates\default.pptx'
+
+C:\WPy64-313130\python\Lib\site-packages\pptx\opc\serialized.py:144: PackageNotFoundError
+=========================== short test summary info ===========================
+FAILED tests/test_ppt.py::test_read_closed_pptx_uses_python_pptx - pptx.exc.P...
+ERROR tests/test_reader.py::test_docx_order_heading_and_merged_cells - pptx.e...
+ERROR tests/test_reader.py::test_pptx_real_slide_order_runs_table_notes - ppt...
+ERROR tests/test_reader.py::test_xlsx_rows_skip_empty_and_numbers - pptx.exc....
+ERROR tests/test_reader.py::test_pdf_pages - pptx.exc.PackageNotFoundError: P...
+ERROR tests/test_reader.py::test_eml_charset_headers_and_forwarded - pptx.exc...
+ERROR tests/test_reader.py::test_hwpx_paragraphs_nested_tables_and_section_order
+ERROR tests/test_reader.py::test_cache_reused_and_invalidated - pptx.exc.Pack...
+ERROR tests/test_reader.py::test_cli_read_pages_and_summary - pptx.exc.Packag...
+ERROR tests/test_reader.py::test_cli_read_save_gives_write_commands - pptx.ex...
+ERROR tests/test_reader.py::test_cli_search_index_folder_save_and_no_match - ...
+ERROR tests/test_reader.py::test_cli_list - pptx.exc.PackageNotFoundError: Pa...
+ERROR tests/test_reader.py::test_cli_missing_file_suggests - pptx.exc.Package...
+1 failed, 139 passed, 12 errors in 13.68s
+
+<report_20261028_130851.txt>
+ml-kit Windows 테스트 보고서 (20261028_130851)
+Python 3.13.13 / scikit-learn 1.9.0 / 테스트 폴더 C:\ml_test\ml 테스트
+요약: ERROR=1, FAIL=1, PASS=12
+
+[PASS] M1 Excel이 만든 xlsx (제목/단위 행, 날짜 셀, 범주, 한글 경로+공백)
+    내용: score=0.9785, types={'numeric': ['반응온도(°C)', '소비전력(kW)', '압축압력(bar)', '촉매비율(wt%)', '수분함량(%)'], 'categorical': ['라인'], 'datetime': {'일시': ['year', 'month', 'day', 'dayofweek', 'hour']}}
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v1", "tag": "베이스라인", "description": "공정 효율 예측 (실기 테스트)", "duration_sec": 4.51, "data_root": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data\\v1", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9785, "delta_score": "base", "mean_val_r2": 0.9785, "delta_r2": "base", "is_best": true,
+
+[PASS] M2 입력 xlsx가 Excel에 열려 있어도 학습 + 설명 자동 상속
+    내용: version=v2, description='공정 효율 예측 (실기 테스트)'
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v2", "tag": "엑셀에 열린 상태", "description": "공정 효율 예측 (실기 테스트)", "duration_sec": 4.47, "data_root": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data\\v2", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9782, "delta_score": -0.0003, "mean_val_r2": 0.9782, "delta_r2": -0.0003, "is_best":
+
+[PASS] M3 Excel이 저장한 CSV(CP949) 입력
+    내용: 파일 인코딩=cp949, score=0.8568
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v1", "tag": "", "description": "CP949 CSV 입력", "duration_sec": 4.08, "data_root": "C:\\ml_test\\ml 테스트\\엑셀저장 CP949_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\엑셀저장 CP949_ml_data\\v1", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.8568, "delta_score": "base", "mean_val_r2": 0.8568, "delta_r2": "base", "is_best": true, "
+
+[PASS] M4 xlsx 배치 예측 -> 결과 CSV를 Excel로 열면 한글 정상
+    내용: Excel이 읽은 머리글 일부=['일시', '라인', '반응온도(°C)'] ... ['pred_생산효율(%)', 'pred_lo_생산효율(%)', 'pred_hi_생산효율(%)']
+    종료코드: 0
+    JSON: {"status": "ok", "source": "공정 데이터.xlsx", "sample_count": 150, "total_rows": 150, "targets_predicted": ["생산효율(%)"], "output_file": "C:\\ml_test\\ml 테스트\\공정 데이터_pred_20261028_130706.csv", "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "ElasticNet", "description": "공정 효율 예측 (실기 테스트)", "features_used": ["일시", "라인", "반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"], "mea
+
+[PASS] M5 결과 CSV가 Excel에 열려 있으면 새 이름으로 저장
+    내용: 요청=공정 데이터_pred_20261028_130706.csv, 실제=공정 데이터_pred_20261028_130720.csv
+    종료코드: 0
+    JSON: {"status": "ok", "source": "공정 데이터.xlsx", "sample_count": 150, "total_rows": 150, "targets_predicted": ["생산효율(%)"], "output_file": "C:\\ml_test\\ml 테스트\\공정 데이터_pred_20261028_130720.csv", "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "ElasticNet", "description": "공정 효율 예측 (실기 테스트)", "features_used": ["일시", "라인", "반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"], "mea
+
+[FAIL] M6 Word 보고서를 실제 Word로 열기
+    내용: Word 판독=None
+    종료코드: 1
+    JSON: {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+    stderr(끝부분): [INFO] 보고서 버전 자동 선택: v1 (최근 학습과 같은 타겟 조합 중 최고 점수)
+        
+        [ERROR] "no style with name 'Caption'"
+
+[ERROR] M7 보고서 잠금
+    내용: com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+    trace: Traceback (most recent call last):
+          File "C:\CLI\ml-kit\tools\run_win_tests.py", line 159, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\ml-kit\tools\run_win_tests.py", line 359, in m7
+            doc = wd.app.Documents.Open(rep, ReadOnly=False, AddToRecentFiles=False, Visible=False)   # Word가 잠금
+          File "<COMObject <unknown>>", line 5, in Open
+        pywintypes.com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+        
+
+[PASS] M8 next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호) + needs_input 표시
+    내용: needs_input 표시 정확=True, 명령='--task classification -y "품질등급" -x "반응온도(°C),촉매비율(wt%),수분함량(%)" --eval "반응온도x촉매비율 = 반응온도(°C) * 촉매비율(wt%)" --tag "교차항_추가"', 결과={'cmd': ('ok', 'v2', 0, ''), 'powershell': ('ok', 'v3', 0, '')}
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v1", "tag": "", "description": "등급 분류", "duration_sec": 4.86, "data_root": "C:\\ml_test\\ml 테스트\\품질 등급_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\품질 등급_ml_data\\v1", "targets": ["품질등급"], "task": "classification", "primary_metric": "val_f1_macro", "mean_val_score": 0.8011, "delta_score": "base", "is_best": true, "goal_met": false, "verified": true, "recommendations"
+
+[PASS] M9 단독 배포 폴더(ml_predict.py + v1만)에서 예측
+    내용: 예측=[53.6924], 범위=[[52.0639, 55.3051]]
+    종료코드: 0
+    JSON: {"status": "ok", "source": "Inline Input (1 record(s))", "sample_count": 1, "total_rows": 1, "targets_predicted": ["생산효율(%)"], "output_file": null, "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "ElasticNet", "description": "공정 효율 예측 (실기 테스트)", "features_used": ["일시", "라인", "반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"], "mean_pred": 53.6924, "min_pred": 53.6924, 
+
+[PASS] M10 2만 행 학습/예측 시간 (기준: 학습 300초, 예측 60초 미만)
+    내용: 학습 11.9초 (score=0.9486), 예측 3.8초
+    종료코드: 0
+    JSON: {"status": "ok", "source": "대용량 2만행.csv", "sample_count": 20000, "total_rows": 20000, "targets_predicted": ["생산효율(%)"], "output_file": "C:\\ml_test\\ml 테스트\\대용량 2만행_pred_20261028_130812.csv", "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "Ridge", "description": "2만 행 성능", "features_used": ["반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"], "mean_pred": 51.2531, "min
+
+[PASS] M11 같은 데이터 동시 학습 -> 두 번째는 STOP_RETRY, 첫 번째는 완료
+    내용: B=error exit=1 msg='같은 데이터에 대한 다른 학습이 이미 실행 중입니다 (C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data). 동시에 실행할 수 없으니 ', A=ok v2
+    종료코드: 1
+    JSON: {"status": "error", "error_type": "input", "message": "같은 데이터에 대한 다른 학습이 이미 실행 중입니다 (C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data). 동시에 실행할 수 없으니 진행 중인 학습이 끝난 뒤 다시 실행하십시오.", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check column names or formula syntax."}
+
+[PASS] M12 학습 중 강제 종료 -> 다음 학습이 잠금/임시 폴더 정리 후 정상
+    내용: 종료 직후 임시 폴더=['.tmp_v3'], 재학습=v3, 재학습 후 임시 폴더=[], 버전=['v1', 'v2', 'v3']
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v3", "tag": "종료 후 재학습", "description": "2만 행 성능", "duration_sec": 8.22, "data_root": "C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v3", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9486, "delta_score": 0.0, "mean_val_r2": 0.9486, "delta_r2": 0.0, "is_best": false, "goal_met
+
+[PASS] M13 이력 조회 / 오타 추천(exit 1) / 잘못된 옵션(exit 2)도 1줄 JSON
+    내용: history=ok, 오타 exit=1, 옵션 exit=2, root=공정 데이터_ml_data
+    종료코드: 0
+    JSON: {"status": "ok", "data_root": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data", "description": "공정 효율 예측 (실기 테스트)", "record_count": 2, "best_version": "v1", "best_mean_val_score": 0.9785, "best_mean_val_r2": 0.9785, "best_by_task": {"regression": {"version": "v1", "mean_val_score": 0.9785}}, "latest_version": "v2", "records": [{"version": "v1", "tag": "베이스라인", "task": "regression", "primary_metric": "val_r2"
+
+[PASS] M14 모든 호출의 stdout 1줄 JSON / stderr 줄 단위 진행 로그
+    내용: 위반 없음
+
+<errors_20261028_132914.txt>
+# office-cli 실기 테스트 오류 로그 (분석용)
+# 생성 20261028_132914. 이 파일 전체를 그대로 Claude에게 전달하세요. 편집하지 마세요.
+
+## 1. 환경
+office-cli 버전: 1.2.0 (C:\CLI\office-cli)
+Windows: Windows-11-10.0.26200-SP0 / 10.0.26200
+Python: 3.13.13 (C:\WPy64-313130\python\python.exe)
+라이브러리: pywin32 312, openpyxl 3.1.5, python-docx 1.2.0, python-pptx 1.0.2, pymupdf 1.28.2, olefile 0.47, matplotlib 3.11.1, numpy 2.5.2
+Office (office.py windows의 office): {"Excel": {"version": "16.0", "major": 16, "pdf_export": true}, "Word": {"version": "16.0", "major": 16, "pdf_export": true}, "PowerPoint": {"version": "16.0", "major": 16, "pdf_export": true}}
+config.json: {"transfer_method": {"word": ["export", "redraw"], "ppt": ["export", "redraw"]}}
+러너 옵션: only=None auto=False agent=False skip_outlook=False self_email=없음 keep_open=False
+테스트 폴더: C:\office_test / 도구 환경변수: {"OFFICE_CLI_CACHE_DIR": "C:\\office_test\\_cache", "OFFICE_CLI_DATA_DIR": "C:\\office_test\\_data"}
+소요 시간: 1659초
+
+## 2. 요약
+결과: ERROR=7, FAIL=2, MANUAL-SKIP=1, PASS=25
+문제 항목: B2(ERROR), B3(FAIL), C1(ERROR), C2(ERROR), D3(ERROR), E(ERROR), H1(ERROR), H3(FAIL), I1(ERROR)
+건너뜀: G3(MANUAL-SKIP: --self-email 미지정으로 건너뜀)
+
+## 3. 테스트 중단 (준비 단계 또는 러너 오류)
+단계: KeyboardInterrupt
+내용: 
+traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        During handling of the above exception, another exception occurred:
+        
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1811, in main
+            fn(ctx)
+            ~~^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1454, in test_I
+            run_test(ctx, tid, title, fn)
+            ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1064, in i2
+            vals = com_retry(lambda: xl_sheet("I_DATA").Range("F1:G5").Value)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1064, in <lambda>
+            vals = com_retry(lambda: xl_sheet("I_DATA").Range("F1:G5").Value)
+                                     ~~~~~~~~^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1009, in xl_sheet
+            return com_retry(lambda: xl_wb("A.xlsx").Worksheets(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1009, in <lambda>
+            return com_retry(lambda: xl_wb("A.xlsx").Worksheets(name))
+                                     ~~~~~^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 152, in com_retry
+            time.sleep(delay)
+            ~~~~~~~~~~^^^^^^^
+        KeyboardInterrupt
+중단 직전 도구 실행:
+    $ python reader.py search --query "첫 문단" --save
+      시작 13:48:55 / 종료코드 0 / 0.33초
+      stdout(JSON):
+        {
+          "status": "ok",
+          "tool": "reader",
+          "command": "search",
+          "preview": "'첫 문단': 문서 1개에서 1건 일치, 저장: C:\\office_test\\_data\\_work\\search_첫_문단_20261028_134856.md",
+          "query": "첫 문단",
+          "files_searched": 1,
+          "total_matches": 1,
+          "matched": 1,
+          "output_file": "C:\\office_test\\_data\\_work\\search_첫_문단_20261028_134856.md",
+          "next_commands": [
+            {
+              "purpose": "저장한 내용을 열린 워드 문서 끝에 넣기",
+              "command": "python C:\\CLI\\office-cli\\word.py write --target active --file C:\\office_test\\_data\\_work\\search_첫_문단_20261028_134856.md"
+            },
+            {
+              "purpose": "저장한 내용을 열린 PPT에 새 슬라이드로 넣기",
+              "command": "python C:\\CLI\\office-cli\\ppt.py write --target active --file C:\\office_test\\_data\\_work\\search_첫_문단_20261028_134856.md"
+            }
+          ],
+          "matches": [
+            {
+              "file": "B.docx",
+              "path": "C:\\office_test\\B.docx",
+              "loc": "단락 1",
+              "heading": "",
+              "snippet": "B.docx **첫 문단**입니다."
+            }
+          ],
+          "agent_directive": "VERIFIED: 검색과 저장 완료. 다른 문서에 넣으려면 next_commands를 그대로 실행하세요."
+        }
+    $ python word.py write --file C:\office_test\_data\_work\search_첫_문단_20261028_134856.md
+      시작 13:48:56 / 종료코드 0 / 0.65초
+      stdout(JSON):
+        {
+          "status": "ok",
+          "tool": "word",
+          "command": "write",
+          "preview": "A.docx의 문서 끝에 넣었습니다: 제목1, 제목2, 본문",
+          "target_resolved": {
+            "app": "Word",
+            "name": "A.docx",
+            "path": "C:\\office_test\\A.docx",
+            "source": "active"
+          },
+          "inserted": [
+            "제목1",
+            "제목2",
+            "본문"
+          ],
+          "agent_directive": "VERIFIED: 쓰기 완료. 다시 읽어서 확인하지 마세요."
+        }
+    $ python excel.py write --sheet I_DATA --range F1 --values [[\"x\",\"y\"],[1,2],[2,4],[3,1],[4,3]]
+      시작 13:49:53 / 종료코드 1 / 0.4초
+      stdout(JSON):
+        {
+          "status": "error",
+          "tool": "excel",
+          "command": "write",
+          "error_type": "input",
+          "message": "시트 'I_DATA'을(를) 찾을 수 없습니다. 새 시트로 만들려면 같은 명령에 --new-sheet를 붙이세요. 사용 가능한 시트: PPT 내용, Word 내용, Sheet1",
+          "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."
+        }
+      stderr:
+        [ERROR] InputError: 시트 'I_DATA'을(를) 찾을 수 없습니다. 새 시트로 만들려면 같은 명령에 --new-sheet를 붙이세요. 사용 가능한 시트: PPT 내용, Word 내용, Sheet1
+중단 직전 로그 (최근 200줄):
+        ======================================================================
+         office-cli 1.0 Windows 테스트
+         대상 그룹: A,B,C,D,E,F,G,H,I,J / 테스트 폴더: C:\office_test
+         실행 전 다른 Excel/Word/PowerPoint 문서는 저장 후 모두 닫아 주세요.
+         테스트 중에는 Office 창을 직접 조작하지 마세요 (질문 응답 제외).
+        ======================================================================
+        [준비] Excel 테스트 파일 생성
+        [준비] Word 테스트 파일 생성
+        [준비] PowerPoint 테스트 파일 생성
+        [준비] A.xlsx / A.docx / A.pptx를 화면에 엽니다 (더블클릭과 동일)
+        
+        ------------------------- 그룹 A -------------------------
+        
+        [A1] 닫힌 엑셀 읽기
+            $ python excel.py read --target C:\office_test\B.xlsx
+          => [PASS] A1 닫힌 엑셀 읽기는 Excel을 띄우지 않음 (openpyxl) - EXCEL.EXE 1->1, source=file(openpyxl)
+        
+        [A2] 닫힌 엑셀 쓰기와 사용자 창
+            $ python excel.py write --target C:\office_test\B.xlsx --range C1 --value 닫힌파일쓰기
+          => [PASS] A2 닫힌 엑셀 파일 쓰기 시 사용자 창 유지 - EXCEL.EXE 1->1, A.xlsx 열림=True, Visible=True
+        
+        [A3] 닫힌 워드 쓰기와 사용자 창
+            $ python word.py write --target C:\office_test\B.docx --text "닫힌 문서에 추가"
+          => [PASS] A3 닫힌 워드 파일 쓰기 시 사용자 창 유지 - WINWORD.EXE 1->1, A.docx 열림=True
+        
+        [A4] 닫힌 PPT 조회와 사용자 창
+            $ python ppt.py info --target C:\office_test\B.pptx
+          => [PASS] A4 닫힌 PPT 파일 조회 시 창 유지 / 파일 미변경 - B.pptx 수정시각 불변=True, WindowState=1
+        
+        [A5] 다중 Excel 프로세스 목록
+            $ python excel.py info --all
+          => [PASS] A5 다중 Excel 프로세스 목록 - EXCEL.EXE 프로세스 2개
+        
+        ------------------------- 그룹 B -------------------------
+        
+        [B1] 없는 시트 읽기
+            $ python excel.py read --target C:\office_test\B.xlsx --sheet 없는시트
+          => [PASS] B1 없는 시트 읽기 -> error, 파일 미변경 - 시트 '없는시트'을(를) 찾을 수 없습니다. 사용 가능한 시트: Sheet1, Sheet2
+        
+        [B2] 활성 시트 유지
+          => [ERROR] B2 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        [B3] 시트명 대소문자 무시
+            $ python excel.py read --target active --sheet sheet2
+          => [FAIL] B3 시트명 대소문자 무시 
+        
+        [B4] 없는 파일 읽기
+            $ python word.py read --target C:\office_test\없는파일.docx
+          => [PASS] B4 없는 워드 파일 읽기 -> error, 파일 미생성 - 파일 생성됨=False
+        
+        [B5] PPT 읽기 화면 유지
+            $ python ppt.py read --target active
+          => [PASS] B5 PPT 읽기 시 화면이 마지막 슬라이드로 이동하지 않음 - 읽은 뒤 화면 슬라이드=1
+        
+        ------------------------- 그룹 C -------------------------
+        
+        [C1] Excel undo
+          => [ERROR] C1 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        [C2] 연속 undo
+          => [ERROR] C2 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        [C3] 새 통합문서 undo
+            $ python excel.py write --range A1 --value 새문서값
+            $ python office.py undo --app excel
+          => [PASS] C3 저장 안 한 새 통합문서 undo - 통합문서 수 2->3
+        
+        [C4] 워드 쓰기
+            $ python word.py write --text "테스트 문장"
+          => [PASS] C4 워드 쓰기 성공 + 원본 자동 저장 안 됨 - 수정시각 불변=True
+        
+        [C5] 워드 undo
+            $ python office.py undo --app word
+          => [PASS] C5 워드 undo -> 도구가 쓴 문장만 제거 - '테스트 문장' 남음=False, '가' 유지=True
+        
+        [C6] PPT undo
+            $ python ppt.py slide --action add
+            $ python office.py undo --app ppt
+          => [PASS] C6 PPT 슬라이드 추가 후 undo - 슬라이드 수 3->4->3
+        
+        [C7] 스냅샷 소진
+            $ python office.py undo --app ppt
+          => [PASS] C7 스냅샷 소진 시 '되돌릴 것 없음' 
+        
+        ------------------------- 그룹 D -------------------------
+        
+        [D1] 워드 PDF 쪽 번호
+            $ python word.py export --save office_test_pagenum.pdf --page-number
+          => [PASS] D1 PDF 쪽 번호, 원본 바닥글 미변경 - 원본 쪽번호 수 0->0, 저장상태 True->True
+        
+        [D2] 워드 DOCX 사본
+            $ python word.py export --save office_test_copy.docx
+          => [PASS] D2 DOCX 사본 저장, 원본 경로 그대로 - C:\office_test\_data\office_test_copy.docx
+        
+        [D3] 엑셀 XLSX 내보내기
+          => [ERROR] D3 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        [D4] PPT PDF 내보내기
+            $ python ppt.py export --save office_test_deck.pdf
+          => [PASS] D4 PPT PDF 내보내기 - C:\office_test\_data\office_test_deck.pdf
+        
+        ------------------------- 그룹 E -------------------------
+        [ERROR] 그룹 E: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        ------------------------- 그룹 F -------------------------
+        
+        [F1] clear 보호
+            $ python ppt.py slide --action clear
+          => [PASS] F1 슬라이드 번호 없는 clear -> error, 삭제 없음 - 도형 수 [2, 2, 2]->[2, 2, 2]
+        
+        [F2] clear --slide 2
+            $ python ppt.py slide --action clear --slide 2
+          => [PASS] F2 2번 슬라이드만 clear - 도형 수 [2, 2, 2]->[2, 0, 2]
+        
+        [F3] 새 슬라이드 쓰기
+            $ python ppt.py write --slide new --title "추진 전략" --text "- 안정성\n- 확장성"
+          => [PASS] F3 새 슬라이드 쓰기 + 고친 슬라이드로 이동 - 슬라이드 3->4, 화면=4
+        
+        ------------------------- 그룹 G -------------------------
+        
+        [G1] 표시 전용
+            $ python outlook.py new --to office-test@example.com --subject "[office-cli 테스트] 표시 전용" --body "본문 테스트"
+          => [PASS] G1 기본 동작: 작성 창만 표시, 미발송 
+        
+        [G2] 잘못된 수신자
+            $ python outlook.py new --to zz_office_invalid_recipient_000 --subject "[office-cli 테스트] 잘못된 수신자" --body "발송되면 안 됨" --send
+          => [PASS] G2 잘못된 수신자 + --send -> 발송 안 됨 - unresolved=['zz_office_invalid_recipient_000']
+        
+        [G3] 실제 발송
+          => [MANUAL-SKIP] G3 명시적 --send 실제 발송 - --self-email 미지정으로 건너뜀
+        
+        [G4] 메일 목록
+            $ python outlook.py list --limit 3
+          => [PASS] G4 받은편지함 최근 메일 목록 - 3통
+        
+        ------------------------- 그룹 H -------------------------
+        
+        [H1] 사인 그래프
+          => [ERROR] H1 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        [H2] probe
+            $ python office.py transfer --probe
+          => [PASS] H2 차트 전달 방식 시험 (--probe) - 저장된 순서={'word': ['export', 'redraw'], 'ppt': ['export', 'redraw']}
+        
+        [H3] 차트 전달
+            $ python office.py transfer --from excel --chart "사인 2주기" --to word,ppt
+          => [FAIL] H3 차트를 워드와 PPT에 그림으로 - 사용 방식={}, 워드 그림 0->0, PPT 슬라이드 4->4
+        
+        [H4] 워드/PPT -> 엑셀
+            $ python office.py transfer --from word --what text --to excel
+            $ python office.py transfer --from ppt --what text --to excel
+          => [PASS] H4 워드/PPT 내용을 엑셀 새 시트로 - 시트: Word 내용, PPT 내용
+        
+        [H5] 검색 -> 워드
+            $ python reader.py read --file C:\office_test\B.docx --format summary
+            $ python reader.py search --query "첫 문단" --save
+            $ python word.py write --file C:\office_test\_data\_work\search_첫_문단_20261028_134856.md
+          => [PASS] H5 캐시 문서 검색 -> 워드에 넣기 - 일치 1건, 워드 글자 29->72
+        
+        ------------------------- 그룹 I -------------------------
+        
+        [I1] 엑셀 CSV/append
+          => [ERROR] I1 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+        
+        [I2] 엑셀 --values
+            $ python excel.py write --sheet I_DATA --range F1 --values [[\"x\",\"y\"],[1,2],[2,4],[3,1],[4,3]]
+        [ERROR] 사용자가 중단했습니다 (Ctrl+C).
+
+## 4. 문제 항목 상세
+
+----------------------------------------------------------------------
+[ERROR] B2 활성 시트 유지
+  판정 근거: 테스트 스크립트 예외: HRESULT=-2147352567 (0x80020009) 예외가 발생했습니다. | 원본=None | 설명=None | scode=0x8002000B
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 552, in b2
+            activate_xl("A.xlsx", "Sheet1")
+            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 308, in activate_xl
+            return com_retry(_do)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 303, in _do
+            wb = xl_wb(name)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        [B2] 활성 시트 유지
+          => [ERROR] B2 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+----------------------------------------------------------------------
+[FAIL] B3 시트명 대소문자 무시
+  이 항목에서 실행한 도구 명령 1개:
+    $ python excel.py read --target active --sheet sheet2
+      시작 13:32:39 / 종료코드 1 / 0.27초
+      stdout(JSON):
+        {
+          "status": "error",
+          "tool": "excel",
+          "command": "read",
+          "error_type": "input",
+          "message": "시트 'sheet2'을(를) 찾을 수 없습니다. [추천] Sheet1",
+          "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."
+        }
+      stderr:
+        [ERROR] InputError: 시트 'sheet2'을(를) 찾을 수 없습니다. [추천] Sheet1
+  이 항목의 진행 로그:
+        
+        [B3] 시트명 대소문자 무시
+            $ python excel.py read --target active --sheet sheet2
+          => [FAIL] B3 시트명 대소문자 무시
+
+----------------------------------------------------------------------
+[ERROR] C1 Excel undo
+  판정 근거: 테스트 스크립트 예외: HRESULT=-2147352567 (0x80020009) 예외가 발생했습니다. | 원본=None | 설명=None | scode=0x8002000B
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 597, in c1
+            activate_xl("A.xlsx", "Sheet1")
+            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 308, in activate_xl
+            return com_retry(_do)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 303, in _do
+            wb = xl_wb(name)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        [C1] Excel undo
+          => [ERROR] C1 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+----------------------------------------------------------------------
+[ERROR] C2 연속 undo
+  판정 근거: 테스트 스크립트 예외: HRESULT=-2147352567 (0x80020009) 예외가 발생했습니다. | 원본=None | 설명=None | scode=0x8002000B
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 611, in c2
+            activate_xl("A.xlsx", "Sheet1")
+            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 308, in activate_xl
+            return com_retry(_do)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 303, in _do
+            wb = xl_wb(name)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        [C2] 연속 undo
+          => [ERROR] C2 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+----------------------------------------------------------------------
+[ERROR] D3 엑셀 XLSX 내보내기
+  판정 근거: 테스트 스크립트 예외: HRESULT=-2147352567 (0x80020009) 예외가 발생했습니다. | 원본=None | 설명=None | scode=0x8002000B
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 731, in d3
+            activate_xl("A.xlsx", "Sheet1")
+            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 308, in activate_xl
+            return com_retry(_do)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 303, in _do
+            wb = xl_wb(name)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        [D3] 엑셀 XLSX 내보내기
+          => [ERROR] D3 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+----------------------------------------------------------------------
+[ERROR] E 그룹 E 준비
+  판정 근거: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1811, in main
+            fn(ctx)
+            ~~^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 785, in test_E
+            prepare_e_sheets()
+            ~~~~~~~~~~~~~~~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 781, in prepare_e_sheets
+            com_retry(_do)
+            ~~~~~~~~~^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 759, in _do
+            wb = app.Workbooks("A.xlsx")
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        ------------------------- 그룹 E -------------------------
+        [ERROR] 그룹 E: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+----------------------------------------------------------------------
+[ERROR] H1 사인 그래프
+  판정 근거: 테스트 스크립트 예외: HRESULT=-2147352567 (0x80020009) 예외가 발생했습니다. | 원본=None | 설명=None | scode=0x8002000B
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 929, in h1
+            activate_xl("A.xlsx")
+            ~~~~~~~~~~~^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 308, in activate_xl
+            return com_retry(_do)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 303, in _do
+            wb = xl_wb(name)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        [H1] 사인 그래프
+          => [ERROR] H1 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+----------------------------------------------------------------------
+[FAIL] H3 차트를 워드와 PPT에 그림으로
+  판정 근거: 사용 방식={}, 워드 그림 0->0, PPT 슬라이드 4->4
+  이 항목에서 실행한 도구 명령 1개:
+    $ python office.py transfer --from excel --chart "사인 2주기" --to word,ppt
+      시작 13:48:44 / 종료코드 1 / 0.35초
+      stdout(JSON):
+        {
+          "status": "error",
+          "tool": "office",
+          "command": "transfer",
+          "error_type": "input",
+          "message": "차트가 없습니다. excel.py chart --range ... 로 먼저 만드세요.",
+          "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."
+        }
+      stderr:
+        [ERROR] InputError: 차트가 없습니다. excel.py chart --range ... 로 먼저 만드세요.
+  이 항목의 진행 로그:
+        
+        [H3] 차트 전달
+            $ python office.py transfer --from excel --chart "사인 2주기" --to word,ppt
+          => [FAIL] H3 차트를 워드와 PPT에 그림으로 - 사용 방식={}, 워드 그림 0->0, PPT 슬라이드 4->4
+
+----------------------------------------------------------------------
+[ERROR] I1 엑셀 CSV/append
+  판정 근거: 테스트 스크립트 예외: HRESULT=-2147352567 (0x80020009) 예외가 발생했습니다. | 원본=None | 설명=None | scode=0x8002000B
+  테스트 스크립트 traceback:
+        Traceback (most recent call last):
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 256, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 1053, in i1
+            activate_xl("A.xlsx", "Sheet1")
+            ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 308, in activate_xl
+            return com_retry(_do)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 303, in _do
+            wb = xl_wb(name)
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in xl_wb
+            return com_retry(lambda: xl_app().Workbooks(name))
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 153, in com_retry
+            raise last
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 149, in com_retry
+            return fn()
+          File "C:\CLI\office-cli\tools\run_win_tests.py", line 286, in <lambda>
+            return com_retry(lambda: xl_app().Workbooks(name))
+                                     ~~~~~~~~~~~~~~~~~~^^^^^^
+          File "C:\WPy64-313130\python\Lib\site-packages\win32com\client\dynamic.py", line 214, in __call__
+            self._oleobj_.Invoke(*allArgs), self._olerepr_.defaultDispatchName, None
+            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+  이 항목에서 실행한 도구 명령 0개:
+  이 항목의 진행 로그:
+        
+        [I1] 엑셀 CSV/append
+          => [ERROR] I1 (-2147352567, '예외가 발생했습니다.', (0, None, None, None, 0, -2147352565), None)
+
+
+<pytest_ml-kit.txt>
+........F................sFF......F......EEEEEE.........F..........      [100%]
+=================================== ERRORS ====================================
+_____________ ERROR at setup of test_regression_report_structure ______________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000018379D5FA80>, _basetemp=WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def regression_report(tmp_path_factory):
+        work = tmp_path_factory.mktemp("rep_reg")
+        data = make_sample(str(work / "proc.csv"))
+        feats = "반응온도,소비전력,압축압력,촉매비율,수분함량"
+        run_tool("ml_train.py", "-f", data, "-x", feats, "-y", "생산효율", "--desc", "효율 예측", "--tag", "base")
+        tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,촉매비율,수분함량", "-y", "생산효율", "--tag", "pruned")
+        slots = work / "slots.json"
+        slots.write_text(json.dumps({"summary": "슬롯으로 작성한 요약 문장",
+                                     "targets": {"생산효율(%)": {"features": "슬롯 피처 소견"}}}, ensure_ascii=False),
+                         encoding="utf-8")
+        out = work / "report.docx"
+>       payload = run_tool("ml_report.py", "-m", tr["version_dir"], "--slots", str(slots), "-o", str(out))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_report.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\proc_ml_data\\v2', '--slots', 'C:\...rep_reg0\\slots.json', '-o', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\report.docx')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+_________ ERROR at setup of test_regression_report_numbers_and_slots __________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000018379D5FA80>, _basetemp=WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def regression_report(tmp_path_factory):
+        work = tmp_path_factory.mktemp("rep_reg")
+        data = make_sample(str(work / "proc.csv"))
+        feats = "반응온도,소비전력,압축압력,촉매비율,수분함량"
+        run_tool("ml_train.py", "-f", data, "-x", feats, "-y", "생산효율", "--desc", "효율 예측", "--tag", "base")
+        tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,촉매비율,수분함량", "-y", "생산효율", "--tag", "pruned")
+        slots = work / "slots.json"
+        slots.write_text(json.dumps({"summary": "슬롯으로 작성한 요약 문장",
+                                     "targets": {"생산효율(%)": {"features": "슬롯 피처 소견"}}}, ensure_ascii=False),
+                         encoding="utf-8")
+        out = work / "report.docx"
+>       payload = run_tool("ml_report.py", "-m", tr["version_dir"], "--slots", str(slots), "-o", str(out))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_report.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\proc_ml_data\\v2', '--slots', 'C:\...rep_reg0\\slots.json', '-o', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\report.docx')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+________________ ERROR at setup of test_classification_report _________________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000018379D5FA80>, _basetemp=WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def binary_report(tmp_path_factory):
+        work = tmp_path_factory.mktemp("rep_cls")
+        data = make_class_sample(str(work / "q.csv"), n=200, imbalanced=True)
+        tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,촉매비율,수분함량", "-y", "품질등급",
+                      "--task", "classification", "--positive-class", "불량")
+>       payload = run_tool("ml_report.py", "-m", tr["version_dir"])
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_report.py:80: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_cls0\\q_ml_data\\v1')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+__________ ERROR at setup of test_report_rejects_non_version_folder ___________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000018379D5FA80>, _basetemp=WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def regression_report(tmp_path_factory):
+        work = tmp_path_factory.mktemp("rep_reg")
+        data = make_sample(str(work / "proc.csv"))
+        feats = "반응온도,소비전력,압축압력,촉매비율,수분함량"
+        run_tool("ml_train.py", "-f", data, "-x", feats, "-y", "생산효율", "--desc", "효율 예측", "--tag", "base")
+        tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,촉매비율,수분함량", "-y", "생산효율", "--tag", "pruned")
+        slots = work / "slots.json"
+        slots.write_text(json.dumps({"summary": "슬롯으로 작성한 요약 문장",
+                                     "targets": {"생산효율(%)": {"features": "슬롯 피처 소견"}}}, ensure_ascii=False),
+                         encoding="utf-8")
+        out = work / "report.docx"
+>       payload = run_tool("ml_report.py", "-m", tr["version_dir"], "--slots", str(slots), "-o", str(out))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_report.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\proc_ml_data\\v2', '--slots', 'C:\...rep_reg0\\slots.json', '-o', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\report.docx')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+__ ERROR at setup of test_data_dir_mode_picks_best_version_and_legacy_slots ___
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000018379D5FA80>, _basetemp=WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def regression_report(tmp_path_factory):
+        work = tmp_path_factory.mktemp("rep_reg")
+        data = make_sample(str(work / "proc.csv"))
+        feats = "반응온도,소비전력,압축압력,촉매비율,수분함량"
+        run_tool("ml_train.py", "-f", data, "-x", feats, "-y", "생산효율", "--desc", "효율 예측", "--tag", "base")
+        tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,촉매비율,수분함량", "-y", "생산효율", "--tag", "pruned")
+        slots = work / "slots.json"
+        slots.write_text(json.dumps({"summary": "슬롯으로 작성한 요약 문장",
+                                     "targets": {"생산효율(%)": {"features": "슬롯 피처 소견"}}}, ensure_ascii=False),
+                         encoding="utf-8")
+        out = work / "report.docx"
+>       payload = run_tool("ml_report.py", "-m", tr["version_dir"], "--slots", str(slots), "-o", str(out))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_report.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\proc_ml_data\\v2', '--slots', 'C:\...rep_reg0\\slots.json', '-o', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\report.docx')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+______________ ERROR at setup of test_report_requires_oof_files _______________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x0000018379D5FA80>, _basetemp=WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def regression_report(tmp_path_factory):
+        work = tmp_path_factory.mktemp("rep_reg")
+        data = make_sample(str(work / "proc.csv"))
+        feats = "반응온도,소비전력,압축압력,촉매비율,수분함량"
+        run_tool("ml_train.py", "-f", data, "-x", feats, "-y", "생산효율", "--desc", "효율 예측", "--tag", "base")
+        tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,촉매비율,수분함량", "-y", "생산효율", "--tag", "pruned")
+        slots = work / "slots.json"
+        slots.write_text(json.dumps({"summary": "슬롯으로 작성한 요약 문장",
+                                     "targets": {"생산효율(%)": {"features": "슬롯 피처 소견"}}}, ensure_ascii=False),
+                         encoding="utf-8")
+        out = work / "report.docx"
+>       payload = run_tool("ml_report.py", "-m", tr["version_dir"], "--slots", str(slots), "-o", str(out))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_report.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\proc_ml_data\\v2', '--slots', 'C:\...rep_reg0\\slots.json', '-o', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\rep_reg0\\report.docx')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+================================== FAILURES ===================================
+_____________________ test_report_supports_classification _____________________
+
+multiclass = (WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1/cls0'), 'C:\\Users\\1\\AppData\\Local\\Temp\\p...sein0221\\pytest-1\\cls0\\proc.csv', {'status': 'ok', 'version': 'v1', 'tag': 'cls_base', 'description': '등급 분류', ...})
+
+    def test_report_supports_classification(multiclass):
+        """Classification versions get the integrated report (2.2.0); -d/-t compatibility still works."""
+        pytest.importorskip("docx")
+        pytest.importorskip("matplotlib")
+        work, _, _ = multiclass
+>       payload = run_tool("ml_report.py", "-d", str(work / "proc_ml_data"), "-t", "품질등급", "-v", "v1")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_classification.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-d', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\cls0\\proc_ml_data', '-t', '품질등급', '-v', 'v1')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-d', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+_________________________________ test_report _________________________________
+
+trained = (WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1/mlkit0'), 'C:\\Users\\1\\AppData\\Local\\Temp\...\pytest-1\\mlkit0\\sample.csv', {'status': 'ok', 'version': 'v1', 'tag': 'baseline', 'description': 'smoke test', ...})
+
+    @needs_docx
+    def test_report(trained):
+        work, _, _ = trained
+        out = work / "report.docx"
+>       payload = run_tool("ml_report.py", "-d", str(work / "sample_ml_data"), "-t", TARGET, "-o", str(out))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_cli_smoke.py:228: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-d', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\mlkit0\\sample_ml_data', '-t', '생산효율(%)', '-o', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\mlkit0\\report.docx')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         [INFO] 보고서 버전 자동 선택: v2 (최근 학습과 같은 타겟 조합 중 최고 점수)
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-d', 'C:\\Users\\1\\A...esult)."}\n', stderr='[INFO] 보고서 버전 자동 선택: v2 (최근 학습과 같은 타겟 조합 중 최고 점수)\n\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+________________ test_report_version_without_v_and_jsonl_only _________________
+
+trained = (WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1/mlkit0'), 'C:\\Users\\1\\AppData\\Local\\Temp\...\pytest-1\\mlkit0\\sample.csv', {'status': 'ok', 'version': 'v1', 'tag': 'baseline', 'description': 'smoke test', ...})
+
+    @needs_docx
+    def test_report_version_without_v_and_jsonl_only(trained):
+        """history.json missing -> must fall back to history.jsonl (was reading the wrong file)."""
+        work, _, _ = trained
+        root = work / "sample_ml_data"
+        (root / "history.json").rename(root / "history.json.bak")
+        try:
+>           payload = run_tool("ml_report.py", "-d", str(root), "-t", "생산효율", "-v", "1",
+                               "-o", str(work / "r_v1.docx"))
+
+tests\test_cli_smoke.py:239: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-d', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\mlkit0\\sample_ml_data', '-t', '생산효율', '-v', '1', ...)
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-d', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+___________________________ test_next_command_runs ____________________________
+
+tmp_path = WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1/test_next_command_runs0')
+
+    def test_next_command_runs(tmp_path):
+        data = make_sample(str(tmp_path / "nc.csv"))
+        payload = run_tool("ml_train.py", "-f", data, "-x", "반응온도,소비전력,압축압력,촉매비율,수분함량", "-y", "생산효율")
+        assert payload["next_commands"], payload
+        cmd = payload["next_commands"][0]["command"].replace("<새데이터.xlsx>", data)
+        assert cmd.startswith("python ")
+        args = shlex.split(cmd)[1:]
+        proc = subprocess.run([sys.executable] + args, capture_output=True, text=True, encoding="utf-8", timeout=600)
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+>       assert out["status"] == "ok", proc.stderr[-2000:]
+E       AssertionError: 
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 'error' == 'ok'
+E         
+E         - ok
+E         + error
+
+tests\test_features_v21.py:119: AssertionError
+_________________ test_report_default_name_is_not_overwritten _________________
+
+work = {'dir': WindowsPath('C:/Users/1/AppData/Local/Temp/pytest-of-sein0221/pytest-1/safety0'), 'data': 'C:\\Users\\1\\AppDa...1/pytest-1/safety0/safe_ml_data'), 'first': {'status': 'ok', 'version': 'v2', 'tag': '', 'description': 'safety', ...}}
+
+    def test_report_default_name_is_not_overwritten(work):
+        vd = work["first"]["version_dir"]
+>       r1 = run_tool("ml_report.py", "-m", vd)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_safety_v23.py:179: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+script = 'ml_report.py'
+args = ('-m', 'C:\\Users\\1\\AppData\\Local\\Temp\\pytest-of-sein0221\\pytest-1\\safety0\\safe_ml_data\\v2')
+
+    def run_tool(script, *args):
+        proc, payload = run_raw(script, *args)
+>       assert proc.returncode == 0, f"{script} failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+E       AssertionError: ml_report.py failed:
+E         STDOUT:
+E         {"status": "error", "error_type": "input", "message": "\"no style with name 'Caption'\"", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check the version folder path (version_dir from the training result)."}
+E         
+E         STDERR:
+E         
+E         [ERROR] "no style with name 'Caption'"
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\WPy64-313130\\python\\python.exe', 'C:\\CLI\\ml-kit\\ml_report.py', '-m', 'C:\\Users\\1\\A...ersion folder path (version_dir from the training result)."}\n', stderr='\n[ERROR] "no style with name \'Caption\'"\n').returncode
+
+tests\test_cli_smoke.py:39: AssertionError
+============================== warnings summary ===============================
+tests/test_safety_v23.py::test_verify_version_dir_detects_broken_model
+tests/test_safety_v23.py::test_verify_version_dir_detects_broken_model
+tests/test_safety_v23.py::test_verify_version_dir_detects_broken_model
+tests/test_safety_v23.py::test_verify_version_dir_detects_broken_model
+tests/test_safety_v23.py::test_verify_version_dir_detects_broken_model
+tests/test_safety_v23.py::test_verify_version_dir_detects_broken_model
+  C:\WPy64-313130\python\Lib\site-packages\joblib\numpy_pickle.py:207: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    array.shape = self.shape
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_classification.py::test_report_supports_classification - As...
+FAILED tests/test_cli_smoke.py::test_report - AssertionError: ml_report.py fa...
+FAILED tests/test_cli_smoke.py::test_report_version_without_v_and_jsonl_only
+FAILED tests/test_features_v21.py::test_next_command_runs - AssertionError: 
+FAILED tests/test_safety_v23.py::test_report_default_name_is_not_overwritten
+ERROR tests/test_report.py::test_regression_report_structure - AssertionError...
+ERROR tests/test_report.py::test_regression_report_numbers_and_slots - Assert...
+ERROR tests/test_report.py::test_classification_report - AssertionError: ml_r...
+ERROR tests/test_report.py::test_report_rejects_non_version_folder - Assertio...
+ERROR tests/test_report.py::test_data_dir_mode_picks_best_version_and_legacy_slots
+ERROR tests/test_report.py::test_report_requires_oof_files - AssertionError: ...
+5 failed, 55 passed, 1 skipped, 6 warnings, 6 errors in 342.25s (0:05:42)
