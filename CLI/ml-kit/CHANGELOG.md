@@ -2,6 +2,42 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.3.1] - 2026-10-28
+
+회사 PC(Windows 11, WinPython 3.13.13, 보안 프로그램 DRM) 실기에서 `ml_report.py`가 모든 보고서에서
+`no style with name 'Caption'`(STOP_RETRY, exit 1)으로 실패한 문제 수정, 오류 로그(R6) 추가.
+
+### 수정
+- 보고서 Word 템플릿을 DRM에 안전하게 엽니다. 원인 추정: DRM이 Office 확장자 파일을 암호화·대체해
+  python-docx의 `templates/default.docx`가 표준 스타일이 없는 대체 문서가 됨 (같은 PC의 python-pptx `default.pptx`는 zip이 아니었음).
+  - python-docx가 함께 설치하는 압축 해제 템플릿 폴더 `templates/default-docx-template`(XML 파일, DRM 대상 아님)를 먼저 쓰고,
+    없거나 열리지 않으면 `default.docx`를 씁니다.
+  - 보고서가 쓰는 스타일(`Normal`, `Heading 1~3`, `Caption`, `List Bullet`)이 없으면 `Normal` 기반으로 만들고,
+    템플릿에 본문(대체 문서의 안내 문구 등)이 있으면 지운 뒤 작성합니다. 대체 템플릿의 머리글·바닥글도 새로 만듭니다.
+  - 위 복구는 stderr `[WARN]`과 결과 JSON `recovered`에 적습니다. 두 템플릿 모두 열 수 없으면 `STOP_RETRY`와
+    `python -m pip install --force-reinstall python-docx` 안내.
+
+### 기능 (추가만)
+- 오류 로그: 실패한 실행(exit 1, 인자 오류 exit 2)을 `<도구 폴더>\data\logs\errors.txt`에 자동으로 덧붙입니다
+  (`CLI/README.md` R6, doc-classifier `write_error_log` 복사). 데이터 폴더는 환경변수 `ML_KIT_DATA_DIR`로 바꿀 수 있습니다.
+  - 항목: `===== <시각> | ml-kit <버전> | Python <버전> | <OS>`, `명령:`(스크립트와 인자), `결과: <error_type> | <message>`,
+    자동 복구가 한도를 넘긴 경우 `복구 시도:`, 내부 오류(`ERROR:`)일 때만 `traceback:`.
+  - 성공, 사용자 중단(exit 130)은 기록하지 않습니다. 2MB를 넘으면 `errors.old.txt`로 넘깁니다 (1세대).
+    회전 실패와 기록 실패는 따로 삼켜 결과 JSON 1줄 계약을 깨지 않습니다. 로그 경로는 결과 JSON에 넣지 않습니다.
+  - `retry_fs`가 재시도 한도를 넘기면 `record_recovery_attempt()`로 `복구 시도:` 줄에 남깁니다 (R4).
+- 공통 런타임(`ml_predict.py` PART C)에 `VERSION = "2.3.1"`. SKILL.md `metadata.version`, 보고서 표지의 ml-kit 버전과 같음을 테스트로 확인합니다.
+
+### 테스트
+- `tests/test_report_template.py`: 템플릿 폴더 정상 사용, 손상된 `default.docx`(스타일 없음 + 안내 문구) + 템플릿 폴더 없음에서
+  보고서 성공·캡션 존재·안내 문구 없음, 두 템플릿 모두 손상 시 `STOP_RETRY`.
+- `tests/test_error_log_v231.py`: exit 1(traceback 없음)/내부 오류(traceback)/exit 2 기록, 성공·130 미기록, 회전, 회전 실패,
+  기록 실패 시 JSON 유지, `VERSION` == SKILL.md.
+- `tests/conftest.py`: 테스트 중 오류 로그가 실제 도구 폴더 `data\`에 쌓이지 않게 `ML_KIT_DATA_DIR`을 임시 폴더로 지정
+  (하위 프로세스도 상속).
+
+### 호환
+- CLI 인자와 JSON 키 변경 없음. 실패 시 `data\logs\errors.txt` 파일이 새로 생깁니다 (`CLI/*/data/`는 git 제외).
+
 ## [2.3.0] - 2026-10-28
 
 저장소 지침(AGENTS.md "JIT 자가복구" 3번: 덮어쓰기·삭제는 사용자 확인 필요) 반영 1차. 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md` 2절.
@@ -172,7 +208,6 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
 - [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)
 - [ ] 예측 결과와 보고서 저장 후 다시 읽어 확인(행 수, docx 열기), 실패하면 `VERIFIED:` 대신 사유
-- [ ] `run_cli`/`JsonArgumentParser.error`에서 `data/logs/errors.txt` 기록 (doc-classifier `write_error_log` 복사, 환경변수 `ML_KIT_DATA_DIR`)
 - [ ] `recovered` 나머지: cp949 -> utf-8-sig 폴백, .xls -> .xlsx 저장 (잠금 새 이름 저장과 덮어쓰기 회피는 2.3.0), 폴백에도 `[WARN]`
 - [ ] `--history` 원장 0건을 `status: ok` + `record_count: 0`으로 (ml_train.py:1582, `no_history`는 별도 키로 유지), 빈 행만 있는 입력의 0행 명시 오류(ml_predict.py:444)
 - [ ] 파괴적 작업 미리보기 `--dry-run` (R8): 학습 `--overwrite`, 예측·보고서 `--overwrite` 대상

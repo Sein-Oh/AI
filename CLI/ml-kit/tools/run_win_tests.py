@@ -222,6 +222,8 @@ def prepare_test_dir(path):
 
 def setup(ctx):
     prepare_test_dir(ctx.dir)
+    # 러너가 일부러 일으키는 오류가 실제 사용 오류 로그(<도구>/data/logs/errors.txt)와 섞이지 않게 테스트 폴더로 분리
+    os.environ["ML_KIT_DATA_DIR"] = os.path.join(ctx.dir, "_data")
     rows = process_xl_rows()
     xl = Office("Excel.Application")
     ctx.state.setdefault("office", {})["Excel"] = str(getattr(xl.app, "Version", "?"))

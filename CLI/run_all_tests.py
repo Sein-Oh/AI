@@ -313,6 +313,9 @@ def step_ml(res, args):
     test_dir = args.ml_dir or r"C:\ml_test\ml 테스트"
     for p in _newer(os.path.join(test_dir, "report_*.txt"), start):
         _attach(res, os.path.basename(p), p)
+    tool_log = os.path.join(test_dir, "_data", "logs", "errors.txt")
+    if os.path.exists(tool_log) and os.path.getmtime(tool_log) >= start - 1:
+        _attach(res, "ml-kit 실기 중 도구 오류 로그 (일부러 낸 오류 포함)", tool_log)
     if stop:
         raise KeyboardInterrupt
 

@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError,
     sanitize_filename, load_json_file, save_with_lock_fallback, warn_long_path, avoid_overwrite,
-    normalize_version, strip_unit,
+    normalize_version, strip_unit, note_recovered, VERSION,
 )
 
 setup_console()
@@ -43,6 +43,7 @@ try:
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
     from docx.enum.section import WD_ORIENT
+    from docx.enum.style import WD_STYLE_TYPE
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     _DOCX_IMPORT_ERROR = None
@@ -60,7 +61,7 @@ except ImportError as _e:
 
 
 REPORT_TITLE = "ML 결과 보고서"
-REPORT_VERSION = "2.3.0"
+REPORT_VERSION = VERSION
 
 # ==============================================================================
 # 1. Design tokens (grayscale-safe slate palette + one navy accent)
@@ -297,11 +298,108 @@ def _para_border_bottom(paragraph, color: str = C_LINE, size: int = 6) -> None:
     ppr.append(pbdr)
 
 
+# ------------------------------------------------------------------------------
+# Document template (DRM-safe)
+# ------------------------------------------------------------------------------
+# docx.Document() opens python-docx's templates/default.docx. Corporate DRM may encrypt or replace
+# files with Office extensions, leaving a substitute document without the standard styles
+# ('Caption' etc.) and with placeholder text. python-docx ships the same template unpacked as plain
+# XML files (templates/default-docx-template/), which DRM does not touch, so that folder is used first.
+
+# Paragraph styles the report uses: name -> (outline level for headings or None, bold, size pt)
+REPORT_STYLES = {
+    "Normal": (None, False, 10),
+    "Heading 1": (0, True, 15),
+    "Heading 2": (1, True, 12.5),
+    "Heading 3": (2, True, 11),
+    "Caption": (None, False, 8.5),
+    "List Bullet": (None, False, 10),
+}
+
+
+def docx_template_dir() -> str:
+    return os.path.join(os.path.dirname(docx.__file__), "templates", "default-docx-template")
+
+
+def _clear_body(doc) -> int:
+    """Removes body content (keeps the final section properties); returns the number of removed blocks."""
+    body = doc.element.body
+    removed = 0
+    for child in list(body):
+        if child.tag != qn("w:sectPr"):
+            body.remove(child)
+            removed += 1
+    return removed
+
+
+def _ensure_styles(doc) -> List[str]:
+    """Creates every report style missing from a damaged template (based on Normal); returns created names."""
+    st = doc.styles
+    have = {s.name for s in st}
+    created = []
+    for name, (outline, bold, size) in REPORT_STYLES.items():
+        if name in have:
+            continue
+        style = st.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+        if name != "Normal":
+            style.base_style = st["Normal"]
+            style.next_paragraph_style = st["Normal"]
+        style.font.bold = bold
+        style.font.size = Pt(size)
+        if outline is not None:
+            style.paragraph_format.keep_with_next = True
+            ppr = style.element.get_or_add_pPr()
+            lvl = OxmlElement("w:outlineLvl")
+            lvl.set(qn("w:val"), str(outline))
+            ppr.append(lvl)
+        created.append(name)
+    return created
+
+
+def new_report_document():
+    """Opens a blank document that always has the report styles (JIT recovery for damaged templates)."""
+    problems: List[str] = []
+    doc = None
+    tdir = docx_template_dir()
+    if os.path.isdir(tdir):
+        try:
+            doc = docx.Document(tdir)
+        except Exception as e:
+            problems.append(f"내장 템플릿 폴더 열기 실패({type(e).__name__})")
+    else:
+        problems.append("내장 템플릿 폴더 없음")
+    if doc is None:
+        try:
+            doc = docx.Document()
+        except Exception as e:
+            raise InputError(
+                f"python-docx 기본 템플릿을 열 수 없습니다 ({'; '.join(problems)}; default.docx: {type(e).__name__}: {e}). "
+                f"보안 프로그램(DRM)이 python-docx 설치 폴더의 templates 파일을 바꿨을 수 있습니다. "
+                f"관리자에게 python-docx 재설치를 요청하십시오: python -m pip install --force-reinstall python-docx"
+            ) from e
+        note_recovered(f"Word 내장 템플릿 폴더 사용 불가({'; '.join(problems)}) -> default.docx 사용")
+        # A substitute template may carry its own header/footer content: start from fresh ones
+        for sec in doc.sections:
+            for hf in (sec.header, sec.footer, sec.first_page_header, sec.first_page_footer):
+                try:
+                    hf.is_linked_to_previous = True
+                except Exception:
+                    pass
+    doc.element.body.get_or_add_sectPr()
+    removed = _clear_body(doc)
+    if removed:
+        note_recovered(f"Word 템플릿에 본문 {removed}개 있음(보안 프로그램 대체 문서 추정) -> 제거 후 작성")
+    created = _ensure_styles(doc)
+    if created:
+        note_recovered(f"Word 템플릿에 스타일 없음({', '.join(created)}) -> Normal 기반으로 생성")
+    return doc
+
+
 class ReportDoc:
     """Thin layer over python-docx enforcing one consistent visual system."""
 
     def __init__(self, header_text: str):
-        self.doc = docx.Document()
+        self.doc = new_report_document()
         self.table_no = 0
         self.figure_no = 0
         self._setup_page(header_text)
