@@ -6,6 +6,7 @@
 - classify/peek 단계가 채울 열(kind, category ...)도 미리 만들어 둡니다 (스키마 변경 없이 단계 추가).
 """
 import json
+import ntpath
 import os
 import re
 import sqlite3
@@ -14,13 +15,14 @@ from typing import Any, Dict, List, Optional
 
 import _dc_runtime as rt
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS dirs (
     id INTEGER PRIMARY KEY,
     parent_id INTEGER,
+    top_id INTEGER,                  -- 대상 폴더 바로 아래 폴더 id (classify가 채움, 상위 폴더별 집계)
     path TEXT NOT NULL UNIQUE,
     depth INTEGER NOT NULL,
     status TEXT NOT NULL,            -- pending | done | skipped | error
@@ -41,7 +43,9 @@ CREATE TABLE IF NOT EXISTS files (
     flags TEXT,                      -- hidden,system,readonly,offline,cloud,reparse (쉼표 구분)
     no_read INTEGER DEFAULT 0,       -- 1이면 peek에서 절대 열지 않음 (클라우드 자리표시자, 오프라인, 링크)
     kind TEXT, category TEXT, confidence TEXT, matches TEXT,          -- classify 단계
-    peek_status TEXT, peek_excerpt TEXT                                -- peek 단계
+    name_date TEXT, name_version TEXT, name_flags TEXT,                -- classify: 파일명 속 날짜, 버전, copy/temp
+    peek_status TEXT, peek_excerpt TEXT,                               -- peek 단계
+    peek_category TEXT, peek_reason TEXT, peek_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS files_dir ON files(dir_id);
 """
@@ -50,10 +54,13 @@ _JOB_RE = re.compile(r'[\\/:*?"<>|\s]+')
 
 
 def job_name_for(root: str) -> str:
-    """기본 작업 이름: 대상 폴더 이름(드라이브면 'D드라이브') + 날짜."""
-    base = os.path.basename(os.path.normpath(root))
+    """기본 작업 이름: 대상 폴더 이름(드라이브면 'D드라이브') + 날짜.
+
+    운영 환경은 Windows이므로 호스트 OS와 무관하게 Windows 경로 규칙(ntpath)으로 자른다.
+    """
+    base = ntpath.basename(ntpath.normpath(root))
     if not base:
-        drive = os.path.splitdrive(root)[0].rstrip(":")
+        drive = ntpath.splitdrive(root)[0].rstrip(":")
         base = f"{drive}드라이브" if drive else "root"
     return f"{safe_job(base)}_{rt.timestamp()[:8]}"
 
@@ -77,10 +84,27 @@ def connect(path: str) -> sqlite3.Connection:
     con = sqlite3.connect(path, timeout=30, isolation_level=None)   # 트랜잭션은 직접 BEGIN/COMMIT
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    con.execute("PRAGMA temp_store=MEMORY")
+    con.execute("PRAGMA temp_store=FILE")         # 큰 정렬(GROUP BY, 색인)이 메모리를 키우지 않게 임시 파일 사용
     con.execute("PRAGMA cache_size=-20000")       # 약 20MB
     con.executescript(SCHEMA)
+    _migrate(con)
     return con
+
+
+# 0.1.0(스키마 1)으로 만든 작업 DB에 없는 열. 이미 목록화한 작업을 다시 scan하지 않고 classify/peek 할 수 있게 추가만 합니다.
+_ADDED_COLUMNS = {
+    "dirs": [("top_id", "INTEGER")],
+    "files": [("name_date", "TEXT"), ("name_version", "TEXT"), ("name_flags", "TEXT"), ("peek_category", "TEXT"),
+              ("peek_reason", "TEXT"), ("peek_ms", "INTEGER")],
+}
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    for table, cols in _ADDED_COLUMNS.items():
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        for name, typ in cols:
+            if name not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
 
 
 def open_job(job: str, must_exist: bool = True) -> sqlite3.Connection:
@@ -172,6 +196,25 @@ def reason_counts(con: sqlite3.Connection, status: str) -> Dict[str, int]:
     return out
 
 
+def require_classified(con: sqlite3.Connection, job: str, command: str) -> Dict[str, Any]:
+    """classify를 마친 작업인지 확인하고 meta를 돌려줍니다."""
+    meta = get_meta(con)
+    if meta.get("classify_status") != "complete":
+        raise rt.InputError(f"작업 '{job}'은(는) 아직 분류(classify)를 마치지 않아 {command}를 할 수 없습니다. "
+                            f"[추천] {rt.next_command(['classify', '--job', job], '분류')['command']}")
+    return meta
+
+
+def unclassified_count(con: sqlite3.Connection) -> int:
+    """classify 이후 scan --resume으로 새로 들어온, 아직 분류되지 않은 파일 수."""
+    return con.execute("SELECT COUNT(*) FROM files WHERE category IS NULL").fetchone()[0]
+
+
+def full_path(dir_path: str, name: str) -> str:
+    sep = "\\" if ("\\" in dir_path or re.match(r"^[A-Za-z]:", dir_path)) else "/"
+    return dir_path + name if dir_path.endswith(("\\", "/")) else dir_path + sep + name
+
+
 def job_summary(job: str) -> Optional[Dict[str, Any]]:
     """jobs 목록용 요약 (DB를 열 수 없으면 None)."""
     try:
@@ -183,6 +226,7 @@ def job_summary(job: str) -> Optional[Dict[str, Any]]:
         c = scan_counts(con)
         return {"job": job, "root": meta.get("root"), "scan_status": meta.get("scan_status"),
                 "files": c["files"], "size": c["size"], "dirs_pending": c["dirs_pending"],
+                "classify_status": meta.get("classify_status"), "peek_files": meta.get("peek_files"),
                 "updated_at": meta.get("updated_at"), "db_file": db_path(job)}
     finally:
         con.close()
