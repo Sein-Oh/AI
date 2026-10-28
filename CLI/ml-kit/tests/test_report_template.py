@@ -32,7 +32,7 @@ REMOVED_STYLES = ("Caption", "List Bullet", "Heading 2")
 
 def make_damaged_default(path):
     """A docx like the DRM substitute: valid Word file, standard styles missing, placeholder body text."""
-    d = docx.Document(ml_report.docx_template_dir())
+    d, _ = ml_report.docx_from_template_dir(ml_report.docx_template_dir())
     styles_el = d.styles.element
     for st in list(d.styles):
         if st.name in REMOVED_STYLES:
@@ -60,7 +60,31 @@ def test_directory_template_used_normally(tmp_path, monkeypatch, recovered):
     names = {s.name for s in d.styles}
     assert set(ml_report.REPORT_STYLES) <= names
     assert len(d.paragraphs) == 0 and len(d.tables) == 0
-    assert recovered == []
+    assert not any("default.docx" in r for r in recovered)     # folder used, not the damaged default.docx
+
+
+def test_template_folder_with_missing_part(tmp_path, monkeypatch, recovered):
+    """Company PC: a security product removed docProps/thumbnail.jpeg from the template folder.
+    python-docx alone fails (FileNotFoundError); the report drops the dangling relationship and goes on."""
+    import shutil
+    folder = tmp_path / "default-docx-template"
+    shutil.copytree(ml_report.docx_template_dir(), folder)
+    thumb = folder / "docProps" / "thumbnail.jpeg"
+    if thumb.exists():
+        thumb.unlink()
+    with pytest.raises(Exception):
+        docx.Document(str(folder))                          # the failure seen on the company PC
+    monkeypatch.setattr(ml_report, "docx_template_dir", lambda: str(folder))
+    bad = make_damaged_default(tmp_path / "default.docx")
+    monkeypatch.setattr(docx.api, "_default_docx_path", lambda: bad)
+    d = ml_report.new_report_document()
+    assert set(ml_report.REPORT_STYLES) <= {s.name for s in d.styles}
+    assert any("빠진 파일" in r and "thumbnail.jpeg" in r for r in recovered)
+    assert not any("default.docx" in r for r in recovered)
+    d.add_paragraph("x", style="Caption")
+    out = tmp_path / "saved.docx"
+    d.save(str(out))
+    assert docx.Document(str(out)).paragraphs[-1].text == "x"
 
 
 def test_damaged_default_without_template_folder(tmp_path, monkeypatch, recovered):

@@ -356,6 +356,56 @@ def _ensure_styles(doc) -> List[str]:
     return created
 
 
+def docx_from_template_dir(tdir: str):
+    """Opens python-docx's unpacked template folder as a document, tolerating missing optional parts.
+    On the company PC a security product removed docProps/thumbnail.jpeg from the folder, and python-docx
+    fails on any part a relationship points to but that is missing. The folder is packed into an in-memory
+    .docx without those relationships. Returns (document, list of dropped part names)."""
+    import io
+    import zipfile
+    import posixpath
+    import xml.etree.ElementTree as ET
+    rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    ct_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    files: Dict[str, bytes] = {}
+    for root, _dirs, names in os.walk(tdir):
+        for n in names:
+            full = os.path.join(root, n)
+            with open(full, "rb") as f:
+                files[os.path.relpath(full, tdir).replace(os.sep, "/")] = f.read()
+    dropped: List[str] = []
+    for rels_name in [k for k in files if k.endswith(".rels")]:
+        # "_rels/.rels" -> source folder "", "word/_rels/document.xml.rels" -> "word"
+        base = posixpath.dirname(posixpath.dirname(rels_name))
+        ET.register_namespace("", rel_ns)
+        tree = ET.fromstring(files[rels_name])
+        changed = False
+        for rel in list(tree):
+            if rel.get("TargetMode") == "External":
+                continue
+            target = rel.get("Target", "")
+            part = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join(base, target))
+            if part not in files:
+                tree.remove(rel)
+                dropped.append(part)
+                changed = True
+        if changed:
+            files[rels_name] = ET.tostring(tree, xml_declaration=True, encoding="UTF-8")
+    if dropped and "[Content_Types].xml" in files:
+        ET.register_namespace("", ct_ns)
+        ct = ET.fromstring(files["[Content_Types].xml"])
+        for ov in list(ct):
+            if (ov.get("PartName") or "").lstrip("/") in dropped:
+                ct.remove(ov)
+        files["[Content_Types].xml"] = ET.tostring(ct, xml_declaration=True, encoding="UTF-8")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in sorted(files, key=lambda k: (k != "[Content_Types].xml", k)):
+            z.writestr(name, files[name])
+    buf.seek(0)
+    return docx.Document(buf), dropped
+
+
 def new_report_document():
     """Opens a blank document that always has the report styles (JIT recovery for damaged templates)."""
     problems: List[str] = []
@@ -363,9 +413,11 @@ def new_report_document():
     tdir = docx_template_dir()
     if os.path.isdir(tdir):
         try:
-            doc = docx.Document(tdir)
+            doc, dropped = docx_from_template_dir(tdir)
+            if dropped:
+                note_recovered(f"Word 내장 템플릿 폴더에 빠진 파일({', '.join(dropped)}) -> 제외하고 사용")
         except Exception as e:
-            problems.append(f"내장 템플릿 폴더 열기 실패({type(e).__name__})")
+            problems.append(f"내장 템플릿 폴더 열기 실패({type(e).__name__}: {e})")
     else:
         problems.append("내장 템플릿 폴더 없음")
     if doc is None:

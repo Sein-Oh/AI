@@ -608,6 +608,7 @@ python ml_report.py -d sample_ml_data --slots slots.json
 `best_version`은 문서에 사용한 버전입니다 (`version`과 같음). 2.1 이전의 타겟별 키(`target`, `metrics`, `slots_filled`, `reports`, `target_count`)는 문서가 하나로 합쳐지면서 2.2.0에서 없어졌습니다.
 
 보고서 서식 템플릿 (2.3.1): python-docx의 `templates/default-docx-template` 폴더(XML 파일)를 먼저 쓰고, 없으면 `default.docx`를 씁니다.
+폴더에서 일부 파일이 빠져 있으면(회사 PC: `docProps/thumbnail.jpeg`) 그 파일을 가리키는 관계만 빼고 엽니다 (2.3.2).
 회사 보안 프로그램(DRM)이 `.docx` 템플릿을 바꿔 스타일(`Caption` 등)이 없거나 본문이 들어 있어도, 빠진 스타일은 `Normal` 기반으로 만들고
 본문은 지운 뒤 작성합니다. 이때 결과 JSON `recovered`에 적힙니다. 두 템플릿을 모두 열 수 없으면 `STOP_RETRY`와 재설치 명령
 (`python -m pip install --force-reinstall python-docx`)을 안내합니다.
