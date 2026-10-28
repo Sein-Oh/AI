@@ -6,7 +6,6 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**를 
 |---|---|---|
 | [`ml-kit/`](ml-kit/) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`ml-kit/SKILL.md`](ml-kit/SKILL.md) |
 | [`office-cli/`](office-cli/) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/EML 읽기와 검색 | [`office-cli/SKILL.md`](office-cli/SKILL.md) |
-| [`doc-classifier/`](doc-classifier/) | 폴더 전체 파일 목록화 -> 파일명 분류 -> 표본 내용 확인 -> 엑셀 보고서 (0.9.2, Windows 실기 대기). 12TB급 대용량 대비 | [`doc-classifier/SKILL.md`](doc-classifier/SKILL.md) |
 
 에이전트 런타임은 **OpenCode** 입니다. 각 도구 폴더가 그대로 OpenCode 스킬 폴더이며, 폴더 이름 = 스킬 이름
 (소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 설치 위치: `C:\Users\<사용자>\.config\opencode\skills\<tool>\`.
@@ -44,7 +43,7 @@ CLI/<tool>/           # 폴더명 = 스킬명 (예: ml-kit)
 ## 공통 런타임 구현 규칙
 
 세 도구가 같은 문제를 같은 모양으로 풀기 위한 규칙입니다. 도구 폴더는 단독 배포되므로 코드는 공유하지 않고,
-각 도구의 공통 런타임(`ml_predict.py` PART C, `_runtime.py`, `_dc_runtime.py`)에 **같은 이름·같은 동작**으로 구현합니다.
+각 도구의 공통 런타임(`ml_predict.py` PART C, `_runtime.py`)에 **같은 이름·같은 동작**으로 구현합니다.
 경량 LLM이 도구마다 다른 키나 문구를 만나지 않게 하는 것이 목적입니다. 키 이름과 directive 첫 단어는 바꾸지 마십시오.
 
 ### R1. 성공 응답과 사후 확인 (`ok()`)
@@ -70,7 +69,6 @@ CLI/<tool>/           # 폴더명 = 스킬명 (예: ml-kit)
   0건일 때 "다음 페이지", "다음 단계 실행" 같은 진행 안내를 넣지 않는다.
 - 잘림: `truncated: true`, `shown`(JSON에 담은 개수), `count`, 그리고 전체 결과를 볼 방법 하나:
   `full_result_file`(도구가 `<데이터 폴더>/results/`에 자동 저장한 경로) 또는 `next_commands`(다음 페이지 명령). 안 잘렸으면 `truncated: false`.
-- 예외: doc-classifier의 `truncated`(dict)는 1.0.0에서 `truncated_detail`로 옮기고 `truncated`를 bool로 바꾼다 (1.0 이전 도구, SKILL.md 함께 갱신).
 
 ### R3. JIT 복구 보고 (`note_recovered`)
 - 공통 런타임에 `note_recovered(msg: str)`를 둔다. stderr에 `[WARN] <msg>`를 쓰고 실행 중 목록에 쌓는다.
@@ -99,9 +97,9 @@ CLI/<tool>/           # 폴더명 = 스킬명 (예: ml-kit)
 - 공통 런타임 모듈은 최상단에서 표준 라이브러리만 import한다. 핵심 라이브러리(ml-kit의 pandas, sklearn 등)도 실패하면 같은 JSON을 내야 한다.
 
 ### R6. 오류 로그 (`write_error_log`)
-- 기준 구현: doc-classifier `_dc_runtime.py`의 `write_error_log`. 형식과 규칙은 [`AGENTS.md`](../AGENTS.md) "오류 로그 저장".
+- 기준 구현: `archive/doc-classifier/_dc_runtime.py`의 `write_error_log` (보관된 도구에서 복사). 형식과 규칙은 [`AGENTS.md`](../AGENTS.md) "오류 로그 저장".
 - 호출 위치: `run_cli()`의 exit 1 경로와 `JsonArgumentParser.error()`(exit 2). 회전 실패와 기록 실패를 따로 감싸 회전이 실패해도 항목은 남긴다.
-- 데이터 폴더 환경변수: `ML_KIT_DATA_DIR`, `OFFICE_CLI_DATA_DIR`, `DOCCLS_DATA_DIR`. 머리줄의 도구 이름은 폴더 이름(`ml-kit` 등).
+- 데이터 폴더 환경변수: `ML_KIT_DATA_DIR`, `OFFICE_CLI_DATA_DIR`. 머리줄의 도구 이름은 폴더 이름(`ml-kit` 등).
 - 공통 런타임에 `VERSION` 상수를 두고 SKILL.md `metadata.version`과 같은지 테스트로 확인한다.
 
 ### R7. 도움말 (`-h/--help`)
