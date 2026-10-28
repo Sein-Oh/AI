@@ -35,7 +35,7 @@ APP_ALIASES = {"excel": "excel", "엑셀": "excel", "word": "word", "워드": "w
 def _app(name: str) -> str:
     key = str(name).strip().lower()
     if key not in APP_ALIASES:
-        raise rt.not_found("앱", name, ["excel", "word", "ppt"])
+        raise rt.not_found("앱", name, ["excel", "word", "ppt"], vocab=True)
     return APP_ALIASES[key]
 
 

@@ -18,6 +18,24 @@
 - 새 명령 `ppt.py notes`: 발표자 노트 읽기(`--slides`, 노트가 있는 슬라이드만, 0건 안내) / 쓰기(`--slide N --text` 또는 `--file`, `--append`). 쓴 뒤 다시 읽어 확인(`verified`, `before`, `after`).
 - 공통 런타임: `ok_unverified()` (R1의 `verified: false` + `UNVERIFIED:` 응답). 이번에 추가한 쓰기 명령(`comment --action add`, `notes` 쓰기)부터 `verified` 키를 씁니다.
 
+### 점검 반영: 공통 런타임 (모든 명령에 영향)
+전체 코드 점검에서 경량 LLM을 잘못 이끌 수 있는 공통 동작을 고쳤습니다 (R3, R4, R5, R7, R8).
+- `-h`/`--help`: 도움말은 stderr, stdout에는 `{"status":"ok","command":"help","verified":true,...}` 1줄 (이전에는 stdout에 사람용 글만 나와 JSON 파싱 실패). 서브명령도 같음.
+- `[추천]` 기준: 표기만 다른(대소문자·공백·`_`·`-`) 이름이 하나일 때만 `[추천]`. 부분·유사 일치는 뜻이 다를 수 있어 `[후보]`(사용자가 고름, `error_type: ambiguous`).
+  예: 시트 `2024` -> 이전 `[추천] 2024_1분기`, 이제 `[후보] 2024_1분기, 2024_2분기`. 첨부 `견적서.pdf`가 없을 때 `견적서_구버전.pdf`를 추천해 `--send`와 함께 다른 파일이 발송될 수 있던 문제.
+  도구가 정한 옵션 값(색 이름, 테마, 형광펜 색, 앱 이름)의 오타는 가까운 값 하나를 계속 `[추천]`.
+- 오류 분류: 일반 `ValueError`/`KeyError`는 코드 버그일 수 있어 `ERROR:`(내부 오류, 오류 로그에 traceback). 입력 문제는 `InputError`로 냅니다.
+- 출력 파일: `--save`, `export` 등의 저장 경로에 같은 이름의 파일이 있으면 덮어쓰지 않고 `_YYYYMMDD_HHMMSS`를 붙인 새 이름으로 저장합니다. 결과에 `recovered`.
+  잠긴 파일은 잠깐 기다려 보고(`retry_fs`) 그래도 잠겨 있으면 새 이름으로 저장하고 `recovered`. 이미 시각이 붙은 이름에 시각을 두 번 붙이지 않습니다.
+- `note_recovered()`와 응답의 `recovered` 키(성공·오류 모두). `retry_fs`는 일시적 오류(접근 거부, 공유·잠금 위반)만 재시도하고, 없는 파일 같은 영구 오류는 바로 올립니다.
+
+### 점검 반영: 1.4.0 새 기능
+- `ppt.py notes` 쓰기: 기존 노트가 있으면 `--append` 또는 `--overwrite`가 있어야 바꿉니다. 둘 다 없으면 노트를 지우지 않고 `needs_user_decision`.
+  노트 본문 개체틀이 없는 파일에서 다른 개체틀(머리글·쪽 번호)에 쓰던 문제. 읽기에서 `--slide 3`도 그 슬라이드만 읽습니다. 이어 읽기 명령이 고르지 않은 슬라이드를 넣던 문제.
+- `word.py comment`: `--anchor`/`--text`/`--file`을 주고 `--action add`를 빠뜨려도 메모를 답니다 (이전에는 목록만 보여 주고 완료로 응답).
+- `word.py read --paragraphs`에 떨어진 범위(예: `1-12,20`)를 주고 결과가 잘리면 오류가 나던 문제. 이어 읽기는 남은 단락 번호로 줍니다.
+- `ppt.py read/info/notes --slides` 형식 오류 문구가 `--pages`를 안내하던 문제.
+
 ### 테스트 러너 (`tools/run_win_tests.py`)
 - K 그룹 추가(K1~K5): outline·장절, 쪽·단락 범위, 메모 달기·목록, 변경 추적 목록, PPT 노트. 가짜 COM 테스트로는 Word 쪽 계산(`GoTo`, `Information`)과 `Comments.Add`, 노트 개체틀이 실제와 같은지 확인할 수 없어 회사 PC 실기로 확인합니다.
 

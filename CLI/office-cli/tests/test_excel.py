@@ -190,7 +190,7 @@ def test_read_values_search_and_truncation(xl, capsys):
 
 def test_read_unknown_sheet_suggests(xl, capsys):
     code, out = run(capsys, "read", "--sheet", "요약표")
-    assert code == 1 and "[추천] 요약" in out["message"]
+    assert code == 1 and "[후보] 요약" in out["message"] and "[추천]" not in out["message"]   # 부분 일치는 추측하지 않음
 
 
 def test_read_closed_xlsx_with_openpyxl(tmp_path, capsys, monkeypatch):
@@ -369,7 +369,7 @@ def test_chart_delete_rules(xl, capsys):
     code, out = run(capsys, "chart", "--action", "delete")
     assert code == 1
     code, out = run(capsys, "chart", "--action", "delete", "--name", "매출차트")
-    assert code == 1 and "[추천] 매출" in out["message"]
+    assert code == 1 and "[후보] 매출" in out["message"] and "[추천]" not in out["message"]
     code, out = run(capsys, "chart", "--action", "delete", "--name", "매출")
     assert code == 0 and ws.charts == []
 

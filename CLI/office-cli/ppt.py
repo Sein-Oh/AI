@@ -136,9 +136,9 @@ def _notes_body(slide: Any) -> Optional[Any]:
                     return ph
             except Exception:
                 continue
-        return holders(2)
     except Exception:
-        return None
+        pass
+    return None             # 본문 개체틀이 없으면 머리글/쪽 번호 개체틀에 쓰지 않음
 
 
 def _notes_text(slide: Any) -> str:
@@ -189,13 +189,13 @@ def cmd_read(args) -> Dict[str, Any]:
     else:
         with off.open_target("ppt", args.target, readonly=True) as t:       # 읽기: 화면 이동 없음
             prs = t.doc
-            numbers = reader.parse_pages(args.slides, prs.Slides.Count) if prs.Slides.Count else []
+            numbers = reader.parse_pages(args.slides, prs.Slides.Count, "--slides") if prs.Slides.Count else []
             slides = [slide_units(prs.Slides(n), n) for n in numbers]
             source = t.resolved()
             total = int(prs.Slides.Count)
     if closed:
         total = len(slides)
-        numbers = reader.parse_pages(args.slides, total) if total else []
+        numbers = reader.parse_pages(args.slides, total, "--slides") if total else []
         slides = [slides[n - 1] for n in numbers]
     result: Dict[str, Any] = {"target_resolved": source, "slides_total": total}
     if args.save:
@@ -317,7 +317,7 @@ def cmd_info(args) -> Dict[str, Any]:
         slides = []
         width, height = float(prs.PageSetup.SlideWidth), float(prs.PageSetup.SlideHeight)
         import reader
-        wanted = set(reader.parse_pages(args.slides, prs.Slides.Count)) if args.slides and prs.Slides.Count else None
+        wanted = set(reader.parse_pages(args.slides, prs.Slides.Count, "--slides")) if args.slides and prs.Slides.Count else None
         warnings_total = 0
         for i in range(1, prs.Slides.Count + 1):
             if wanted is not None and i not in wanted:
@@ -792,6 +792,8 @@ def cmd_notes(args) -> Dict[str, Any]:
         text = args.text.replace("\\n", "\n").strip()
     if args.append and not text:
         raise rt.InputError("--append로 덧붙일 노트 내용이 없습니다. --text 또는 --file을 지정하세요.")
+    if args.append and args.overwrite:
+        raise rt.InputError("--append(덧붙이기)와 --overwrite(바꾸기) 중 하나만 지정하세요.")
     with off.open_target("ppt", args.target, readonly=False, focus=not args.no_focus, tool=TOOL, command="notes") as t:
         prs = t.doc
         count = int(prs.Slides.Count)
@@ -803,6 +805,11 @@ def cmd_notes(args) -> Dict[str, Any]:
             raise rt.InputError(f"슬라이드 {args.slide}의 노트 페이지에 본문 개체틀이 없어 노트를 쓸 수 없습니다. "
                                 "PowerPoint의 노트 마스터에서 본문 개체틀을 켜야 합니다.")
         before = _notes_text(slide)
+        if before and not args.append and not args.overwrite:
+            raise rt.UserDecisionError(
+                f"슬라이드 {args.slide}에 이미 노트가 있습니다 ({_preview_text(before)}). 기존 노트를 지우지 않았습니다.",
+                "기존 노트를 지울지 정해야 합니다. 노트를 사용자에게 보여 주고, 뒤에 덧붙이려면 --append, "
+                "사용자가 바꾸기를 분명히 원할 때만 --overwrite를 붙여 다시 실행하세요.")
         new = (before + "\n" + text).strip() if args.append and before else text
         body.TextFrame.TextRange.Text = new.replace("\n", "\r")
         t.set_focus(slide=args.slide)
@@ -815,6 +822,11 @@ def cmd_notes(args) -> Dict[str, Any]:
         return rt.ok_unverified(TOOL, "notes", preview, ["다시 읽은 노트가 쓴 내용과 다름"], **fields)
     return rt.ok(TOOL, "notes", preview, "VERIFIED: 노트를 쓰고 다시 읽어 확인했습니다. 잘못 썼으면 office.py undo로 되돌릴 수 있습니다.",
                  verified=True, **fields)
+
+
+def _preview_text(text: str, n: int = 40) -> str:
+    t = re.sub(r"\s+", " ", text).strip()
+    return t if len(t) <= n else t[:n] + "..."
 
 
 def _slide_title(slide: Any) -> str:
@@ -830,7 +842,8 @@ def _notes_read(args) -> Dict[str, Any]:
     with off.open_target("ppt", args.target, readonly=True) as t:
         prs = t.doc
         total = int(prs.Slides.Count)
-        numbers = reader.parse_pages(args.slides, total) if total else []
+        spec = args.slides or (str(args.slide) if args.slide else None)      # 읽기에서 --slide 3도 그 슬라이드만
+        numbers = reader.parse_pages(spec, total, "--slides") if total else []
         items = []
         for n in numbers:
             slide = prs.Slides(n)
@@ -839,7 +852,7 @@ def _notes_read(args) -> Dict[str, Any]:
                 items.append({"no": n, "title": _slide_title(slide)[:60], "notes": note})
         resolved = t.resolved()
     result: Dict[str, Any] = {"target_resolved": resolved, "slides_total": total, "count": len(items)}
-    what = f"슬라이드 {args.slides}" if args.slides else "전체 슬라이드"
+    what = f"슬라이드 {spec}" if spec else "전체 슬라이드"
     if not items:
         result.update(notes=[], truncated=False)
         return rt.ok(TOOL, "notes", f"{resolved['name']}: {what}에 노트 없음 (count 0)",
@@ -855,8 +868,8 @@ def _notes_read(args) -> Dict[str, Any]:
     truncated = len(shown) < len(items)
     result.update(notes=shown, truncated=truncated)
     if truncated:
-        nxt, last = items[len(shown)]["no"], items[-1]["no"]
-        result["next_commands"] = [rt.next_command("ppt.py", ["notes", "--target", args.target, "--slides", f"{nxt}-{last}"],
+        rest = ",".join(str(it["no"]) for it in items[len(shown):])      # 고른 슬라이드 중 남은 것만
+        result["next_commands"] = [rt.next_command("ppt.py", ["notes", "--target", args.target, "--slides", rest],
                                                    "나머지 노트 이어서 읽기")]
     return rt.ok(TOOL, "notes", f"{resolved['name']}: 노트 있는 슬라이드 {len(shown)}장 표시 ({what} 중 {len(items)}장)",
                  "VERIFIED: 읽기 완료. 일부만 표시되었으면 next_commands로 이어서 읽으세요." if truncated else "", **result)
@@ -979,6 +992,7 @@ def build_cli():
     p.add_argument("--text", help="쓸 노트 내용 (기존 노트를 바꿈). 줄바꿈은 \\n")
     p.add_argument("--file", "-f", help="쓸 노트 내용 파일 (.txt/.md)")
     p.add_argument("--append", action="store_true", help="기존 노트 뒤에 덧붙이기")
+    p.add_argument("--overwrite", action="store_true", help="기존 노트를 지우고 바꾸기 (사용자가 원할 때만)")
 
     p = sub.add_parser("slide", help="슬라이드 관리")
     common(p, write=True)

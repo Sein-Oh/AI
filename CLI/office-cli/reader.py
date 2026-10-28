@@ -1324,8 +1324,8 @@ def _index_files(files: List[str], max_files: int) -> Dict[str, Any]:
 # 4. 공통 출력 도우미
 # ==============================================================================
 
-def parse_pages(spec: Optional[str], total: int) -> List[int]:
-    """'3', '1-3', '1,4,6-8' -> 1부터 센 번호 목록."""
+def parse_pages(spec: Optional[str], total: int, option: str = "--pages") -> List[int]:
+    """'3', '1-3', '1,4,6-8' -> 1부터 센 번호 목록. option은 오류 문구에 쓸 인자 이름 (ppt.py는 --slides)."""
     if not spec:
         return list(range(1, total + 1))
     result: List[int] = []
@@ -1334,12 +1334,12 @@ def parse_pages(spec: Optional[str], total: int) -> List[int]:
             continue
         m = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
         if not m:
-            raise rt.InputError(f"--pages 형식이 잘못되었습니다: '{spec}' (예: 3, 1-3, 1,4,6-8)")
+            raise rt.InputError(f"{option} 형식이 잘못되었습니다: '{spec}' (예: 3, 1-3, 1,4,6-8)")
         a = int(m.group(1))
         b = int(m.group(2) or a)
         result += [n for n in range(min(a, b), max(a, b) + 1) if 1 <= n <= total]
     if not result:
-        raise rt.InputError(f"--pages '{spec}'에 해당하는 항목이 없습니다 (전체 {total}개).")
+        raise rt.InputError(f"{option} '{spec}'에 해당하는 항목이 없습니다 (전체 {total}개).")
     return sorted(set(result))
 
 

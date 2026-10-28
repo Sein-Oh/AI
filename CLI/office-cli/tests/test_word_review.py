@@ -297,3 +297,17 @@ def test_read_pages_does_not_pull_previous_paragraph_across_blank_break(wd, caps
     wd["doc"] = doc
     code, out = run(capsys, "read", "--pages", "2")
     assert code == 0 and texts(out) == ["2쪽 첫 문장"]
+
+
+def test_read_paragraphs_noncontiguous_truncated_continues_with_paragraphs(wd, capsys, monkeypatch):
+    monkeypatch.setattr(word.rt, "DEFAULT_MAX_CHARS", 20)
+    code, out = run(capsys, "read", "--paragraphs", "1-3,9")
+    assert code == 0 and out["truncated"] is True
+    shown = [p["no"] for p in out["paragraphs"]]
+    rest = [n for n in (1, 2, 3, 9) if n not in shown]
+    assert f'--paragraphs "{word._compress(rest)}"' in out["next_commands"][0]["command"]
+
+
+def test_comment_text_without_action_add_still_adds(cd, capsys):
+    code, out = run(capsys, "comment", "--anchor", "습도", "--text", "확인 필요")
+    assert code == 0 and out["command"] == "comment" and cd["doc"].Comments.Count == 1

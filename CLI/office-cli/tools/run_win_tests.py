@@ -1750,7 +1750,8 @@ def test_K(ctx):
         com_retry(lambda: wd_doc("A.docx").Revisions.AcceptAll())
 
     def k5():
-        d, c, r, e = run_cli("ppt.py", "notes", "--target", "A.pptx", "--slide", "1", "--text", f"K 노트 {tag}\\n둘째 줄")
+        d, c, r, e = run_cli("ppt.py", "notes", "--target", "A.pptx", "--slide", "1", "--text", f"K 노트 {tag}\\n둘째 줄",
+                             "--overwrite")       # 다시 실행하면 앞 실행의 노트가 있음
         d2 = run_cli("ppt.py", "notes", "--target", "A.pptx", "--slide", "1", "--text", "덧붙인 줄", "--append")[0]
 
         def notes_text():

@@ -326,10 +326,10 @@ def cmd_read(args) -> Dict[str, Any]:
                 rt.next_command("word.py", ["read", "--target", args.target, "--save"], "전체를 md 파일로 저장")]
         else:
             nos = [u["no"] for u in rest]
-            if nos == list(range(nos[0], nos[-1] + 1)):
-                spec, opt = f"{nos[0]}-{nos[-1]}", "--paragraphs"
+            if args.pages and nos != list(range(nos[0], nos[-1] + 1)):
+                spec, opt = _compress([u["page"] for u in rest]), "--pages"    # 떨어진 쪽: 남은 쪽으로 이어 읽기
             else:
-                spec, opt = _compress([u["page"] for u in rest]), "--pages"
+                spec, opt = _compress(nos), "--paragraphs"
             save_args = ["read", "--target", args.target]
             if args.section:
                 save_args += ["--section", args.section] + (["--occurrence", str(args.occurrence)] if args.occurrence else [])
@@ -604,7 +604,8 @@ def _comment_add(args, t: Any) -> Dict[str, Any]:
 
 
 def cmd_comment(args) -> Dict[str, Any]:
-    if args.action == "add":
+    # --action add를 빠뜨리고 메모 내용만 준 경우: 목록을 보여 주고 "완료"라고 하면 LLM이 메모를 단 것으로 오해합니다
+    if args.action == "add" or args.anchor or args.text is not None or args.file:
         with off.open_target("word", args.target, readonly=False, focus=not args.no_focus,
                              tool=TOOL, command="comment") as t:
             return _comment_add(args, t)
@@ -1018,7 +1019,7 @@ def cmd_replace(args) -> Dict[str, Any]:
     if args.highlight:
         highlight = WD_HIGHLIGHT.get(args.highlight.strip().lower())
         if highlight is None:
-            raise rt.not_found("형광펜 색", args.highlight, [k for k in WD_HIGHLIGHT if k.isascii()])
+            raise rt.not_found("형광펜 색", args.highlight, [k for k in WD_HIGHLIGHT if k.isascii()], vocab=True)
     formatting = any(x is not None for x in (color, highlight, args.bold, args.italic, args.size))
     counts: Dict[str, int] = {}
     limit_hit = False

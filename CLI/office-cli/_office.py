@@ -771,7 +771,7 @@ def parse_color(value: Any) -> Optional[int]:
             return (b << 16) | (g << 8) | r
         except ValueError:
             pass
-    raise rt.not_found("색상", s, list(COLOR_NAMES), extra=" ('#RRGGBB' 형식도 가능)")
+    raise rt.not_found("색상", s, list(COLOR_NAMES), extra=" ('#RRGGBB' 형식도 가능)", vocab=True)
 
 
 def bgr_to_hex(value: Any) -> Optional[str]:
@@ -807,4 +807,4 @@ def get_theme(name: Optional[str]) -> Optional[Dict[str, Any]]:
     key = str(name).strip().lower()
     if key in THEMES:
         return dict(THEMES[key], name=key)
-    raise rt.not_found("테마", str(name), list(THEMES))
+    raise rt.not_found("테마", str(name), list(THEMES), vocab=True)

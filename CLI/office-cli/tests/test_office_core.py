@@ -145,7 +145,7 @@ def test_sheet_lookup_rules(fake_com):
         assert t.sheet().Name == "매출"
         with pytest.raises(rt.InputError) as ei:
             t.sheet("매출2", create=True)            # 읽기 세션은 만들지 않음
-        assert "[추천] 매출" in str(ei.value)
+        assert "[후보] 매출" in str(ei.value) and "[추천]" not in str(ei.value)
     with off.open_target("excel", readonly=False, snapshot=False) as t:
         assert t.sheet("신규", create=True).Name == "신규"
         with pytest.raises(rt.InputError) as ei:

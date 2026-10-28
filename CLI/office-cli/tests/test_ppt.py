@@ -301,3 +301,25 @@ def test_notes_write_unverified_when_reread_differs(pp, capsys, monkeypatch):
     monkeypatch.setattr(ppt, "_notes_text", lambda slide: "")
     code, out = run(capsys, "notes", "--slide", "1", "--text", "새 노트")
     assert code == 0 and out["verified"] is False and out["agent_directive"].startswith("UNVERIFIED:")
+
+
+def test_notes_existing_needs_append_or_overwrite(pp, capsys):
+    body = pp["prs"].Slides(1).NotesPage.body.TextFrame.TextRange
+    body.Text = "기존 노트"
+    code, out = run(capsys, "notes", "--slide", "1", "--text", "새 노트")
+    assert code == 1 and out["error_type"] == "needs_user_decision" and body.Text == "기존 노트"
+    assert "--append" in out["agent_directive"] and "--overwrite" in out["agent_directive"]
+    code, out = run(capsys, "notes", "--slide", "1", "--text", "새 노트", "--overwrite")
+    assert code == 0 and body.Text == "새 노트"
+
+
+def test_notes_read_with_slide_and_missing_body(pp, capsys):
+    pp["prs"].Slides(1).NotesPage.body.TextFrame.TextRange.Text = "1번 노트"
+    pp["prs"].Slides(2).NotesPage.body.TextFrame.TextRange.Text = "2번 노트"
+    code, out = run(capsys, "notes", "--slide", "2")                # 읽기에서 --slide도 그 슬라이드만
+    assert code == 0 and [n["no"] for n in out["notes"]] == [2]
+    code, out = run(capsys, "notes", "--slides", "x")
+    assert code == 1 and "--slides 형식" in out["message"]
+    pp["prs"].Slides(3).NotesPage.Shapes.Placeholders.items.pop()   # 노트 본문 개체틀 없음
+    code, out = run(capsys, "notes", "--slide", "3", "--text", "x")
+    assert code == 1 and "본문 개체틀" in out["message"]
