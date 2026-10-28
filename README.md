@@ -18,6 +18,8 @@ AI_WORK/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 │   └── COMPLIANCE_REVIEW_*.md # 도구별 지침 준수 검토 결과
+├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
+│   └── doc-classifier/        # 폴더 파일 목록화/분류 0.9.2 (다른 개발자 담당으로 보관)
 └── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
     ├── ml-kit/                # 회귀·분류 ML 툴킷 (2.2.0)
@@ -30,29 +32,18 @@ AI_WORK/
     │   ├── ml_report.py       # 3단계: Word 보고서
     │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    ├── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.2.0)
-    │   ├── SKILL.md           # 에이전트용 스킬
-    │   ├── README.md          # 상세 설명서
-    │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
-    │   ├── WORK_PLAN.md       # 1.0 설계 기록
-    │   ├── requirements.txt
-    │   ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
-    │   ├── reader.py          # PDF/HWP/EML/Office 파일 읽기와 검색 (Office 불필요)
-    │   ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
-    │   ├── _runtime.py / _office.py   # 공통 모듈
-    │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너), office-cli-test/ (실기 테스트 스킬)
-    │   └── tests/             # 오프라인 테스트 (가짜 COM + 실제 샘플 파일)
-    └── doc-classifier/        # 폴더 파일 목록화 -> 분류 -> 표본 확인 -> 엑셀 보고서 (0.9.2)
+    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.2.0)
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
-        ├── WORK_PLAN.md       # 설계 기록
+        ├── WORK_PLAN.md       # 1.0 설계 기록
         ├── requirements.txt
-        ├── rules.example.json # 분류 규칙 예시
-        ├── doc_classifier.py  # 진입점
-        ├── _dc_*.py           # 단계별 모듈 (_dc_runtime.py: 공통 런타임)
-        ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
-        └── tests/             # 오프라인 테스트
+        ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
+        ├── reader.py          # PDF/HWP/EML/Office 파일 읽기와 검색 (Office 불필요)
+        ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
+        ├── _runtime.py / _office.py   # 공통 모듈
+        ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너), office-cli-test/ (실기 테스트 스킬)
+        └── tests/             # 오프라인 테스트 (가짜 COM + 실제 샘플 파일)
 ```
 
 ## 빠른 시작
@@ -60,7 +51,6 @@ AI_WORK/
 ```bash
 python -m pip install -r CLI/ml-kit/requirements.txt -c constraints.txt
 python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
-python -m pip install -r CLI/doc-classifier/requirements.txt -c constraints.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.
