@@ -2,6 +2,25 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.4.0] - 2026-10-28
+
+배경: 동료가 만드는 office MCP와 기능을 비교해 필요한 것만 가져왔습니다. 규격서·보고서 검토(장절을 골라 읽고, 검토 결과를 메모로 남기고, 수정 기록을 확인)와 발표 준비(노트)에 씁니다.
+
+### 기능 (추가, 기존 인자·키 유지)
+- `word.py read`에 범위 고르기 `--pages 3-5`, `--paragraphs 120-140`(`141-`는 끝까지), `--section "제목 일부"`(+ `--occurrence N`). 셋 중 하나만 씁니다.
+  - `--pages`: Word가 계산한 실제 쪽(`GoTo`, `Information(wdActiveEndPageNumber)`). 앞 쪽에서 이어지는 단락도 넣고 단락마다 `page`. 결과에 `page_total`. 닫힌 .docx는 reader 캐시와 같은 쪽 정보(저장된 쪽 경계)로 고르고, 쪽 정보가 없으면 `--paragraphs`/`--section`을 안내합니다.
+  - `--section`: 제목 전체가 같은 것 -> 제목이 그 글로 시작하는 것(`1.1`은 `1.1. Scope`와 맞고 `1.1.1 Data`와는 안 맞음) -> 제목에 들어 있는 것 순으로 찾습니다. 여럿이면 `[후보]`, 없으면 비슷한 제목 `[추천]`.
+  - 결과에 `selection`, `count`. 잘리면 나머지를 `--paragraphs a-b`(또는 `--pages`)로 이어 읽는 명령과 고른 범위 전체를 `--save`하는 명령. 0건은 `count: 0`과 안내.
+- 새 명령 `word.py outline`: 제목마다 `paragraph`(read `--paragraphs`와 같은 번호), `level`, `text`, `page`. 200개씩 `--start`.
+- 새 명령 `word.py comment`: 검토 메모 목록(`--action list`, 기본) / 메모 달기(`--action add --anchor 글 --text 메모` 또는 `--file`).
+  메모는 기준 글이 든 단락을 `write --anchor`와 같은 규칙으로 고른 뒤 그 글 자체에 답니다. `--file 메모.csv`(열: 기준 글, 메모 내용[, 몇 번째 단락])는 여러 메모를 한 번에 달고, 기준 글 하나라도 정할 수 없으면 하나도 달지 않습니다(어느 줄이 왜 안 되는지 message). 단 뒤 메모 수와 내용을 다시 읽어 확인합니다(`verified`, 다르면 `UNVERIFIED:`). `office.py undo`로 되돌릴 수 있습니다.
+- 새 명령 `word.py revisions`: 변경 내용 추적 목록(`type` 삽입/삭제/서식 변경 등, `author, date, page, text`, `track_changes`). 읽기만 합니다.
+- 새 명령 `ppt.py notes`: 발표자 노트 읽기(`--slides`, 노트가 있는 슬라이드만, 0건 안내) / 쓰기(`--slide N --text` 또는 `--file`, `--append`). 쓴 뒤 다시 읽어 확인(`verified`, `before`, `after`).
+- 공통 런타임: `ok_unverified()` (R1의 `verified: false` + `UNVERIFIED:` 응답). 이번에 추가한 쓰기 명령(`comment --action add`, `notes` 쓰기)부터 `verified` 키를 씁니다.
+
+### 테스트 러너 (`tools/run_win_tests.py`)
+- K 그룹 추가(K1~K5): outline·장절, 쪽·단락 범위, 메모 달기·목록, 변경 추적 목록, PPT 노트. 가짜 COM 테스트로는 Word 쪽 계산(`GoTo`, `Information`)과 `Comments.Add`, 노트 개체틀이 실제와 같은지 확인할 수 없어 회사 PC 실기로 확인합니다.
+
 ## [1.3.0] - 2026-10-28
 
 배경: 회사 PC에서 reader.py의 두 가지 쓰임새를 지원합니다.

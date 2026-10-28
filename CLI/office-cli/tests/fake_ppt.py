@@ -127,11 +127,32 @@ class FakeShapes:
         return self.add(FakeShape(f"Shape {len(self.items) + 1}", left, top, width, height, text=""))
 
 
+class FakePlaceholders:
+    def __init__(self, items):
+        self.items = items
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def __call__(self, i):
+        return self.items[i - 1]
+
+
+class FakeNotesPage:
+    """노트 페이지: 1번은 슬라이드 그림, 2번이 노트 본문 개체틀 (ppPlaceholderBody=2)."""
+    def __init__(self):
+        self.Shapes = Obj()
+        self.body = FakeShape("Notes Placeholder 2", text="", kind=14, ph_type=2)
+        self.Shapes.Placeholders = FakePlaceholders([FakeShape("Slide Image 1", kind=14, ph_type=1), self.body])
+
+
 class FakeSlide:
     def __init__(self, prs, layout):
         self.prs = prs
         self.layout = layout
         self.Shapes = FakeShapes(self)
+        self.NotesPage = FakeNotesPage()
         if layout in (1, 2, 11):
             self.Shapes.add(FakeShape("Title 1", 36, 20, 888, 60, text="", kind=14, ph_type=1))
         if layout == 2:

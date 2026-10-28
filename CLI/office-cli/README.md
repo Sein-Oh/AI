@@ -1,4 +1,4 @@
-# office-cli 1.3
+# office-cli 1.4
 
 Excel, Word, PowerPoint, Outlook을 AI 에이전트(26B~30B 경량 LLM)가 명령 한 줄로 다루게 하는 CLI 도구입니다.
 PDF, HWP, Office 파일은 Office 없이 읽고, 캐시에 등록해 쪽·장절·번호 근거와 함께 검색합니다.
@@ -114,7 +114,10 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 ### word.py
 | 명령 | 주요 옵션 |
 |---|---|
-| `read` | `--start N`, `--save [경로.md]`. 제목 구조(개요 수준) 포함. 본문 그림은 `[그림]`으로 표시 |
+| `read` | `--start N`, `--save [경로.md]`. 제목 구조(개요 수준) 포함. 본문 그림은 `[그림]`으로 표시. 범위 고르기(하나만): `--pages 3-5`(Word가 계산한 실제 쪽, 앞 쪽에서 이어지는 단락 포함, 결과에 `page`), `--paragraphs 120-140`(`141-`는 끝까지), `--section "제목 일부"`(그 제목부터 같은 수준 이상의 다음 제목 전까지, 하위 절 포함) |
+| `outline` | 제목 구조(목차): 제목마다 `paragraph`(read `--paragraphs`와 같은 번호), `level`, `text`, `page`. 200개씩, `--start N`. 제목이 없으면 count 0 |
+| `comment` | `--action list`(기본): 메모마다 `no, author, date, page, target_text`(메모를 단 글), `text, done, reply_to`. 100개씩 `--start`. `--action add --anchor 글 --text 메모`(또는 `--file 메모.txt`): 기준 글이 든 단락을 `write`의 앵커와 같은 규칙으로 고르고(여러 곳이면 `[후보]` + `--occurrence`) 그 글 자체에 메모를 답니다. `--file 메모.csv`(열: 기준 글, 메모 내용[, 몇 번째 단락])는 여러 메모를 한 번에 달며, 기준 글 하나라도 정할 수 없으면 하나도 달지 않습니다. 단 뒤 다시 읽어 확인(`verified`) |
+| `revisions` | 변경 내용 추적 목록: `no, type`(삽입/삭제/서식 변경 등), `author, date, page, text`, `track_changes`(추적 켜짐 여부). 100개씩 `--start`. 읽기만 합니다(수락·거부는 Word에서) |
 | `info` | 쪽/단어/글자 수, 표, 그림, 제목 목록. `--all`. `--detail`: 그림 크기(쪽 너비 대비)와 제목 수준, 쪽보다 넓은 그림 경고 |
 | `write` | `--text`(마크다운 자동 변환, 줄바꿈 `\n`), `--file (.md/.txt, .csv는 표)`, `--image`, `--width`, `--heading N`, `--title`, `--callout`, `--toc`, `--page-break`, `--anchor 글 --pos after\|before\|replace`, `--occurrence N`(앵커가 여러 단락에 있을 때), `--theme` |
 | `replace` | `--find/--replace`(빈 문자열은 삭제) 또는 `--map`, `--match-case`, `--whole-word`, `--bold`, `--color`, `--highlight`. 머리글/바닥글/글상자 포함 |
@@ -129,6 +132,7 @@ python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
 | `replace` | `--find/--replace` 또는 `--map`, `--slide`, 서식 옵션. 표와 그룹 도형 포함 |
 | `export` | `--save 경로.pdf\|.pptx`. PDF 기능이 없는 Office(2007 기본 설치 등)는 `.pptx`로 저장하라는 STOP_RETRY를 돌려줍니다 |
 | `slide` | `--action list\|add\|duplicate\|move\|delete\|clear --slide --to --layout`. `clear`는 `--slide` 또는 `--all-slides`가 필요 |
+| `notes` | 발표자 노트. 읽기: `--slides 1-3`(생략 시 전체), 노트가 있는 슬라이드만 `no, title, notes`. 쓰기: `--slide N --text 노트`(줄바꿈 `\n`) 또는 `--file 노트.md`, `--append`는 기존 노트 뒤에 덧붙이기. 쓴 뒤 다시 읽어 확인(`verified`, `before`, `after`) |
 
 ### outlook.py
 - 조회: `list [--folder --unread --limit]`, `search --query [--from --where all|subject|body]`, `read --id [--save-attach --save]`, `current`, `folders`

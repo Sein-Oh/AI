@@ -4,7 +4,7 @@ description: office-cli 도구의 Windows 실기 테스트(실제 Excel/Word/Pow
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
   platform: windows
 ---
 
@@ -29,7 +29,7 @@ PowerShell에서는 명령 앞에 전역 지침의 인코딩 줄(`$env:PYTHONIOE
 | 테스트 폴더 지정 | 위 명령 끝에 `--dir "D:\office_test"` |
 
 - `--self-email` 은 실제 메일을 보낸다. 사용자가 주소를 주며 **발송 테스트를 분명히 요청한 경우에만** 붙인다.
-- 그룹: A 창 유지, B 읽기 전용, C 되돌리기, D 내보내기, E 엑셀 편집, F PPT, G Outlook, H 연계, I 기능 확대, J 배치 점검.
+- 그룹: A 창 유지, B 읽기 전용, C 되돌리기, D 내보내기, E 엑셀 편집, F PPT, G Outlook, H 연계, I 기능 확대, J 배치 점검, K 검토 기능(목차·메모·변경 추적·노트).
 
 ## 3. 결과 처리
 stdout 의 **마지막 1줄 JSON** 만 읽는다 (stderr 진행 로그는 무시).

@@ -7,6 +7,7 @@
     replace  찾아 바꾸기 (+서식). 표, 그룹 도형 포함
     export   PDF / PPTX 사본 저장 (원본은 그대로)
     slide    슬라이드 추가/복제/이동/삭제/비우기/목록
+    notes    발표자 노트 읽기 (--slide N --text/--file이면 그 슬라이드 노트 쓰기, --append는 덧붙이기)
 
 --target: active(기본, 지금 보고 있는 프레젠테이션) | 열린 프레젠테이션 이름 | 파일 경로
 --slide: 슬라이드 번호 (1부터). write에서 new는 맨 뒤에 새 슬라이드
@@ -121,12 +122,33 @@ def slide_units(slide: Any, idx: int) -> Dict[str, Any]:
         if title_shape is not None and sh.Name == title_shape.Name:
             continue
         lines += _shape_lines(sh)
-    notes = ""
+    return {"no": idx, "title": title or (lines[0] if lines else ""), "text": "\n".join(lines), "notes": _notes_text(slide)}
+
+
+def _notes_body(slide: Any) -> Optional[Any]:
+    """발표자 노트 본문 개체틀 (ppPlaceholderBody). 없으면 None."""
     try:
-        notes = str(slide.NotesPage.Shapes.Placeholders(2).TextFrame.TextRange.Text).strip()
+        holders = slide.NotesPage.Shapes.Placeholders
+        for i in range(1, int(holders.Count) + 1):
+            ph = holders(i)
+            try:
+                if int(ph.PlaceholderFormat.Type) == 2:
+                    return ph
+            except Exception:
+                continue
+        return holders(2)
     except Exception:
-        pass
-    return {"no": idx, "title": title or (lines[0] if lines else ""), "text": "\n".join(lines), "notes": notes}
+        return None
+
+
+def _notes_text(slide: Any) -> str:
+    body = _notes_body(slide)
+    if body is None:
+        return ""
+    try:
+        return str(body.TextFrame.TextRange.Text).replace("\r", "\n").replace("\x0b", "\n").strip()
+    except Exception:
+        return ""
 
 
 # ==============================================================================
@@ -756,6 +778,91 @@ def cmd_export(args) -> Dict[str, Any]:
 
 
 # ==============================================================================
+# 5-1. notes (발표자 노트)
+# ==============================================================================
+
+def cmd_notes(args) -> Dict[str, Any]:
+    if args.text is None and not args.file:
+        return _notes_read(args)
+    if args.slide is None:
+        raise rt.InputError("노트를 쓸 슬라이드를 --slide 번호로 지정하세요 (예: --slide 3).")
+    if args.file:
+        text = rt.read_text_file(rt.resolve_input_path(args.file, "노트 파일")).strip()
+    else:
+        text = args.text.replace("\\n", "\n").strip()
+    if args.append and not text:
+        raise rt.InputError("--append로 덧붙일 노트 내용이 없습니다. --text 또는 --file을 지정하세요.")
+    with off.open_target("ppt", args.target, readonly=False, focus=not args.no_focus, tool=TOOL, command="notes") as t:
+        prs = t.doc
+        count = int(prs.Slides.Count)
+        if not 1 <= args.slide <= count:
+            raise rt.InputError(f"--slide는 1~{count} 사이여야 합니다 (전체 {count}장).")
+        slide = prs.Slides(args.slide)
+        body = _notes_body(slide)
+        if body is None:
+            raise rt.InputError(f"슬라이드 {args.slide}의 노트 페이지에 본문 개체틀이 없어 노트를 쓸 수 없습니다. "
+                                "PowerPoint의 노트 마스터에서 본문 개체틀을 켜야 합니다.")
+        before = _notes_text(slide)
+        new = (before + "\n" + text).strip() if args.append and before else text
+        body.TextFrame.TextRange.Text = new.replace("\n", "\r")
+        t.set_focus(slide=args.slide)
+        after = _notes_text(slide)
+        resolved = t.resolved()
+    fields = {"target_resolved": resolved, "slide": args.slide, "before": rt.clamp_text(before, 200)[0],
+              "after": rt.clamp_text(after, 200)[0], "appended": bool(args.append)}
+    preview = f"{resolved['name']} 슬라이드 {args.slide}: 노트를 " + ("덧붙였습니다" if args.append else ("지웠습니다" if not new else "바꿨습니다"))
+    if re.sub(r"\s+", "", after) != re.sub(r"\s+", "", new):
+        return rt.ok_unverified(TOOL, "notes", preview, ["다시 읽은 노트가 쓴 내용과 다름"], **fields)
+    return rt.ok(TOOL, "notes", preview, "VERIFIED: 노트를 쓰고 다시 읽어 확인했습니다. 잘못 썼으면 office.py undo로 되돌릴 수 있습니다.",
+                 verified=True, **fields)
+
+
+def _slide_title(slide: Any) -> str:
+    shape = _title_shape(slide)
+    try:
+        return str(shape.TextFrame.TextRange.Text).strip() if shape is not None else ""
+    except Exception:
+        return ""
+
+
+def _notes_read(args) -> Dict[str, Any]:
+    import reader
+    with off.open_target("ppt", args.target, readonly=True) as t:
+        prs = t.doc
+        total = int(prs.Slides.Count)
+        numbers = reader.parse_pages(args.slides, total) if total else []
+        items = []
+        for n in numbers:
+            slide = prs.Slides(n)
+            note = _notes_text(slide)
+            if note:
+                items.append({"no": n, "title": _slide_title(slide)[:60], "notes": note})
+        resolved = t.resolved()
+    result: Dict[str, Any] = {"target_resolved": resolved, "slides_total": total, "count": len(items)}
+    what = f"슬라이드 {args.slides}" if args.slides else "전체 슬라이드"
+    if not items:
+        result.update(notes=[], truncated=False)
+        return rt.ok(TOOL, "notes", f"{resolved['name']}: {what}에 노트 없음 (count 0)",
+                     f"VERIFIED: 0건. {what}에 발표자 노트가 없습니다. 사용자에게 그대로 알리세요.", **result)
+    shown: List[Dict[str, Any]] = []
+    used = 0
+    for it in items:
+        size = len(it["notes"]) + len(it["title"]) + 20
+        if shown and used + size > rt.DEFAULT_MAX_CHARS:
+            break
+        shown.append(dict(it, notes=rt.clamp_text(it["notes"], rt.DEFAULT_MAX_CHARS)[0]))
+        used += size
+    truncated = len(shown) < len(items)
+    result.update(notes=shown, truncated=truncated)
+    if truncated:
+        nxt, last = items[len(shown)]["no"], items[-1]["no"]
+        result["next_commands"] = [rt.next_command("ppt.py", ["notes", "--target", args.target, "--slides", f"{nxt}-{last}"],
+                                                   "나머지 노트 이어서 읽기")]
+    return rt.ok(TOOL, "notes", f"{resolved['name']}: 노트 있는 슬라이드 {len(shown)}장 표시 ({what} 중 {len(items)}장)",
+                 "VERIFIED: 읽기 완료. 일부만 표시되었으면 next_commands로 이어서 읽으세요." if truncated else "", **result)
+
+
+# ==============================================================================
 # 6. slide
 # ==============================================================================
 
@@ -865,6 +972,14 @@ def build_cli():
     common(p)
     p.add_argument("--save", help="저장 경로 (.pdf 또는 .pptx, 생략 시 작업 폴더에 PDF)")
 
+    p = sub.add_parser("notes", help="발표자 노트 읽기 (--text/--file이 있으면 --slide의 노트 쓰기)")
+    common(p, write=True)
+    p.add_argument("--slides", help="읽을 슬라이드 번호 (예: 3, 1-3, 1,4). 생략 시 전체")
+    p.add_argument("--slide", type=int, help="노트를 쓸 슬라이드 번호")
+    p.add_argument("--text", help="쓸 노트 내용 (기존 노트를 바꿈). 줄바꿈은 \\n")
+    p.add_argument("--file", "-f", help="쓸 노트 내용 파일 (.txt/.md)")
+    p.add_argument("--append", action="store_true", help="기존 노트 뒤에 덧붙이기")
+
     p = sub.add_parser("slide", help="슬라이드 관리")
     common(p, write=True)
     p.add_argument("--action", "-a", required=True, choices=["list", "add", "duplicate", "move", "delete", "clear"])
@@ -876,7 +991,7 @@ def build_cli():
 
 
 HANDLERS = {"read": cmd_read, "info": cmd_info, "write": cmd_write, "replace": cmd_replace,
-            "export": cmd_export, "slide": cmd_slide}
+            "export": cmd_export, "slide": cmd_slide, "notes": cmd_notes}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

@@ -1,10 +1,10 @@
 ---
 name: office-cli
-description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표/수식/차트/서식, 본문/표/그림, 슬라이드), 앱 사이로 차트·표·내용을 옮기고(office.py transfer), Outlook 메일을 조회·작성하고, PDF/HWP/Office 파일을 Office 없이 읽고 등록(캐시)해 쪽·장절·번호 근거와 함께 검색한다(reader.py). 작업 전 자동 스냅샷으로 되돌리기(office.py undo)를 지원한다. 엑셀 표/그래프 만들기, 보고서·발표자료 작성, 문서 내용 검색 후 다른 문서에 넣기, 규격/규정 근거 찾기, 메일 답장 작성 요청 시 사용.
+description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표/수식/차트/서식, 본문/표/그림, 슬라이드, 워드 목차·장절·쪽 읽기, 검토 메모·변경 추적, PPT 발표자 노트), 앱 사이로 차트·표·내용을 옮기고(office.py transfer), Outlook 메일을 조회·작성하고, PDF/HWP/Office 파일을 Office 없이 읽고 등록(캐시)해 쪽·장절·번호 근거와 함께 검색한다(reader.py). 작업 전 자동 스냅샷으로 되돌리기(office.py undo)를 지원한다. 엑셀 표/그래프 만들기, 보고서·발표자료 작성, 문서 내용 검색 후 다른 문서에 넣기, 규격/규정 근거 찾기, 메일 답장 작성 요청 시 사용.
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
   platform: windows
 ---
 
@@ -31,8 +31,11 @@ metadata:
 | 엑셀 서식 | `excel.py style --range A1:E10 --theme navy` / `--bg yellow --bold` / `--highlight ">=100:pink"` |
 | 엑셀 기타 | `excel.py info`, `replace --find A --replace B`, `sheet --action add --name 이름`, `range --action merge --range A1:B1`, `export --save "결과.csv"` |
 | 워드 읽기 / 쓰기 | `word.py read [--save]` / `word.py write --file "내용.md"` / 한 줄이면 `--text "## 제목\n- 항목"` / `--image "그림.png"` (`--anchor 글 --pos after`, 여러 곳이면 `--occurrence N`) |
+| 워드 목차 / 범위 읽기 | `word.py outline` / `word.py read --section "1.1"` (장절, 하위 절 포함) / `--pages 3-5` / `--paragraphs 120-140` |
+| 워드 검토 메모 / 변경 추적 | `word.py comment` (목록) / `word.py comment --action add --anchor "문서의 글" --text "메모"` (여러 개는 `--file "메모.csv"`, 열: 기준 글, 메모 내용) / `word.py revisions` |
 | 워드 기타 | `word.py info`, `replace --find A --replace B [--bold]`, `export --save "보고서.pdf" [--page-number]` |
 | PPT 읽기 / 쓰기 | `ppt.py read [--slides 1-3]` / `ppt.py write --slide new --title 제목 --file "내용.md"` / `--text "- 항목"` / `--image "그림.png"` / `--cards "제목:내용|제목:내용"` |
+| PPT 발표자 노트 | 읽기 `ppt.py notes [--slides 1-3]` / 쓰기 `ppt.py notes --slide 3 --text "노트"` (`--append`는 덧붙이기, 여러 줄은 `--file "노트.md"`) |
 | PPT 기타 | `ppt.py info`, `replace --find A --replace B`, `slide --action move --slide 1 --to 3`, `export --save "발표.pdf"` |
 | 차트를 워드/PPT에 그림으로 | `office.py transfer --from excel --chart "차트이름" --to word,ppt` |
 | 엑셀 범위를 워드/PPT 표로 | `office.py transfer --from excel --range A1:D10 --to word` |
@@ -58,7 +61,7 @@ metadata:
 |---|---|
 | `VERIFIED:` | 완료. `preview`를 사용자에게 알린다. 같은 명령을 다시 실행하거나 결과를 다시 읽지 않는다. |
 | `UNVERIFIED:` | 실행은 됐지만 확인하지 못했다. 다시 실행하지 않고 `unverified` 내용을 그대로 알린다. |
-| `STOP_RETRY:` + message에 `[후보]` | 다시 실행하지 않는다. `[후보]`를 보여 주고 사용자가 고르게 한 뒤, 고른 값으로 실행한다 (시트: `--sheet 이름`, 앵커: `--occurrence 번호`, 문서: `--target 전체경로`). 사용자가 새 시트를 원한다고 답한 경우에만 `--new-sheet`. |
+| `STOP_RETRY:` + message에 `[후보]` | 다시 실행하지 않는다. `[후보]`를 보여 주고 사용자가 고르게 한 뒤, 고른 값으로 실행한다 (시트: `--sheet 이름`, 앵커·장절: `--occurrence 번호`, 문서: `--target 전체경로`). 사용자가 새 시트를 원한다고 답한 경우에만 `--new-sheet`. |
 | `STOP_RETRY:` + message에 `[추천]` | 추천된 값으로 **1번만** 다시 실행한다. 또 실패하면 message를 그대로 알린다. |
 | `STOP_RETRY:` (위 둘 없음) | 다시 실행하지 않는다. message를 그대로 알린다. 없는 시트(`needs_user_decision`)면 새 시트를 만들지 사용자에게 묻는다. |
 | `ERROR:` | 다시 실행하지 않는다. message를 그대로 알린다. |

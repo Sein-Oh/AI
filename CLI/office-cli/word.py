@@ -1,7 +1,10 @@
 """word.py - 워드 작업
 
 명령:
-    read     내용 읽기 (제목 구조 포함, --save로 md 저장)
+    read     내용 읽기 (제목 구조 포함, --save로 md 저장). --pages / --paragraphs / --section으로 범위 고르기
+    outline  제목 구조(목차): 수준, 단락 번호, 쪽
+    comment  검토 메모 목록 (--action add: 기준 글에 메모 달기, --file CSV로 여러 개)
+    revisions 변경 내용 추적(수정 기록) 목록
     info     문서 요약 (페이지/단어/글자 수, 표, 그림, 제목 목록). --all: 열린 문서 전체 목록
     write    텍스트/마크다운/표/그림/요약상자/목차 넣기 (기본: 문서 끝, --anchor로 위치 지정)
     replace  찾아 바꾸기 (+서식). 머리글/바닥글/글상자 포함
@@ -16,6 +19,8 @@
     python word.py write --image "chart.png" --width 400
     python word.py replace --find "초안" --replace "최종본" --bold
     python word.py export --save report.pdf --page-number
+    python word.py read --section "1.1 Scope"
+    python word.py comment --action add --anchor "시험 온도" --text "규격 4.2항과 다름"
 """
 import difflib
 import json
@@ -96,9 +101,10 @@ def _replace_inline_pictures(rng: Any, raw: str) -> str:
     return "".join(chars)
 
 
-def _com_units(doc: Any) -> List[Dict[str, str]]:
-    """열린 문서의 단락을 제목 구조와 함께 읽습니다 (단락 단위 COM 호출 2회, 페이지 계산 없음). 그림은 [그림]."""
-    units: List[Dict[str, str]] = []
+def _com_units(doc: Any, with_start: bool = False) -> List[Dict[str, Any]]:
+    """열린 문서의 단락을 제목 구조와 함께 읽습니다 (단락 단위 COM 호출 2회, 페이지 계산 없음). 그림은 [그림].
+    with_start: 단락 시작·끝 위치(start, end)도 담습니다 (쪽 계산용, COM 호출 2회 추가)."""
+    units: List[Dict[str, Any]] = []
     heading = ""
     n = 0
     for para in doc.Paragraphs:
@@ -114,48 +120,226 @@ def _com_units(doc: Any) -> List[Dict[str, str]]:
             level = 10
         if 1 <= level <= 9:
             heading = text
-        units.append({"loc": f"단락 {n}", "heading": heading, "text": text, "level": level if level <= 9 else 0})
+        unit: Dict[str, Any] = {"loc": f"단락 {n}", "heading": heading, "text": text, "level": level if level <= 9 else 0}
+        if with_start:
+            unit["start"], unit["end"] = int(rng.Start), int(rng.End)
+        units.append(unit)
     return units
 
 
+WD_PAGE_NUMBER = 3          # wdActiveEndPageNumber: 문서 처음부터 센 실제 쪽 (PDF 뷰어의 쪽과 같음)
+OUTLINE_MAX = 200           # outline 한 번에 보여 줄 제목 수
+LIST_MAX = 100              # comment/revisions 한 번에 보여 줄 항목 수
+_SPEC_RE = re.compile(r"\d+(?:-\d*)?")
+
+
+def _closed_units(path: str) -> List[Dict[str, Any]]:
+    """닫힌 .docx를 reader 단위로 읽어 word.py 단위(no, loc, heading, text, level, page)로 바꿉니다."""
+    import reader
+    units, _ = reader.parse_docx(path)
+    return [{"no": i, "loc": u["loc"], "heading": u["heading"], "text": u["text"],
+             "level": len(u["section"] or []) if u["kind"] == "heading" else 0, "page": u["page"]}
+            for i, u in enumerate(units, 1)]
+
+
+def _spec_numbers(spec: str, total: int, option: str) -> List[int]:
+    """'120-140', '141-'(끝까지), '7', '1,4,7' -> 번호 목록 (1~total)."""
+    parts = [p for p in str(spec).replace(" ", "").split(",") if p]
+    if not parts or not all(_SPEC_RE.fullmatch(p) for p in parts):
+        raise rt.InputError(f"{option} 형식이 잘못되었습니다: '{spec}' (예: 7, 120-140, 141-, 1,4,7)")
+    result: List[int] = []
+    for p in parts:
+        a, _, b = p.partition("-")
+        lo = int(a)
+        hi = int(b) if b else (total if "-" in p else lo)
+        result += [n for n in range(min(lo, hi), max(lo, hi) + 1) if 1 <= n <= total]
+    if not result:
+        raise rt.InputError(f"{option} '{spec}'에 해당하는 항목이 없습니다 (전체 1~{total}).")
+    return sorted(set(result))
+
+
+def _compress(nums: Sequence[int]) -> str:
+    """[1,2,3,7] -> '1-3,7'"""
+    out: List[str] = []
+    for n in sorted(set(nums)):
+        if out and n == last + 1:
+            out[-1] = out[-1].split("-")[0] + f"-{n}"
+        else:
+            out.append(str(n))
+        last = n
+    return ",".join(out)
+
+
+def _page_bounds(doc: Any, pages: List[int], total: int) -> Dict[int, Tuple[int, int]]:
+    """쪽마다 (시작 위치, 다음 쪽 시작 위치). GoTo는 쪽 수만큼만 COM을 부릅니다."""
+    end = int(doc.Content.End)
+    cache: Dict[int, int] = {}
+
+    def start_of(p: int) -> int:
+        if p > total:
+            return end
+        if p not in cache:
+            cache[p] = int(doc.GoTo(What=1, Which=1, Count=p).Start)     # wdGoToPage, wdGoToAbsolute
+        return cache[p]
+    return {p: (start_of(p), start_of(p + 1)) for p in pages}
+
+
+def _select_pages(units: List[Dict[str, Any]], bounds: Dict[int, Tuple[int, int]]) -> List[Dict[str, Any]]:
+    """쪽 범위에 걸친 단락 (앞 쪽에서 이어지는 단락 포함). 각 단락에 page를 붙입니다."""
+    import bisect
+    starts = [u["start"] for u in units]
+    picked: Dict[int, Dict[str, Any]] = {}
+    for p, (a, b) in sorted(bounds.items()):
+        if a >= b:
+            continue
+        i = bisect.bisect_right(starts, a) - 1
+        if i >= 0 and units[i]["end"] <= a:       # 앞 쪽에서 끝난 단락
+            i += 1
+        i = max(i, 0)
+        while i < len(units) and units[i]["start"] < b:
+            picked.setdefault(units[i]["no"], dict(units[i], page=p))
+            i += 1
+    return [picked[k] for k in sorted(picked)]
+
+
+def _closed_pages(units: List[Dict[str, Any]], spec: str) -> Tuple[List[Dict[str, Any]], int]:
+    known = [u["page"] for u in units if u.get("page")]
+    if not known:
+        raise rt.InputError("이 파일에는 쪽 정보가 저장되어 있지 않아 --pages로 고를 수 없습니다. "
+                            "--paragraphs 또는 --section으로 범위를 지정하세요 (또는 Word로 열어 둔 뒤 다시 실행).")
+    total = max(known)
+    pages = set(_spec_numbers(spec, total, "--pages"))
+    return [u for u in units if u.get("page") in pages], total
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", "", str(text)).lower()
+
+
+def _find_section(units: List[Dict[str, Any]], query: str, occurrence: Optional[int]) -> List[Dict[str, Any]]:
+    """제목 글(일부)로 장절 하나를 고릅니다: 그 제목부터 같은 수준 이상의 다음 제목 직전까지 (하위 절 포함)."""
+    heads = [u for u in units if u.get("level")]
+    if not heads:
+        raise rt.InputError("이 문서에는 제목(제목 스타일이나 장절 번호)이 없어 --section으로 고를 수 없습니다. "
+                            "--pages나 --paragraphs로 범위를 지정하세요.")
+    key = _norm(query)
+    if not key:
+        raise rt.InputError("--section이 비어 있습니다. 제목 글의 일부를 지정하세요 (예: \"1.1\", \"검증 방법\").")
+    # 1) 제목 전체가 같음 2) 제목이 그 글로 시작 ('1.1'은 '1.1. Scope'와 맞고 '1.1.1 Data'와는 안 맞음) 3) 제목에 들어 있음
+    hits = ([h for h in heads if _norm(h["text"]) == key]
+            or [h for h in heads if _norm(h["text"]).startswith(key) and not re.match(r"\.?\d", _norm(h["text"])[len(key):])]
+            or [h for h in heads if key in _norm(h["text"])])
+    if not hits:
+        raise rt.not_found("제목", query, [h["text"][:60] for h in heads],
+                           extra=" word.py outline으로 제목 목록을 확인할 수 있습니다.")
+    if occurrence is not None:
+        if not 1 <= occurrence <= len(hits):
+            raise rt.InputError(f"--occurrence는 1~{len(hits)} 사이여야 합니다 ('{query}' 제목 {len(hits)}개).")
+        head = hits[occurrence - 1]
+    elif len(hits) > 1:
+        raise rt.ambiguous(f"'{query}'이(가) 들어간 제목이 {len(hits)}개라 고를 수 없습니다. 사용자에게 번호를 고르게 한 뒤 "
+                           "--occurrence 번호를 붙이세요.",
+                           [f"{i}: 단락 {h['no']} {_preview(h['text'], 40)}" for i, h in enumerate(hits, 1)])
+    else:
+        head = hits[0]
+    i = units.index(head)
+    j = i + 1
+    while j < len(units) and not (units[j].get("level") and units[j]["level"] <= head["level"]):
+        j += 1
+    return units[i:j]
+
+
 def cmd_read(args) -> Dict[str, Any]:
+    if sum(1 for x in (args.pages, args.paragraphs, args.section) if x) > 1:
+        raise rt.InputError("--pages, --paragraphs, --section 중 하나만 지정하세요.")
+    filtered = bool(args.pages or args.paragraphs or args.section)
+    page_total = None
+    selection = ""
     closed = _closed_docx(args.target)
     if closed:
-        import reader
-        units, _ = reader.parse_docx(closed)
+        units = _closed_units(closed)
         source = {"app": "Word", "name": os.path.basename(closed), "path": closed, "source": "file(python-docx)"}
+        if args.pages:
+            selected, page_total = _closed_pages(units, args.pages)
     else:
         with off.open_target("word", args.target, readonly=True) as t:
-            units = _com_units(t.doc)
+            units = _com_units(t.doc, with_start=bool(args.pages))
+            for i, u in enumerate(units, 1):
+                u["no"] = i
+            if args.pages:
+                page_total = int(t.doc.ComputeStatistics(2))           # wdStatisticPages
+                pages = _spec_numbers(args.pages, page_total, "--pages")
+                selected = _select_pages(units, _page_bounds(t.doc, pages, page_total))
             source = t.resolved()
+    if args.pages:
+        selection = f"쪽 {args.pages}"
+    elif args.paragraphs:
+        if not units:
+            raise rt.InputError("문서에 글이 있는 단락이 없습니다.")
+        selected = [units[n - 1] for n in _spec_numbers(args.paragraphs, len(units), "--paragraphs")]
+        selection = f"단락 {args.paragraphs}"
+    elif args.section:
+        selected = _find_section(units, args.section, args.occurrence)
+        selection = f"장절 '{_preview(selected[0]['text'], 40)}' (단락 {selected[0]['no']}-{selected[-1]['no']})"
+    else:
+        selected = units[max(1, args.start) - 1:]
     name = source["name"]
     result: Dict[str, Any] = {"target_resolved": source, "units_total": len(units)}
+    if filtered:
+        result.update(selection=selection, count=len(selected))
+    if page_total is not None:
+        result["page_total"] = page_total
     if args.save:
         import reader
+        save_units = selected if filtered else units
         out = rt.resolve_output_path(None if args.save is True else args.save, os.path.splitext(name)[0], ".md")
-        out = rt.write_text(out, reader.units_to_markdown(name, units))
+        out = rt.write_text(out, reader.units_to_markdown(name, save_units))
         result.update(output_file=out, next_commands=[
             rt.next_command("ppt.py", ["write", "--file", out], "저장한 내용을 열린 PPT에 넣기"),
             rt.next_command("office.py", ["transfer", "--from", "word", "--what", "text", "--to", "excel"],
                             "이 문서의 단락을 엑셀 표로 옮기기")])
-        return rt.ok(TOOL, "read", f"{name}: 단락 {len(units)}개를 저장했습니다 ({out})", **result)
+        return rt.ok(TOOL, "read", f"{name}: 단락 {len(save_units)}개를 저장했습니다 ({out})", **result)
+    if filtered and not selected:
+        result.update(paragraphs=[], truncated=False)
+        return rt.ok(TOOL, "read", f"{name}: {selection}에 글이 있는 단락 없음 (count 0)",
+                     f"VERIFIED: 0건. {selection}에는 글이 있는 단락이 없습니다 (표·그림만 있거나 빈 쪽). 사용자에게 그대로 알리세요.",
+                     **result)
     shown: List[Dict[str, Any]] = []
     used = 0
-    start = max(1, args.start)
-    for i, u in enumerate(units[start - 1:], start):
+    for u in selected:
         size = len(u["text"]) + 12
         if shown and used + size > rt.DEFAULT_MAX_CHARS:
             break
-        shown.append({"no": i, "heading": u["heading"], "text": rt.clamp_text(u["text"], rt.DEFAULT_MAX_CHARS)[0]})
+        item = {"no": u["no"], "heading": u["heading"], "text": rt.clamp_text(u["text"], rt.DEFAULT_MAX_CHARS)[0]}
+        if args.pages and u.get("page") is not None:
+            item["page"] = u["page"]
+        shown.append(item)
         used += size
-    truncated = start - 1 + len(shown) < len(units)
+    truncated = len(shown) < len(selected)
     result.update(paragraphs=shown, truncated=truncated)
     if truncated:
-        nxt = start + len(shown)
-        result["next_commands"] = [
-            rt.next_command("word.py", ["read", "--target", args.target, "--start", str(nxt)], f"{nxt}번째 단락부터 이어서 읽기"),
-            rt.next_command("word.py", ["read", "--target", args.target, "--save"], "전체를 md 파일로 저장")]
-    preview = f"{name}: 단락 {len(shown)}개 표시 (전체 {len(units)}개)"
+        rest = selected[len(shown):]
+        if not filtered:
+            nxt = shown[-1]["no"] + 1
+            result["next_commands"] = [
+                rt.next_command("word.py", ["read", "--target", args.target, "--start", str(nxt)], f"{nxt}번째 단락부터 이어서 읽기"),
+                rt.next_command("word.py", ["read", "--target", args.target, "--save"], "전체를 md 파일로 저장")]
+        else:
+            nos = [u["no"] for u in rest]
+            if nos == list(range(nos[0], nos[-1] + 1)):
+                spec, opt = f"{nos[0]}-{nos[-1]}", "--paragraphs"
+            else:
+                spec, opt = _compress([u["page"] for u in rest]), "--pages"
+            save_args = ["read", "--target", args.target]
+            if args.section:
+                save_args += ["--section", args.section] + (["--occurrence", str(args.occurrence)] if args.occurrence else [])
+            else:
+                save_args += ["--pages", args.pages] if args.pages else ["--paragraphs", args.paragraphs]
+            result["next_commands"] = [
+                rt.next_command("word.py", ["read", "--target", args.target, opt, spec], "나머지 이어서 읽기"),
+                rt.next_command("word.py", save_args + ["--save"], "고른 범위 전체를 md 파일로 저장")]
+    what = selection or "전체"
+    preview = f"{name}: {what}, 단락 {len(shown)}개 표시 (" + (f"고른 범위 {len(selected)}개, " if filtered else "") + f"전체 {len(units)}개)"
     return rt.ok(TOOL, "read", preview, "VERIFIED: 읽기 완료. 일부만 표시되었으면 next_commands로 이어서 읽으세요."
                  if truncated else "", **result)
 
@@ -218,6 +402,250 @@ def _layout_detail(doc: Any) -> Dict[str, Any]:
     outline = [{"level": u["level"], "text": u["text"][:60]} for u in _com_units(doc) if u.get("level")][:30]
     return {"usable_width": round(usable, 1) if usable is not None else None, "picture_detail": pictures,
             "heading_levels": outline, "warnings": warnings, "layout_warnings": len(warnings)}
+
+
+def cmd_outline(args) -> Dict[str, Any]:
+    """제목 구조(목차): 수준, 단락 번호(read --paragraphs와 같은 번호), 쪽."""
+    start = max(1, args.start)
+    closed = _closed_docx(args.target)
+    if closed:
+        heads = [u for u in _closed_units(closed) if u["level"]]
+        window = heads[start - 1:start - 1 + OUTLINE_MAX]
+        source = {"app": "Word", "name": os.path.basename(closed), "path": closed, "source": "file(python-docx)"}
+    else:
+        with off.open_target("word", args.target, readonly=True) as t:
+            units = _com_units(t.doc, with_start=True)
+            for i, u in enumerate(units, 1):
+                u["no"] = i
+            heads = [u for u in units if u["level"]]
+            window = heads[start - 1:start - 1 + OUTLINE_MAX]
+            for h in window:                    # 쪽 계산은 보여 줄 제목만 (제목마다 COM 1회)
+                try:
+                    h["page"] = int(t.doc.Range(h["start"], h["start"]).Information(WD_PAGE_NUMBER))
+                except Exception:
+                    h["page"] = None
+            source = t.resolved()
+    name = source["name"]
+    result: Dict[str, Any] = {"target_resolved": source, "count": len(heads)}
+    if not heads:
+        result.update(headings=[], truncated=False)
+        return rt.ok(TOOL, "outline", f"{name}: 제목 없음 (count 0)",
+                     "VERIFIED: 0건. 제목(제목 스타일이나 장절 번호)이 있는 단락이 없습니다. 사용자에게 그대로 알리고, "
+                     "본문은 word.py read --pages 또는 --paragraphs로 읽으세요.", **result)
+    shown: List[Dict[str, Any]] = []
+    used = 0
+    for h in window:
+        item = {"paragraph": h["no"], "level": h["level"], "text": _preview(h["text"], 120), "page": h.get("page")}
+        size = len(item["text"]) + 30
+        if shown and used + size > rt.DEFAULT_MAX_CHARS:
+            break
+        shown.append(item)
+        used += size
+    shown_end = start - 1 + len(shown)
+    truncated = shown_end < len(heads)
+    result.update(headings=shown, truncated=truncated)
+    if truncated:
+        result["next_commands"] = [rt.next_command("word.py", ["outline", "--target", args.target, "--start", str(shown_end + 1)],
+                                                   f"{shown_end + 1}번째 제목부터 이어서 보기")]
+    preview = f"{name}: 제목 {len(shown)}개 표시 (전체 {len(heads)}개)"
+    return rt.ok(TOOL, "outline", preview,
+                 "VERIFIED: 목차 읽기 완료. 한 장절의 본문은 word.py read --section \"<제목 일부>\"로 읽으세요."
+                 + (" 일부만 표시되었으면 next_commands로 이어서 보세요." if truncated else ""), **result)
+
+
+def _com_date(value: Any) -> str:
+    try:
+        return value.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(value or "")
+
+
+def _page_of(rng: Any) -> Optional[int]:
+    try:
+        return int(rng.Information(WD_PAGE_NUMBER))
+    except Exception:
+        return None
+
+
+def _clean(text: Any) -> str:
+    return str(text or "").replace("\r", "\n").replace("\x07", " ").replace("\x0b", "\n").strip()
+
+
+def _window(total: int, start: int) -> range:
+    first = max(1, start)
+    return range(first, min(total, first + LIST_MAX - 1) + 1)
+
+
+def _list_result(name: str, command: str, kind: str, items: List[Dict[str, Any]], total: int, start: int,
+                 target: str, **fields: Any) -> Dict[str, Any]:
+    """comment/revisions 목록 응답: 글자 수 상한, 0건 안내, 이어 보기 명령."""
+    shown: List[Dict[str, Any]] = []
+    used = 0
+    for it in items:
+        size = sum(len(str(v)) for v in it.values()) + 20
+        if shown and used + size > rt.DEFAULT_MAX_CHARS:
+            break
+        shown.append(it)
+        used += size
+    shown_end = max(1, start) - 1 + len(shown)
+    truncated = shown_end < total
+    result: Dict[str, Any] = {"count": total, "items": shown, "truncated": truncated}
+    result.update(fields)
+    if not total:
+        return rt.ok(TOOL, command, f"{name}: {kind} 없음 (count 0)",
+                     f"VERIFIED: 0건. 이 문서에는 {kind}이(가) 없습니다. 사용자에게 그대로 알리세요.", **result)
+    if truncated:
+        result["next_commands"] = [rt.next_command("word.py", [command, "--target", target, "--start", str(shown_end + 1)],
+                                                   f"{shown_end + 1}번째부터 이어서 보기")]
+    return rt.ok(TOOL, command, f"{name}: {kind} {len(shown)}개 표시 (전체 {total}개)",
+                 "VERIFIED: 읽기 완료." + (" 일부만 표시되었으면 next_commands로 이어서 보세요." if truncated else ""), **result)
+
+
+def _read_comments(doc: Any, numbers: Sequence[int]) -> List[Dict[str, Any]]:
+    items = []
+    for i in numbers:
+        c = doc.Comments(i)
+        item: Dict[str, Any] = {"no": i, "author": str(getattr(c, "Author", "") or ""), "date": _com_date(getattr(c, "Date", ""))}
+        try:
+            item["page"] = _page_of(c.Scope)
+            item["target_text"] = _preview(str(c.Scope.Text), 80)
+        except Exception:
+            item["page"], item["target_text"] = None, ""
+        item["text"] = rt.clamp_text(_clean(c.Range.Text), 1000)[0]
+        try:
+            parent = c.Ancestor
+            if parent is not None:
+                item["reply_to"] = int(parent.Index)
+        except Exception:
+            pass
+        try:
+            item["done"] = bool(c.Done)
+        except Exception:
+            pass
+        items.append(item)
+    return items
+
+
+def _memo_rows(path: str) -> List[Tuple[str, str, Optional[int]]]:
+    """메모 CSV: 기준 글, 메모 내용[, 몇 번째 단락]. 첫 행이 머리글이면 건너뜁니다."""
+    rows = [r for r in rt.read_csv_rows(path) if any(str(v).strip() for v in r)]
+    if rows and str(rows[0][0]).strip().lower() in ("anchor", "기준", "기준 글", "앵커", "위치", "대상", "대상 글"):
+        rows = rows[1:]
+    out: List[Tuple[str, str, Optional[int]]] = []
+    for n, r in enumerate(rows, 1):
+        anchor = str(r[0]).strip() if r else ""
+        memo = str(r[1]).strip() if len(r) > 1 else ""
+        occ_raw = str(r[2]).strip() if len(r) > 2 else ""
+        if not anchor or not memo:
+            raise rt.InputError(f"메모 파일 {n}번째 줄에 기준 글 또는 메모 내용이 없습니다. 열: 기준 글, 메모 내용[, 몇 번째 단락].")
+        if occ_raw and not occ_raw.isdigit():
+            raise rt.InputError(f"메모 파일 {n}번째 줄의 3번째 열(몇 번째 단락)은 숫자여야 합니다: '{occ_raw}'")
+        out.append((anchor, memo, int(occ_raw) if occ_raw else None))
+    if not out:
+        raise rt.InputError("메모 파일에 내용이 없습니다. 열: 기준 글, 메모 내용[, 몇 번째 단락].")
+    return out
+
+
+def _comment_range(doc: Any, anchor: str, occurrence: Optional[int]) -> Any:
+    """메모를 달 범위: 기준 글이 든 단락을 고르고(여러 곳이면 [후보]) 그 안의 기준 글 자체."""
+    if len(anchor) > FIND_MAX:
+        raise rt.InputError(f"--anchor는 {FIND_MAX}자 이하여야 합니다. 앞부분 일부만 쓰세요.")
+    para = _anchor_paragraph(doc, anchor, occurrence, "after")
+    rng = doc.Range(int(para.Start), int(para.End))
+    return rng if _find(rng, anchor) else para
+
+
+def _comment_add(args, t: Any) -> Dict[str, Any]:
+    doc = t.doc
+    if args.file and os.path.splitext(args.file)[1].lower() in (".csv", ".tsv"):
+        rows = _memo_rows(rt.resolve_input_path(args.file, "메모 파일"))
+    else:
+        if not args.anchor:
+            raise rt.InputError("--anchor로 메모를 달 글을 지정하세요 (여러 개면 --file \"메모.csv\": 기준 글, 메모 내용).")
+        if args.file:
+            memo = rt.read_text_file(rt.resolve_input_path(args.file, "메모 파일")).strip()
+        else:
+            memo = (args.text or "").replace("\\n", "\n").strip()
+        if not memo:
+            raise rt.InputError("메모 내용이 없습니다. --text \"메모\" 또는 --file \"메모.txt\"를 지정하세요.")
+        rows = [(args.anchor, memo, args.occurrence)]
+    if len(rows) > 1:                               # 여러 개: 전부 찾을 수 있을 때만 단다 (일부만 달리지 않게)
+        problems = []
+        for n, (anchor, _memo, occ) in enumerate(rows, 1):
+            try:
+                _comment_range(doc, anchor, occ)
+            except rt.InputError as e:
+                msg = str(e).replace("[추천]", "추천:").replace("[후보]", "후보:")
+                problems.append(f"{n}번째 줄 '{_preview(anchor, 20)}': {msg}")
+        if problems:
+            raise rt.InputError(f"메모 {len(rows)}개 중 {len(problems)}개의 기준 글을 정할 수 없어 하나도 달지 않았습니다. "
+                                "메모 파일의 기준 글을 고치거나 3번째 열에 몇 번째 단락인지 적은 뒤 다시 실행하세요. "
+                                + " / ".join(problems[:10]))
+    before = int(doc.Comments.Count)
+    added = []
+    for anchor, memo, occ in rows:
+        rng = _comment_range(doc, anchor, occ)
+        doc.Comments.Add(Range=rng, Text=memo.replace("\n", "\r"))
+        added.append({"anchor": _preview(anchor, 40), "text": _preview(memo, 80), "page": _page_of(rng)})
+    t.set_focus()
+    after = int(doc.Comments.Count)
+    texts = {_norm(_clean(doc.Comments(i).Range.Text)) for i in range(1, after + 1)}
+    missing = [a["anchor"] for (_, memo, _), a in zip(rows, added) if _norm(memo) not in texts]
+    resolved = t.resolved()
+    fields = {"target_resolved": resolved, "added": added, "count": len(added), "comments_total": after}
+    preview = f"{resolved['name']}: 메모 {len(added)}개를 달았습니다 (문서 전체 메모 {after}개)"
+    if after - before != len(added) or missing:
+        return rt.ok_unverified(TOOL, "comment", preview,
+                                [f"메모 수가 {before} -> {after}로 기대({before + len(added)})와 다름"] if after - before != len(added)
+                                else [f"다시 읽은 메모에서 찾지 못함: {', '.join(missing[:5])}"], **fields)
+    return rt.ok(TOOL, "comment", preview,
+                 "VERIFIED: 메모를 달고 다시 읽어 확인했습니다. 잘못 달았으면 office.py undo로 되돌릴 수 있습니다.",
+                 verified=True, **fields)
+
+
+def cmd_comment(args) -> Dict[str, Any]:
+    if args.action == "add":
+        with off.open_target("word", args.target, readonly=False, focus=not args.no_focus,
+                             tool=TOOL, command="comment") as t:
+            return _comment_add(args, t)
+    with off.open_target("word", args.target, readonly=True) as t:
+        total = int(t.doc.Comments.Count)
+        items = _read_comments(t.doc, _window(total, args.start))
+        resolved = t.resolved()
+    return _list_result(resolved["name"], "comment", "검토 메모", items, total, args.start, args.target,
+                        target_resolved=resolved)
+
+
+WD_REVISION = {1: "삽입", 2: "삭제", 3: "서식 변경", 4: "단락 번호 변경", 5: "필드 표시 변경", 6: "조정", 7: "충돌",
+               8: "스타일 변경", 9: "바꾸기", 10: "단락 서식 변경", 11: "표 서식 변경", 12: "구역 서식 변경",
+               13: "스타일 정의 변경", 14: "이동(원래 자리)", 15: "이동(새 자리)", 16: "셀 삽입", 17: "셀 삭제",
+               18: "셀 병합", 19: "셀 분할", 20: "충돌 삽입", 21: "충돌 삭제"}
+
+
+def cmd_revisions(args) -> Dict[str, Any]:
+    with off.open_target("word", args.target, readonly=True) as t:
+        doc = t.doc
+        total = int(doc.Revisions.Count)
+        items = []
+        for i in _window(total, args.start):
+            r = doc.Revisions(i)
+            kind = int(getattr(r, "Type", 0) or 0)
+            item: Dict[str, Any] = {"no": i, "type": WD_REVISION.get(kind, f"기타({kind})"),
+                                    "author": str(getattr(r, "Author", "") or ""), "date": _com_date(getattr(r, "Date", ""))}
+            try:
+                item["page"] = _page_of(r.Range)
+                item["text"] = rt.clamp_text(_clean(r.Range.Text), 300)[0]
+            except Exception:
+                item["page"], item["text"] = None, ""
+            items.append(item)
+        try:
+            tracking = bool(doc.TrackRevisions)
+        except Exception:
+            tracking = None
+        resolved = t.resolved()
+    return _list_result(resolved["name"], "revisions", "변경 내용(변경 추적)", items, total, args.start, args.target,
+                        target_resolved=resolved, track_changes=tracking)
+
 
 
 # ==============================================================================
@@ -709,7 +1137,28 @@ def build_cli():
     p = sub.add_parser("read", help="내용 읽기")
     common(p)
     p.add_argument("--start", type=int, default=1, help="이 번호의 단락부터 읽기")
+    p.add_argument("--pages", help="이 쪽만 읽기 (예: 3, 2-5, 1,4,7)")
+    p.add_argument("--paragraphs", help="이 단락만 읽기 (예: 120-140, 141-, 7). 번호는 read/outline의 단락 번호")
+    p.add_argument("--section", help="이 제목의 장절만 읽기 (제목 글 일부, 예: \"1.1\", \"검증 방법\"). 하위 절 포함")
+    p.add_argument("--occurrence", type=int, help="--section 제목이 여러 개일 때 몇 번째인지 (오류의 [후보] 번호)")
     p.add_argument("--save", nargs="?", const=True, help="md 파일로 저장 (경로 생략 시 작업 폴더)")
+
+    p = sub.add_parser("outline", help="제목 구조(목차): 수준, 단락 번호, 쪽")
+    common(p)
+    p.add_argument("--start", type=int, default=1, help="이 번호의 제목부터 보기")
+
+    p = sub.add_parser("comment", help="검토 메모 목록 보기(list) / 메모 달기(add)")
+    common(p, write=True)
+    p.add_argument("--action", "-a", choices=["list", "add"], default="list", help="list(기본): 메모 목록, add: 메모 달기")
+    p.add_argument("--anchor", help="add: 메모를 달 글 (문서에 있는 그대로)")
+    p.add_argument("--text", help="add: 메모 내용. 줄바꿈은 \\n")
+    p.add_argument("--file", "-f", help="add: 메모 내용 파일(.txt/.md) 또는 여러 메모 CSV (열: 기준 글, 메모 내용[, 몇 번째 단락])")
+    p.add_argument("--occurrence", type=int, help="add: --anchor가 여러 단락에 있을 때 몇 번째인지 (오류의 [후보] 번호)")
+    p.add_argument("--start", type=int, default=1, help="list: 이 번호의 메모부터 보기")
+
+    p = sub.add_parser("revisions", help="변경 내용 추적(수정 기록) 목록")
+    common(p)
+    p.add_argument("--start", type=int, default=1, help="이 번호의 변경부터 보기")
 
     p = sub.add_parser("info", help="문서 요약")
     common(p)
@@ -754,7 +1203,8 @@ def build_cli():
     return parser
 
 
-HANDLERS = {"read": cmd_read, "info": cmd_info, "write": cmd_write, "replace": cmd_replace, "export": cmd_export}
+HANDLERS = {"read": cmd_read, "info": cmd_info, "write": cmd_write, "replace": cmd_replace, "export": cmd_export,
+            "outline": cmd_outline, "comment": cmd_comment, "revisions": cmd_revisions}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

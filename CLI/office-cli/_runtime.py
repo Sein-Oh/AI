@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.3.0"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.4.0"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -198,6 +198,16 @@ def ok(tool: str, command: str, preview: str, directive: str = "", **fields: Any
     elif not directive.startswith("VERIFIED:"):
         directive = "VERIFIED: " + directive
     payload["agent_directive"] = directive
+    return payload
+
+
+def ok_unverified(tool: str, command: str, preview: str, unverified: List[str], **fields: Any) -> Dict[str, Any]:
+    """실행은 됐지만 결과를 다시 읽어 확인하지 못한 성공 응답 (R1). LLM은 재시도하지 않고 unverified를 그대로 알립니다."""
+    payload: Dict[str, Any] = {"status": "ok", "tool": tool, "command": command, "preview": preview}
+    payload.update(fields)
+    payload.update(verified=False, unverified=list(unverified))
+    payload["agent_directive"] = ("UNVERIFIED: 실행했지만 확인하지 못했습니다: " + "; ".join(unverified)
+                                  + ". 다시 실행하지 말고 사용자에게 그대로 알리세요.")
     return payload
 
 

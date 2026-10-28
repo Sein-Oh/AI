@@ -126,6 +126,37 @@ class FakeTable:
         return cell
 
 
+class FakeComment:
+    def __init__(self, scope, text, author="검토자", done=False):
+        self.Scope = scope
+        self.Range = Props()
+        self.Range.Text = text
+        self.Author = author
+        self.Date = "2026-10-28 10:00"
+        self.Done = done
+        self.Ancestor = None
+
+
+class FakeComments:
+    def __init__(self, doc):
+        self.doc = doc
+        self.items = []
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def __call__(self, i):
+        return self.items[i - 1]
+
+    def Add(self, Range=None, Text=""):
+        c = FakeComment(FakeRange(self.doc, Range.Start, Range.End), Text)
+        self.items.append(c)
+        self.items.sort(key=lambda x: x.Scope.Start)      # Word도 문서 순서로 번호를 매김
+        self.doc.Saved = False
+        return c
+
+
 class FakeStyles:
     def __call__(self, key):
         return key
@@ -141,6 +172,7 @@ class FakeWordDocument:
         self.Saved = True
         self.Styles = FakeStyles()
         self.WordOpenXML = "<xml/>"
+        self.Comments = FakeComments(self)
 
     def replace(self, s, e, v):
         self.text = self.text[:s] + v + self.text[e:]

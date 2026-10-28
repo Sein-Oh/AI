@@ -1671,6 +1671,105 @@ def test_J(ctx):
 
 
 # ---------------------------------------------------------------------------
+# K. 검토 기능: 워드 목차·장절·쪽·단락 읽기, 검토 메모, 변경 추적, PPT 노트
+# ---------------------------------------------------------------------------
+def test_K(ctx):
+    tag = time.strftime("%H%M%S")           # 다시 실행해도 기준 글이 겹치지 않게
+    docx = ctx.path("A.docx")
+
+    def ok_(d):
+        return (d or {}).get("status") == "ok"
+
+    def k1():
+        md = f"# K장 {tag}\\nK 본문 {tag}\\n## K절 {tag}\\nK 세부 {tag}\\n# K다음장 {tag}\\nK 다음 본문 {tag}"
+        run_cli("word.py", "write", "--target", docx, "--text", md)
+        d, c, r, e = run_cli("word.py", "outline", "--target", docx, "--start", "1")
+        heads = {h["text"]: h for h in (d or {}).get("headings", [])}
+        while (d or {}).get("next_commands"):
+            nxt = d["next_commands"][0]["command"].split("--start")[-1].strip().strip('"')
+            d = run_cli("word.py", "outline", "--target", docx, "--start", nxt)[0]
+            heads.update({h["text"]: h for h in (d or {}).get("headings", [])})
+        h1, h2 = heads.get(f"K장 {tag}"), heads.get(f"K절 {tag}")
+        d2, c, r, e = run_cli("word.py", "read", "--target", docx, "--section", f"K장 {tag}")
+        got = [p["text"] for p in (d2 or {}).get("paragraphs", [])]
+        want = [f"K장 {tag}", f"K 본문 {tag}", f"K절 {tag}", f"K 세부 {tag}"]
+        ok = ok_(d2) and h1 and h2 and h1["level"] == 1 and h2["level"] == 2 and isinstance(h1.get("page"), int) and got == want
+        record(ctx, "K1", "워드 outline(수준·쪽) + read --section(하위 절 포함, 다음 장 전까지)", ok,
+               f"제목={h1}, {h2}, 장절 단락={got}", d2, c, r, e)
+
+    def k2():
+        run_cli("word.py", "write", "--target", docx, "--page-break")
+        run_cli("word.py", "write", "--target", docx, "--text", f"K 쪽 확인 {tag}")
+        doc = wd_doc("A.docx")
+
+        def page_of():
+            rng = doc.Content
+            f = rng.Find
+            f.ClearFormatting()
+            return int(rng.Information(3)) if f.Execute(FindText=f"K 쪽 확인 {tag}", MatchCase=True) else None
+        page = com_retry(page_of)
+        d, c, r, e = run_cli("word.py", "read", "--target", docx, "--pages", str(page))
+        hit = next((p for p in (d or {}).get("paragraphs", []) if p["text"] == f"K 쪽 확인 {tag}"), None)
+        d2 = run_cli("word.py", "read", "--target", docx, "--paragraphs", str(hit["no"]))[0] if hit else None
+        same = [p["text"] for p in (d2 or {}).get("paragraphs", [])] == [f"K 쪽 확인 {tag}"]
+        ok = ok_(d) and page and hit and hit.get("page") == page and same
+        record(ctx, "K2", "워드 read --pages(쪽 번호) + --paragraphs(같은 단락 번호)", ok,
+               f"Word 쪽={page}, read 결과={hit}, --paragraphs 일치={same}", d, c, r, e)
+
+    def k3():
+        doc = wd_doc("A.docx")
+        n0 = com_retry(lambda: doc.Comments.Count)
+        d, c, r, e = run_cli("word.py", "comment", "--target", docx, "--action", "add",
+                             "--anchor", f"K 본문 {tag}", "--text", f"K 검토 메모 {tag}")
+        doc = wd_doc("A.docx")
+        n1 = com_retry(lambda: doc.Comments.Count)
+        scopes = com_retry(lambda: [(doc.Comments(i).Scope.Text, doc.Comments(i).Range.Text) for i in range(1, n1 + 1)])
+        d2 = run_cli("word.py", "comment", "--target", docx, "--start", "1")[0]
+        listed = any(it.get("text") == f"K 검토 메모 {tag}" for it in (d2 or {}).get("items", []))
+        ok = ok_(d) and (d or {}).get("verified") is True and n1 == n0 + 1 \
+            and (f"K 본문 {tag}", f"K 검토 메모 {tag}") in scopes and (listed or (d2 or {}).get("truncated"))
+        record(ctx, "K3", "워드 메모 달기(기준 글에) + 메모 목록", ok,
+               f"메모 {n0}->{n1}, 목록에 있음={listed}", d, c, r, e)
+
+    def k4():
+        doc = wd_doc("A.docx")
+
+        def tracked_insert():
+            doc.TrackRevisions = True
+            try:
+                doc.Content.InsertAfter(f"K 변경 문장 {tag}")
+            finally:
+                doc.TrackRevisions = False
+        com_retry(tracked_insert)
+        d, c, r, e = run_cli("word.py", "revisions", "--target", docx)
+        items = (d or {}).get("items", [])
+        hit = next((it for it in items if f"K 변경 문장 {tag}" in it.get("text", "")), None)
+        ok = ok_(d) and (d or {}).get("count", 0) >= 1 and hit and hit.get("type") == "삽입"
+        record(ctx, "K4", "워드 변경 추적 목록 (삽입 1건 이상, 종류·작성자·쪽)", ok, f"count={(d or {}).get('count')}, 항목={hit}",
+               d, c, r, e)
+        com_retry(lambda: wd_doc("A.docx").Revisions.AcceptAll())
+
+    def k5():
+        d, c, r, e = run_cli("ppt.py", "notes", "--target", "A.pptx", "--slide", "1", "--text", f"K 노트 {tag}\\n둘째 줄")
+        d2 = run_cli("ppt.py", "notes", "--target", "A.pptx", "--slide", "1", "--text", "덧붙인 줄", "--append")[0]
+
+        def notes_text():
+            holders = pp_prs("A.pptx").Slides(1).NotesPage.Shapes.Placeholders
+            return next(str(holders(i).TextFrame.TextRange.Text) for i in range(1, holders.Count + 1)
+                        if holders(i).PlaceholderFormat.Type == 2)
+        text = com_retry(notes_text)
+        d3 = run_cli("ppt.py", "notes", "--target", "A.pptx", "--slides", "1")[0]
+        listed = ((d3 or {}).get("notes") or [{}])[0].get("notes", "")
+        want = f"K 노트 {tag}\r둘째 줄\r덧붙인 줄"
+        ok = ok_(d) and ok_(d2) and (d2 or {}).get("verified") is True and text == want and listed == want.replace("\r", "\n")
+        record(ctx, "K5", "PPT 노트 쓰기 + --append + 읽기", ok, f"노트={text!r}, 읽기={listed!r}", d2, c, r, e)
+
+    for tid, title, fn in [("K1", "목차/장절", k1), ("K2", "쪽/단락", k2), ("K3", "메모", k3), ("K4", "변경 추적", k4),
+                           ("K5", "PPT 노트", k5)]:
+        run_test(ctx, tid, title, fn)
+
+
+# ---------------------------------------------------------------------------
 # 마무리: 확인용 그림 저장, 테스트 문서 닫기
 # ---------------------------------------------------------------------------
 def save_shots(ctx):
@@ -2088,7 +2187,7 @@ def tool_error_log_lines():
 
 
 GROUPS = [("A", test_A), ("B", test_B), ("C", test_C), ("D", test_D), ("E", test_E), ("F", test_F), ("G", test_G),
-          ("H", test_H), ("I", test_I), ("J", test_J)]
+          ("H", test_H), ("I", test_I), ("J", test_J), ("K", test_K)]
 
 
 def main():
