@@ -101,6 +101,40 @@ def test_failed_ledger_write_rolls_back_and_restores_old_version(work, tmp_path,
     assert not any(p.name.startswith((".bak_", ".tmp_")) for p in root.iterdir())
 
 
+def test_interrupt_after_ledger_line_keeps_version(work, tmp_path, monkeypatch, capsys):
+    """Once history.jsonl names the version, an interrupt during the history.json sync must not roll it back."""
+    import ml_train
+    w = tmp_path / "copy"
+    shutil.copytree(work["dir"], w)
+    data, root = str(w / "safe.csv"), w / "safe_ml_data"
+    real = ml_train.atomic_write_text
+
+    def interrupt_json_sync(path, *a, **k):
+        if os.path.basename(path) == "history.json":
+            raise KeyboardInterrupt
+        return real(path, *a, **k)
+    monkeypatch.setattr(ml_train, "atomic_write_text", interrupt_json_sync)
+    n_before = len(_ledger(root))
+    code, payload = _train_in_process(monkeypatch, capsys, data)
+    assert code == 130
+    recorded = _ledger(root)
+    assert len(recorded) == n_before + 1
+    new_version = recorded[-1]["version"]
+    assert (root / new_version / "leaderboard.json").exists()          # ledger and folders agree
+
+
+def test_leftover_backup_blocks_overwrite(work, tmp_path, monkeypatch, capsys):
+    """A leftover .bak_vX may be the only good copy: --overwrite refuses instead of deleting it."""
+    w = tmp_path / "copy"
+    shutil.copytree(work["dir"], w)
+    data, root = str(w / "safe.csv"), w / "safe_ml_data"
+    shutil.copytree(root / "v2", root / ".bak_v2")
+    marker = root / ".bak_v2" / "leaderboard.json"
+    before = marker.read_bytes()
+    code, payload = _train_in_process(monkeypatch, capsys, data, "-v", "v2", "--overwrite")
+    assert code == 1 and payload["agent_directive"].startswith("STOP_RETRY")
+    assert ".bak_v2" in payload["message"] and marker.read_bytes() == before
+
 def test_parked_backup_restored_on_next_run(tmp_path):
     import ml_train
     root = tmp_path / "d_ml_data"

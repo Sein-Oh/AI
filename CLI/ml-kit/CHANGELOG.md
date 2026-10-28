@@ -17,6 +17,9 @@
   (프로세스가 죽어 남은 `.bak_vX`는 다음 학습 때 `vX`가 없으면 복원).
 - 원장(`history.jsonl`) 기록을 버전 폴더 커밋 **뒤로** 옮겼습니다. 커밋이 실패하면 원장에 없는 버전이 남지 않고,
   원장 기록이 실패하면 방금 만든 버전 폴더를 롤백합니다.
+  `history.jsonl`에 한 줄이 기록되는 즉시 그 버전을 확정하므로, 이후 `history.json` 동기화 중에 중단돼도 폴더를 지우거나 되돌리지 않습니다
+  (원장과 폴더가 항상 일치).
+- `--overwrite` 교체 시 이전 덮어쓰기의 백업 `.bak_vX`가 남아 있으면 지우지 않고 `STOP_RETRY`로 멈춥니다 (유일한 정상본일 수 있음).
 - `ml_predict.py --out`의 파일이 이미 있으면 덮어쓰던 동작, `ml_report.py`가 같은 이름(`ML결과보고서_<데이터>_<버전>.docx`)의
   기존 보고서를 덮어쓰던 동작을 막았습니다. 시각을 붙인 새 이름으로 저장하고 `recovered`에 적습니다. 덮어쓰기는 새 인자 `--overwrite`.
 - 실기 러너 `tools/run_win_tests.py`가 `--dir` 폴더를 확인 없이 `rmtree` 하던 동작을 막았습니다.
@@ -173,6 +176,7 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] `recovered` 나머지: cp949 -> utf-8-sig 폴백, .xls -> .xlsx 저장 (잠금 새 이름 저장과 덮어쓰기 회피는 2.3.0), 폴백에도 `[WARN]`
 - [ ] `--history` 원장 0건을 `status: ok` + `record_count: 0`으로 (ml_train.py:1582, `no_history`는 별도 키로 유지), 빈 행만 있는 입력의 0행 명시 오류(ml_predict.py:444)
 - [ ] 파괴적 작업 미리보기 `--dry-run` (R8): 학습 `--overwrite`, 예측·보고서 `--overwrite` 대상
+- [ ] `--overwrite`로 버전을 교체하면 원장에 같은 version 기록이 2개 생김: `ml_report -d` 최고 버전 선택과 `is_best` 비교가 옛 기록을 볼 수 있음 (교체 표시 또는 마지막 기록 우선)
 - [ ] `--dtypes` 컬럼명을 resolve_column_names로 매칭 + `[추천]`, int 변환의 fillna(0) 제거 또는 경고(ml_train.py:237-242)
 - [ ] 예측 `--targets` 불일치(ml_predict.py:904), 보고서 버전 없음(ml_report.py:772)에 `[추천] <후보>`
 - [ ] JSON 목록 상한 + `truncated`: `--history` records, feature_types/features_used, 오류 메시지 컬럼 목록

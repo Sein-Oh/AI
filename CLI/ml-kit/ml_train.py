@@ -35,7 +35,7 @@ import time
 import argparse
 import warnings
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -882,8 +882,8 @@ class TransactionGuard:
             if os.path.exists(os.path.join(self.data_root, self.version_str)) and not self.overwrite:
                 raise InputError(
                     f"버전 폴더 '{self.version_str}'이(가) 이미 있어 덮어쓰지 않았습니다. "
-                    f"[추천] --version {self._next_version()} "
-                    f"(기존 {self.version_str}를 바꾸려면 사용자 확인 후 --overwrite)"
+                    f"기존 {self.version_str}를 바꾸는 것은 사용자가 요청한 경우에만 --overwrite로 합니다. "
+                    f"[추천] --version {self._next_version()}"
                 )
         else:
             # Auto-infer next version (incomplete vN folders still take their number)
@@ -936,8 +936,12 @@ class TransactionGuard:
             if not self.overwrite:
                 raise InputError(f"버전 폴더 '{self.version_str}'이(가) 이미 있어 덮어쓰지 않았습니다.")
             # Park the old version; it is deleted only after the new one is recorded (finalize)
-            self.backup_dir = os.path.join(self.data_root, f".bak_{self.version_str}")
-            remove_tree(self.backup_dir)
+            backup = os.path.join(self.data_root, f".bak_{self.version_str}")
+            if os.path.exists(backup):
+                # A leftover backup may be the only good copy of an earlier version: never delete it here
+                raise InputError(f"이전 덮어쓰기의 백업 폴더 '.bak_{self.version_str}'이(가) 남아 있어 진행하지 않았습니다. "
+                                 f"사용자가 내용을 확인한 뒤 직접 정리하세요.")
+            self.backup_dir = backup
             retry_fs(lambda: os.rename(self.final_dir, self.backup_dir))
         retry_fs(lambda: os.rename(self.tmp_dir, self.final_dir))
         self.is_committed = True
@@ -1001,10 +1005,13 @@ def verify_version_dir(version_dir: str, target_names: List[str], ledger_path: s
 # 7. SSOT Ledger (history.jsonl) Management
 # ==============================================================================
 
-def append_history_ledger(ledger_path: str, record: Dict[str, Any]) -> None:
+def append_history_ledger(ledger_path: str, record: Dict[str, Any],
+                          on_recorded: Optional[Callable[[], None]] = None) -> None:
     """
     Appends experiment record to history.jsonl and automatically synchronizes
     history.json (standard indented JSON array) as Single Source of Truth (SSOT).
+    on_recorded runs right after the jsonl line is written, before the json sync, so a training run
+    can mark its version folder final the moment the ledger names it (no rollback after that point).
     """
     data_root = os.path.dirname(ledger_path)
     os.makedirs(data_root, exist_ok=True)
@@ -1012,6 +1019,8 @@ def append_history_ledger(ledger_path: str, record: Dict[str, Any]) -> None:
     # 1. Append to history.jsonl (streaming ledger)
     with open(ledger_path, "a", encoding="utf-8", newline="\n") as f:
         f.write(dumps_json(record) + "\n")
+    if on_recorded:
+        on_recorded()
 
     # 2. Synchronize history.json (standard formatted JSON array), written atomically
     json_path = os.path.join(data_root, "history.json")
@@ -1581,8 +1590,7 @@ def execute_ml_train(args: argparse.Namespace) -> Dict[str, Any]:
         # Commit Transaction: atomic rename .tmp_vX -> vX, then record it in the ledger.
         # The ledger never names a version folder that does not exist (a failed commit leaves no record).
         final_version_dir = guard.commit()
-        append_history_ledger(ledger_path, history_record)
-        guard.finalize()
+        append_history_ledger(ledger_path, history_record, on_recorded=guard.finalize)
         unverified = verify_version_dir(final_version_dir, target_names, ledger_path, current_version)
         for u in unverified:
             sys.stderr.write(f"[WARN] 저장 확인 실패: {u}\n")
