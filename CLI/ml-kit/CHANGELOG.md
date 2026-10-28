@@ -108,7 +108,7 @@ LLM이 타겟·버전을 고르기를 원하지 않습니다. 사용자와 정�
 
 ## [2.3.0] - 2026-10-28
 
-저장소 지침(AGENTS.md "JIT 자가복구" 3번: 덮어쓰기·삭제는 사용자 확인 필요) 반영 1차. 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md` 2절.
+저장소 지침(AGENTS.md "JIT 자가복구" 3번: 덮어쓰기·삭제는 사용자 확인 필요) 반영 1차. 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md` 2절.
 구현은 `CLI/README.md` "공통 런타임 구현 규칙" R1(사후 확인), R3(`recovered`), R4(덮어쓰기 방지).
 
 ### 수정 (사용자 확인 없이 지우거나 덮어쓰던 동작)
@@ -276,7 +276,7 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] 회사 PC에서 6타겟 실제 데이터로 `ml_report.py -f` 소요 시간 확인
 
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
-상세 근거: `docs/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
+상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
 - [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)
 - [ ] 예측 결과와 보고서 저장 후 다시 읽어 확인(행 수, docx 열기), 실패하면 `VERIFIED:` 대신 사유
 - [ ] `recovered` 나머지: cp949 -> utf-8-sig 폴백, .xls -> .xlsx 저장 (잠금 새 이름 저장과 덮어쓰기 회피는 2.3.0), 폴백에도 `[WARN]`

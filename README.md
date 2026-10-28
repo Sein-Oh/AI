@@ -17,7 +17,7 @@ AI_WORK/
 ├── docs/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
-│   ├── COMPLIANCE_REVIEW_*.md # 도구별 지침 준수 검토 결과
+│   ├── history/               # 지난 설계·검토 기록 (1.0 설계, 1차 지침 준수 검토)
 │   ├── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내
 │   └── test_logs/             # 사내 PC 실기 테스트 결과 원본
 ├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
@@ -38,7 +38,6 @@ AI_WORK/
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
-        ├── WORK_PLAN.md       # 1.0 설계 기록
         ├── requirements.txt
         ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
         ├── reader.py          # PDF/HWP/Office 파일 읽기, 캐시 등록, 근거(쪽/장절/번호) 검색 (Office 불필요)
