@@ -27,19 +27,31 @@ AI_WORK/
     │   ├── ml_train.py        # 1단계: 학습
     │   ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
     │   ├── ml_report.py       # 3단계: Word 보고서
+    │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.1.0)
+    ├── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.1.0)
+    │   ├── SKILL.md           # 에이전트용 스킬
+    │   ├── README.md          # 상세 설명서
+    │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
+    │   ├── WORK_PLAN.md       # 1.0 설계 기록
+    │   ├── requirements.txt
+    │   ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
+    │   ├── reader.py          # PDF/HWP/EML/Office 파일 읽기와 검색 (Office 불필요)
+    │   ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
+    │   ├── _runtime.py / _office.py   # 공통 모듈
+    │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너), office-cli-test/ (실기 테스트 스킬)
+    │   └── tests/             # 오프라인 테스트 (가짜 COM + 실제 샘플 파일)
+    └── doc-classifier/        # 폴더 파일 목록화 -> 분류 -> 표본 확인 -> 엑셀 보고서 (0.9.2)
         ├── SKILL.md           # 에이전트용 스킬
         ├── README.md          # 상세 설명서
         ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
-        ├── WORK_PLAN.md       # 1.0 설계 기록
+        ├── WORK_PLAN.md       # 설계 기록
         ├── requirements.txt
-        ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
-        ├── reader.py          # PDF/HWP/EML/Office 파일 읽기와 검색 (Office 불필요)
-        ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
-        ├── _runtime.py / _office.py   # 공통 모듈
+        ├── rules.example.json # 분류 규칙 예시
+        ├── doc_classifier.py  # 진입점
+        ├── _dc_*.py           # 단계별 모듈 (_dc_runtime.py: 공통 런타임)
         ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
-        └── tests/             # 오프라인 테스트 (가짜 COM + 실제 샘플 파일)
+        └── tests/             # 오프라인 테스트
 ```
 
 ## 빠른 시작
@@ -47,6 +59,7 @@ AI_WORK/
 ```bash
 python -m pip install -r CLI/ml-kit/requirements.txt -c constraints.txt
 python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
+python -m pip install -r CLI/doc-classifier/requirements.txt -c constraints.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.

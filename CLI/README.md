@@ -31,5 +31,12 @@ CLI/<tool>/           # 폴더명 = 스킬명 (예: ml-kit)
    - `STOP_RETRY:` – 입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도.
    - `ERROR:` – 내부 오류. 재시도 금지.
 4. 에이전트가 판단할 일을 줄인다: 이름 자동 매칭, 기본값, 자동 상속, 오타 추천을 도구가 처리.
-5. 이모지 금지, 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`.
+5. 문자 규칙: 이모지·원문자·장식 기호 금지, 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]` ([`AGENTS.md`](../AGENTS.md) "문자 규칙").
 6. 폐쇄망: 실행 중 네트워크 접근 금지. [표준 환경](../docs/ENVIRONMENT.md)에 있는 라이브러리만 사용 ([`docs/WINDOWS_OFFLINE.md`](../docs/WINDOWS_OFFLINE.md)).
+7. 공통 결과 키 (해당할 때만 넣음):
+   - `next_commands` – 이어서 그대로 실행할 전체 명령 목록.
+   - `truncated` – 결과를 상한에서 잘랐으면 `true`, 전체 결과 파일 경로를 함께 제공.
+   - `recovered` – 도구가 실패를 즉시 복구해 결과가 달라진 일 (예: 잠긴 파일 -> 새 이름 저장). `warnings`와 구분.
+8. 실패한 실행(exit 1, 2)은 `<도구 데이터 폴더>/logs/errors.txt`에 자동 기록. 로그 경로는 stdout JSON에 넣지 않음.
+
+설계 권장(사후 확인, 빈 결과 명시, 미리보기와 되돌리기, 인자 이름 일관성)과 JIT 자가복구 규칙은 [`AGENTS.md`](../AGENTS.md)에 있습니다.

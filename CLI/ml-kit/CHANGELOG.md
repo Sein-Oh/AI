@@ -126,3 +126,5 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
 - [ ] 260자 넘는 긴 경로
 - [ ] 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙음 (`_pred_<시각>_<시각>.csv`)
+- [ ] 저장소 지침(AGENTS.md, 2026-10-28) 반영: 실패 실행을 `data/logs/errors.txt`에 기록, 결과 JSON `recovered` 키(잠금 새 이름 저장 등),
+  빈 결과 문구와 `VERIFIED:` 사후 확인 점검, 기존 버전 폴더를 지우는 작업의 `--dry-run` 검토

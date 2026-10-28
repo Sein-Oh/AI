@@ -123,3 +123,5 @@ WORK_PLAN 0~1단계: 뼈대와 목록화(scan).
 - [ ] 실제 OneDrive 클라우드 자리표시자로 `cloud` 판정과 peek 제외 확인 (S12, 집 PC에는 자리표시자 파일이 없었음)
 - [ ] 회사 PC DRM 문서: HWP/HWPX가 olefile/zip으로 읽히는지, 공유 중인 파일을 다른 PC가 열고 있을 때 peek 동작 (WORK_PLAN 9절 남은 확인)
 - [ ] 1.1 후보: 증분 스캔(바뀐 폴더만), peek 확인 결과를 학습 데이터로 한 파일명 n-gram 분류기, 압축 파일 내부 목록, 내용 해시 중복
+- [ ] 저장소 지침(AGENTS.md, 2026-10-28) 반영: 결과 JSON `recovered` 키(중단 후 이어하기, 잠긴 보고서 새 이름 저장 등),
+  `retry_fs`/`remove_tree` 보강, 빈 결과 문구와 `VERIFIED:` 사후 확인 점검, 이전 CSV를 지우는 `summary --save`의 `--dry-run` 검토

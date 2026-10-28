@@ -92,3 +92,9 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증.
 - 회사 PC에서 `office.py transfer --probe` 결과 확인. (집 PC Office 2007: export, redraw 성공 / relay는 "워드에 붙여넣기 안 됨"으로 실패)
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
+
+### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
+- 실패 실행을 `data/logs/errors.txt`에 기록 (기준 구현: doc-classifier `write_error_log`).
+- 결과 JSON `recovered` 키 (잠금 새 이름 저장, COM 재시도, 색인 재생성 등). 기존 `warnings`/`notes`와 구분.
+- `remove_tree` 등 JIT 자가복구 표의 공통 함수 중 없는 것 보강, 빈 결과 문구와 `VERIFIED:` 사후 확인 점검.
+- 덮어쓰기·일괄 수정 명령의 `--dry-run` 검토 (되돌리기는 `undo`로 이미 제공).

@@ -3,16 +3,16 @@
 OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에서 작업하는 모든 에이전트가 따르는 단일 원본입니다.
 
 ## 저장소 성격
-- `CLI/<tool>/` 의 스크립트는 **Windows 11 폐쇄망에서 26B~30B 경량 LLM 에이전트가 스킬로 호출하는 CLI 도구**입니다.
+- `CLI/<tool>/` 의 스크립트는 **Windows 11 폐쇄망에서 26B~30B 경량 LLM 에이전트가 스킬로 호출하는 CLI 도구**(Agent-Computer Interface, ACI)입니다.
 - 소비자는 사람이 아닌 경량 LLM입니다. 출력 형식의 작은 변화도 에이전트를 깨뜨립니다.
-- 설계 원칙: **LLM 개입 최소화** – 판단은 도구가 하고, LLM은 명령 1회 실행 + JSON 1줄 해석만 한다.
+- 설계 원칙: **LLM 개입 최소화** – 판단과 복구는 도구가 하고, LLM은 명령 1회 실행 + JSON 1줄 해석만 한다.
 
 ## 사용자 환경 (모든 작업의 전제)
 | 항목 | 값 |
 |---|---|
 | OS | Windows 11, **폐쇄망** (런타임 인터넷 접근 불가) |
 | Python | **WinPython**, Python 3.13.13, 시스템 PATH 등록 |
-| 실행 명령 | `python`, `python -m pip` 만 사용 (`py`, `python3`, 단독 `pip` 금지) |
+| 실행 명령 | `python`, `python -m pip` 만 사용 (`py`, `python3`, 단독 `pip` 금지). 명령 예시·스킬·배치 파일 포함 |
 | 에이전트 | **OpenCode** + 26B~30B 경량 LLM, 도구는 OpenCode 스킬로 제공 |
 | 주요 라이브러리 | pandas 3.0.5, scikit-learn 1.9.0, scipy 1.18.1, numpy/joblib(의존성), openpyxl 3.1.5, python-docx 1.2.0, python-pptx 1.0.2, matplotlib 3.11.1, seaborn 0.13.2, pymupdf 1.28.2, olefile 0.47, opencv-python 5.0.0.93, PyYAML 6.0.3, python-dateutil 2.9.0.post0, pywin32 312, pytest 9.1.1, pymupdf4llm 1.28.2, fastapi 0.141.1, fastmcp 3.4.7, mcp 1.28.1, langgraph 1.2.11, openai 2.54.0 |
 | 버전 기준 | 루트 `constraints.txt` (전체 목록). 상세 설명: `docs/ENVIRONMENT.md` |
@@ -22,22 +22,94 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 
 ## 반드시 지킬 ACI 계약 (상세: CLI/README.md)
 1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr.
-2. exit 0 = ok, 1 = error, 2 = 인자 오류, 130 = 중단. 에러 시 `agent_directive`는 `STOP_RETRY:` 또는 `ERROR:`.
-   - ml-kit: 모든 진입점은 `run_cli()` + `JsonArgumentParser` 사용 (공통 런타임은 `ml_predict.py` PART C).
-3. 이모지/원문자 금지. 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`.
+2. exit 0 = ok, 1 = error, 2 = 인자 오류, 130 = 중단.
+   - 성공: `"status": "ok"`, `agent_directive`는 `VERIFIED:`로 시작.
+   - 실패: `"status": "error"`, `agent_directive`는 `STOP_RETRY:`(입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도) 또는 `ERROR:`(내부 오류, 재시도 금지).
+3. 모든 진입점은 공통 런타임의 `run_cli()` + `JsonArgumentParser`를 사용한다.
 4. 기존 CLI 인자·JSON 키는 삭제/의미 변경 금지 (추가는 OK). 바꿔야 하면 alias 유지.
-5. 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/model_<target>.joblib|json`)과 원장 스키마는 하위 호환.
-6. 학습과 추론이 같아야 하는 로직(데이터 로딩, 수치 변환, `--eval` 수식)은 `ml_predict.py` PART C 한 곳에만 둔다.
-   `ml_predict.py`는 다른 ml-kit 파일을 import하지 않는다 (모델 폴더와 함께 단독 배포). `ml_train.py`/`ml_report.py`가 `ml_predict.py`를 import한다.
+5. 문자 규칙(아래)을 지킨다.
+
+## ACI 설계 권장
+1. **사후 확인**: `VERIFIED:`는 결과를 실제로 확인했을 때만 붙인다. 쓰기 작업은 저장 후 다시 읽어 기대값과 비교하고,
+   확인하지 못했으면 `ok`여도 `VERIFIED:` 대신 무엇을 확인하지 못했는지 적는다.
+2. **빈 결과 명시**: 0건도 성공이다. `"count": 0`과 "찾은 항목 없음"을 `agent_directive`에 분명히 적는다. 빈 배열만 주지 않는다.
+3. **다음 행동 제시**: 이어서 할 일이 있으면 `next_commands`에 그대로 실행 가능한 전체 명령을 넣는다.
+   LLM이 인자를 조합하거나 문서를 다시 읽지 않아도 되게 한다.
+4. **출력 양 제한**: JSON에 담는 목록·텍스트는 도구별 상한을 두고, 넘으면 잘라서 `truncated: true`와 전체 결과 파일 경로를 함께 준다.
+5. **인자 이름 일관성**: 도구 간 같은 개념은 같은 인자 이름을 쓴다 (`--file`, `--sheet`, `--save`, `--dry-run` 등). 새 인자는 기존 도구의 이름을 먼저 찾아본다.
+6. **미리보기와 되돌리기**: 덮어쓰기·삭제·일괄 수정 같은 파괴적 작업은 `--dry-run`(변경 없이 결과 미리보기)을 제공하고,
+   가능하면 되돌리기 지점을 남긴다 (예: office-cli `undo`).
+7. **판단 대행**: 이름 자동 매칭, 기본값, 자동 상속, 오타 추천은 도구가 처리한다 (CLI/README.md 공통 계약 4번).
+
+## JIT 자가복구 권장
+실패를 LLM에게 넘겨 재시도하게 하지 말고, 실패가 난 그 자리에서(Just-In-Time) 도구가 즉시 복구한다.
+경량 LLM은 오류를 보고 올바른 대응을 고르는 데 약하다. 복구는 도구가 하고, LLM에는 결과만 전달한다.
+
+1. 복구 대상: 원인이 분명하고, 복구해도 결과의 의미가 바뀌지 않는 실패만.
+   | 실패 | 즉시 복구 |
+   |---|---|
+   | 저장 대상이 Excel/Word에서 열려 잠김 | `_YYYYMMDD_HHMMSS`를 붙인 새 이름으로 저장 (`save_with_lock_fallback`) |
+   | 백신/탐색기가 파일·폴더를 잡고 있음 | 짧은 대기 후 재시도 (`retry_fs`, `remove_tree`, 최대 6회) |
+   | 입력 인코딩 불일치 | UTF-8/BOM/UTF-16/CP949 자동 판별 (`read_text_file`) |
+   | COM 호출 거부(Office가 바쁨) | 짧은 대기 후 재시도 |
+   | 캐시·색인 손상 | 버리고 새로 생성 |
+   | 장시간 작업 중단 | 진행 상태를 저장해 두고 다음 실행 때 이어서 진행 |
+   | 선택 라이브러리 없음 | 대체 경로가 있으면 사용, 없으면 해당 기능만 `STOP_RETRY:`로 설치 명령(`python -m pip install ...`) 안내 |
+2. 복구 한도: 재시도는 횟수와 시간 상한을 둔다. 무한 루프 금지. 한도를 넘으면 오류 JSON을 낸다.
+3. 복구 금지 (사용자 확인이 필요한 경우): 덮어쓰기, 삭제, 원본 수정, 후보가 둘 이상인 추측, 데이터 값을 바꾸는 보정.
+   이때는 `STOP_RETRY:` + message에 `[추천] <값>`을 넣는다.
+4. 복구는 숨기지 않는다.
+   - stderr에 `[WARN] <무엇이 실패했고 어떻게 복구했는지>`.
+   - stdout JSON에 `recovered` 배열 키를 추가한다 (예: `["잠김 -> report_20261028_101500.xlsx로 저장"]`). 복구가 없으면 생략.
+     `warnings`(주의만 하면 되는 일)와 구분한다: `recovered`는 실제로 결과가 달라진 일이다.
+   - 결과 경로가 바뀌었으면 JSON 경로 키에는 실제 저장 경로를 넣는다.
+5. 복구 성공은 `status: ok` / `VERIFIED:`. LLM은 `recovered`를 사용자에게 그대로 전달만 한다.
+6. 복구 함수는 각 도구의 공통 런타임에 두고 진입점마다 새로 만들지 않는다.
+   새 복구 사례는 회귀 테스트(실패 상황 재현 -> 복구 확인)와 함께 추가한다.
+
+## 오류 로그 저장
+- 실패한 실행(exit 1, 2)은 `run_cli()`가 자동으로 `<도구 데이터 폴더>/logs/errors.txt`에 덧붙인다. 사용자 중단(exit 130)은 기록하지 않는다.
+  - 데이터 폴더 기본값은 `<도구폴더>/data`, 도구별 환경변수로 바꿀 수 있다 (예: `DOCCLS_DATA_DIR`, `OFFICE_CLI_DATA_DIR`). `data/`는 git에 올리지 않는다.
+- 항목 형식 (UTF-8, 항목 사이 빈 줄):
+  ```text
+  ===== <ISO 시각> | <도구> <버전> | Python <버전> | <OS>
+  명령: <실제 인자>
+  결과: <error_type> | <message>
+  복구 시도: <시도 내용과 횟수>   (JIT 복구가 한도를 넘겨 실패한 경우만)
+  traceback: ...                (내부 오류 ERROR: 일 때만)
+  ```
+- 2MB를 넘으면 `errors.old.txt`로 넘기고 새로 시작한다 (1세대만 보관).
+- 기록 중 오류는 모두 삼킨다. 로그 실패가 stdout 1줄 JSON 계약을 깨면 안 된다.
+- 경로와 인자만 기록하고 문서 본문·개인정보는 기록하지 않는다.
+- JIT 복구에 성공한 실행은 기록하지 않는다 (stderr `[WARN]` + JSON `recovered`로 충분).
+- 로그 경로는 stdout JSON에 넣지 않는다. 사람과 개발 에이전트가 사후 분석용으로 읽는다.
+- 기준 구현: doc-classifier `_dc_runtime.py`의 `write_error_log`.
+
+## 문자 규칙
+- 이모지, 원문자(동그라미 숫자 등), 장식 기호(체크 표시, 별, 유니코드 화살표 등)는 저장소 전체에서 금지한다.
+  대상: 코드, 주석, stdout/stderr 출력, SKILL.md, README.md, CHANGELOG.md, 커밋 메시지, PR 본문.
+- 대신 ASCII를 쓴다: `[OK]`/`[FAIL]`, `->`, `1.` `2.`.
+- 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]`만 사용한다.
+- 이유: CP949 콘솔에서 깨지거나 인코딩 오류가 나고, 경량 LLM의 토큰 해석이 흔들린다.
 
 ## 폐쇄망 / Windows 제약
-- 런타임 네트워크 접근 금지. 새 의존성은 win_amd64 wheel이 있는 순수 pip 패키지만, `requirements.txt`에 추가.
-- 파일 저장은 잠금(Excel/Word) 대비 `save_with_lock_fallback`, 폴더 조작은 `retry_fs`/`remove_tree` 사용.
-- 텍스트 입력 파일은 `read_text_file`(UTF-8/BOM/UTF-16/CP949 자동)로 읽는다.
-- 대상 환경: Windows 11 + WinPython (Python 3.13.13, PATH 등록) + `constraints.txt`의 라이브러리 버전 (상세: docs/ENVIRONMENT.md).
-- 명령 예시·스킬·배치 파일은 `python` 으로 호출한다 (`py`, `python3`, 단독 `pip` 금지 → `python -m pip`).
-- 새 기능/도구는 표준 환경 라이브러리를 우선 사용. 없는 패키지는 Python 3.13 wheel이 있는 것만, ENVIRONMENT.md와 constraints.txt에 기록하고 미설치 시 JSON 오류로 안내.
+- 런타임 네트워크 접근 금지.
+- 새 기능은 표준 환경 라이브러리를 우선 사용. 없는 패키지는 Python 3.13 / win_amd64 wheel이 있는 것만,
+  도구 `requirements.txt`, `constraints.txt`, `docs/ENVIRONMENT.md`에 기록하고 미설치 시 JSON 오류로 안내.
+- 파일 저장·폴더 조작·텍스트 읽기는 JIT 자가복구 표의 공통 함수를 사용한다.
+- 도구 폴더는 단독 배포된다. 공통 런타임 함수는 도구마다 자기 폴더에 두고, 다른 도구 폴더를 import하지 않는다.
 - 테스트는 `constraints.txt` 버전 기준으로 통과해야 한다.
+
+## 도구별 규칙
+### ml-kit
+- 공통 런타임(`run_cli`, `JsonArgumentParser`, 복구 함수)은 `ml_predict.py` PART C에 있다.
+- 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/model_<target>.joblib|json`)과 원장 스키마는 하위 호환.
+- 학습과 추론이 같아야 하는 로직(데이터 로딩, 수치 변환, `--eval` 수식)은 `ml_predict.py` PART C 한 곳에만 둔다.
+- `ml_predict.py`는 다른 ml-kit 파일을 import하지 않는다 (모델 폴더와 함께 단독 배포). `ml_train.py`/`ml_report.py`가 `ml_predict.py`를 import한다.
+### office-cli
+- 공통 런타임은 `_runtime.py`, Office COM 공통은 `_office.py`.
+### doc-classifier
+- 공통 런타임은 `_dc_runtime.py`.
 
 ## 작업 절차
 1. 변경 전 `python -m pytest -q`로 기준선 확인.
@@ -46,3 +118,4 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 4. 남은 할 일은 각 도구 `CHANGELOG.md` 하단 "남은 할 일"에서 관리 (처리 시 해당 버전 항목으로 이동).
 5. `SKILL.md`는 경량 LLM 컨텍스트에 들어가므로 짧게 유지 (상세는 README.md).
 6. 스킬은 OpenCode 형식: 도구 폴더명 = frontmatter `name` (`^[a-z0-9]+(-[a-z0-9]+)*$`), frontmatter는 name/description/license/compatibility/metadata만.
+   도구 폴더 안의 보조 스킬(예: `office-cli/tools/office-cli-test/`)도 같은 규칙을 따른다.
