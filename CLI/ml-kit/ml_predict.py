@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.6.0"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.7.0"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -1300,6 +1300,125 @@ def parse_inline_input(input_str: str) -> pd.DataFrame:
     return pd.DataFrame([row_dict])
 
 
+# ==============================================================================
+# 4-B. Measured-data comparison (map check, 2.7.0)
+# ==============================================================================
+#
+# Every regression prediction is compared with the training rows themselves (vX/model_dataset.csv, which travels
+# with the version folder): <= 3 numeric inputs -> the same table interpolation as ml_map.py; more inputs ->
+# inverse-distance weighted mean of the 5 nearest measured rows (inputs scaled to 0-1). Categorical inputs keep
+# only rows of the same category. Rows left out of training ('학습제외_<target>' = 1) are not used.
+# The comparison never fails the prediction: problems become map_check_notes.
+
+MAP_CHECK_MAX_ROWS = 20000
+MAP_WARN_NEAR = 0.1       # IDW comparison only warns when the nearest measured row is this close (inputs scaled to 0-1)
+SNAPSHOT_ROW_COL = "원본행"
+SNAPSHOT_EXCL_PREFIX = "학습제외_"
+
+
+def _load_snapshot(version_dir: str, cache: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    if version_dir not in cache:
+        path = os.path.join(version_dir, "model_dataset.csv")
+        cache[version_dir] = load_data_file(path) if os.path.isfile(path) else None
+    return cache[version_dir]
+
+
+def _idw(sub: pd.DataFrame, keys: List[str], target: str, x: np.ndarray) -> Dict[str, Any]:
+    K = np.column_stack([coerce_numeric(sub[c]).to_numpy(dtype=float) for c in keys])
+    y = coerce_numeric(sub[target]).to_numpy(dtype=float)
+    ok = np.isfinite(K).all(axis=1) & np.isfinite(y)
+    K, y, rows = K[ok], y[ok], sub["__row"].to_numpy()[ok]
+    lo, hi = K.min(axis=0), K.max(axis=0)
+    span = np.where(hi - lo > 0, hi - lo, 1.0)
+    d = np.sqrt((((K - x) / span) ** 2).sum(axis=1))
+    near = np.argsort(d, kind="stable")[:NEAREST_N]
+    if d[near[0]] == 0:
+        near = near[d[near] == 0]
+        w = np.full(len(near), 1.0 / len(near))
+    else:
+        w = 1.0 / d[near]
+        w = w / w.sum()
+    return {"value": float(w @ y[near]), "method": f"가까운 실측 {len(near)}행 거리 가중평균",
+            "basis": [{"row": int(rows[i]), "weight": round(float(wi), 6)} for i, wi in zip(near, w)],
+            "extrapolated": bool(((x < lo) | (x > hi)).any()), "nearest_distance": float(d[near[0]])}
+
+
+def compare_with_measured(meta: Dict[str, Any], target: str, version_dir: str, df_evaled: pd.DataFrame,
+                          cache: Dict[str, Any]) -> Dict[str, Any]:
+    """Measured-data comparison values for each input row (NaN where not computable) or a note why not."""
+    schema = meta.get("feature_schema") or {}
+    derived = {e.split("=", 1)[0].strip() for e in (meta.get("derived_evals") or []) if "=" in e}
+    keys = [c for c in schema.get("numeric", []) if c not in derived]
+    cats = list(schema.get("categorical", {}))
+    if not schema or not keys:
+        return {"note": f"타겟 '{target}': 숫자 입력이 없거나 2.1.0 이전 모델이라 실측 비교값을 계산하지 않았습니다"}
+    if len(df_evaled) > MAP_CHECK_MAX_ROWS:
+        return {"note": f"입력이 {len(df_evaled):,}행으로 많아 실측 비교값을 계산하지 않았습니다 (최대 {MAP_CHECK_MAX_ROWS:,}행)"}
+    data = _load_snapshot(version_dir, cache)
+    if data is None or target not in data.columns or any(c not in data.columns for c in keys + cats):
+        return {"note": f"타겟 '{target}': 버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없거나 열이 달라 실측 비교값을 계산하지 않았습니다"}
+    data = data.copy()
+    notes: List[str] = []
+    if SNAPSHOT_ROW_COL in data.columns:
+        data["__row"] = coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int)
+    else:
+        data["__row"] = np.arange(2, len(data) + 2)
+        notes.append("2.7.0 이전에 학습한 버전이라 근거 행 번호는 학습 데이터 사본(model_dataset.csv)의 줄 번호입니다")
+    excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
+    if excl in data.columns:
+        data = data[coerce_numeric(data[excl]).fillna(0) != 1]
+    data = data[coerce_numeric(data[target]).notna()]
+    for c in cats:
+        data[c] = normalize_category(data[c])
+
+    X = np.column_stack([coerce_numeric(df_evaled[c]).to_numpy(dtype=float) if c in df_evaled.columns
+                         else np.full(len(df_evaled), np.nan) for c in keys])
+    C = pd.DataFrame({c: normalize_category(df_evaled[c]) if c in df_evaled.columns else None for c in cats},
+                     index=df_evaled.index) if cats else None
+    out = {"values": np.full(len(df_evaled), np.nan), "method": [""] * len(df_evaled),
+           "basis": [[] for _ in range(len(df_evaled))], "extrapolated": [False] * len(df_evaled),
+           "warnable": [False] * len(df_evaled)}
+    tables: Dict[Tuple, Any] = {}
+    for i in range(len(df_evaled)):
+        if not np.isfinite(X[i]).all():
+            out["method"][i] = "계산 불가 (입력 빈칸)"
+            continue
+        cat_key = tuple(C.iloc[i].tolist()) if C is not None else ()
+        if cat_key not in tables:
+            sub = data
+            for c, v in zip(cats, cat_key):
+                if (sub[c] == v).any():
+                    sub = sub[sub[c] == v]
+                else:
+                    notes.append(f"'{c}={v}'은(는) 학습 데이터에 없어 모든 행으로 비교했습니다")
+            tab = None
+            if len(keys) <= MAX_KEYS:
+                try:
+                    tab = Table(sub, keys, [target], [])
+                except InputError:
+                    tab = None
+            tables[cat_key] = (sub, tab)
+        sub, tab = tables[cat_key]
+        try:
+            if tab is not None:
+                r = tab.at(X[i])
+                out["values"][i] = r["values"][target]
+                out["method"][i], out["basis"][i], out["extrapolated"][i] = r["method"], r["basis"], r["extrapolated"]
+                out["warnable"][i] = not r["extrapolated"]
+            else:
+                r = _idw(sub, keys, target, X[i])
+                out["values"][i] = r["value"]
+                out["method"][i], out["basis"][i], out["extrapolated"][i] = r["method"], r["basis"], r["extrapolated"]
+                # with many inputs the nearest rows can be far apart: only a close neighbourhood is worth a warning
+                out["warnable"][i] = (not r["extrapolated"]) and r["nearest_distance"] <= MAP_WARN_NEAR
+        except Exception as e:  # e.g. too few rows of that category
+            out["method"][i] = f"계산 불가 ({str(e)[:60]})"
+    out["keys"] = keys
+    if notes:
+        out["note"] = "; ".join(dict.fromkeys(notes))
+    return out
+
+
 LOW_CONFIDENCE_THRESHOLD = 0.6
 
 
@@ -1395,6 +1514,9 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     category_warnings: List[str] = []
     missing_counts: Dict[str, int] = {}
     column_aliases: Dict[str, str] = {}
+    map_warnings: List[str] = []
+    map_notes: List[str] = []
+    snapshot_cache: Dict[str, Any] = {}
 
     # 3. Perform Inference per Target
     for item in model_items:
@@ -1540,6 +1662,34 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                     [round(float(l), 4), round(float(h), 4)] for l, h in zip(lo, hi)
                 ]
 
+        # Measured-data comparison (map check): same conditions looked up in the training rows
+        try:
+            mc = compare_with_measured(meta, target_name, os.path.dirname(item["joblib_path"]), df_evaled, snapshot_cache)
+        except Exception as e:  # the comparison must never break the prediction
+            mc = {"note": f"타겟 '{target_name}': 실측 비교값 계산 실패 ({type(e).__name__}: {str(e)[:80]})"}
+        if mc.get("note"):
+            map_notes.append(mc["note"])
+        if "values" in mc:
+            vals = mc["values"]
+            diff = preds - vals
+            outside = ((vals < lo) | (vals > hi)) if lo is not None else np.zeros(len(vals), dtype=bool)
+            outside = outside & np.isfinite(vals) & np.array(mc["warnable"], dtype=bool)
+            df_result[f"map_{target_name}"] = np.round(vals, 4)
+            df_result[f"map_diff_{target_name}"] = np.round(diff, 4)
+            df_result[f"map_방식_{target_name}"] = [m + (" [외삽]" if e else "") for m, e in zip(mc["method"], mc["extrapolated"])]
+            predictions_summary[target_name]["map_check_keys"] = mc["keys"]
+            predictions_summary[target_name]["map_check_outside_interval"] = int(outside.sum())
+            if is_inline and len(preds) <= 5:
+                predictions_summary[target_name]["map_check"] = [
+                    {"value": round(float(v), 4) if np.isfinite(v) else None,
+                     "diff": round(float(d), 4) if np.isfinite(d) else None,
+                     "method": m, "basis": b, "extrapolated": e, "outside_interval": bool(o)}
+                    for v, d, m, b, e, o in zip(vals, diff, mc["method"], mc["basis"], mc["extrapolated"], outside)]
+            if outside.any():
+                map_warnings.append(
+                    f"타겟 '{target_name}': 실측 비교값이 90% 예측 범위 밖인 건 {int(outside.sum())}건 "
+                    f"(모델 예측과 실측 데이터가 많이 다름, 해당 조건의 가까운 실측 행 확인 필요)")
+
     # 4. Save Output if Requested or File-based
     out_path = args.out
     saved_file = None
@@ -1582,6 +1732,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     ]
     for w in missing_warnings:
         sys.stderr.write(f"[WARN] Missing input: {w}\n")
+    for w in map_warnings:
+        sys.stderr.write(f"[WARN] Map check: {w}\n")
 
     def _brief(t: str) -> str:
         ps = predictions_summary[t]
@@ -1597,6 +1749,7 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         + (f" | 저확신 경고 {len(low_conf_warnings)}건" if low_conf_warnings else "")
         + (f" | 결측 대치 {sum(missing_counts.values())}건" if missing_counts else "")
         + (f" | 미학습 범주 경고 {len(category_warnings)}건" if category_warnings else "")
+        + (f" | 실측 비교 경고 {len(map_warnings)}건" if map_warnings else "")
     )
     agent_directive = (
         f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
@@ -1604,7 +1757,10 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         + (" with low-confidence warning (class probability < 0.6 for some rows)" if low_conf_warnings else "")
         + (" with missing-input warning (empty or non-numeric inputs were imputed)" if missing_counts else "")
         + (" with unseen-category warning" if category_warnings else "")
+        + (" with map-check warning (measured-data comparison outside the prediction interval)" if map_warnings else "")
         + ". "
+        + ("Report each prediction together with its measured-data comparison (map_check: value, diff, method) in Korean as "
+           "'실측 비교값'. " if any("map_check_keys" in p for p in predictions_summary.values()) else "")
         + (f"Output saved to {os.path.basename(saved_file)}. " if saved_file else "Inline predictions returned. ")
         + "Next step: report inference results to user."
     )
@@ -1627,9 +1783,13 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         "missing_input_warnings": missing_warnings,
         "unseen_category_warning": bool(category_warnings),
         "unseen_category_warnings": category_warnings,
+        "map_check_warning": bool(map_warnings),
+        "map_check_warnings": map_warnings,
         "preview": preview,
         "agent_directive": agent_directive
     }
+    if map_notes:
+        result["map_check_notes"] = list(dict.fromkeys(map_notes))
     if column_aliases:
         result["column_aliases"] = column_aliases
     return result

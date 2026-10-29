@@ -1234,6 +1234,8 @@ def data_fingerprint(path: str) -> Dict[str, Any]:
 
 EXCLUDE_COL = "제외"
 INCLUDE_MARK = "포함"
+SNAPSHOT_ROW_COL = "원본행"              # model_dataset.csv: Excel row number of each row (2.7.0)
+SNAPSHOT_EXCL_PREFIX = "학습제외_"       # model_dataset.csv: 1 = left out of training for that target (2.7.0)
 OUTLIER_Z = 3.5               # robust z-score (median / MAD) above which a value is an outlier
 OUTLIER_MAX_FRACTION = 0.10   # more candidates than this is a skewed distribution, not outliers: exclude none
 MIN_TRAIN_ROWS = 10
@@ -1773,7 +1775,12 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
 
         # 3. Clean Dataset Snapshot (model_dataset.csv)
         dataset_snapshot_cols = [c for c in feature_names + target_names if c in df_clean.columns]
-        snapshot_df = df_clean[dataset_snapshot_cols]
+        snapshot_df = df_clean[dataset_snapshot_cols].copy()
+        # 2.7.0: Excel row numbers and per-target training exclusions, so ml_predict.py can compare its predictions
+        # with the measured rows the model learned from (evidence rows are shown as Excel row numbers)
+        snapshot_df[SNAPSHOT_ROW_COL] = [source_rows[i] if i < len(source_rows) else i + 1 for i in range(len(snapshot_df))]
+        for t in target_names:
+            snapshot_df[f"{SNAPSHOT_EXCL_PREFIX}{t}"] = np.where(exclusions[t]["mask"], 1, 0)
         snapshot_path = os.path.join(staging_dir, "model_dataset.csv")
 
         # Windows 한국어 Excel 호환: cp949 기본, 표현 불가 문자 포함 시 utf-8-sig 자동 폴백

@@ -336,6 +336,19 @@ python ml_predict.py -m v3 -i "반응온도=240,소비전력=65"
 ```
 필요 라이브러리: numpy, pandas, scikit-learn, joblib (+ xlsx 입출력 시 openpyxl). 학습 PC와 같은 scikit-learn 버전을 권장하며, 다르면 `[WARN]`이 출력됩니다.
 
+### 1-A) 실측 비교값 (map check, 2.7.0)
+회귀 예측마다 같은 조건을 학습 데이터에서 찾은 **실측 비교값**을 함께 냅니다. 옵션은 없습니다.
+- 데이터: 버전 폴더의 `model_dataset.csv` (버전 폴더와 함께 배포되므로 원본 데이터 불필요). 2.7.0부터 이 파일에 `원본행`(엑셀 행 번호)과
+  `학습제외_<타겟>`(1 = 이상치·'제외'로 학습에서 뺀 행)이 있어, 근거에 엑셀 행 번호를 쓰고 학습 제외 행은 비교에 쓰지 않습니다.
+  이전 버전은 두 열 없이 계산하고 `map_check_notes`에 알림 (근거 행 = 사본 줄 번호).
+- 계산: 숫자 입력(파생변수·날짜 제외) 3개 이하 -> `ml_map.py`와 같은 표 보간 (격자 / 둘러싼 실측 / 추세선 외삽),
+  4개 이상 -> 가까운 실측 5행의 거리 가중평균 (입력을 0~1로 맞춤). 범주 입력은 같은 범주 행만 (학습에 없는 범주면 전체 행 + 알림).
+- 출력: 한 건(5건 이하) `predictions_summary.<타겟>.map_check` = `[{value, diff(예측-비교값), method, basis(원본 행, 비율), extrapolated, outside_interval}]`,
+  `map_check_keys`, `map_check_outside_interval`. 파일 예측은 `map_<타겟>`, `map_diff_<타겟>`, `map_방식_<타겟>` 열.
+- 경고 `map_check_warning`/`map_check_warnings`: 비교값이 90% 예측 범위 밖일 때. 단 외삽된 비교값과, 가중평균 방식에서 가장 가까운 실측이
+  0.1(0~1 거리)보다 먼 경우는 경고하지 않음 (입력이 많으면 가까운 실측도 멀어 비교값이 거침).
+- 분류 타겟은 계산하지 않습니다. 입력이 20,000행을 넘거나 사본이 없으면 생략하고 `map_check_notes`로 알립니다. 비교값 계산 실패는 예측을 막지 않습니다.
+
 ### 1) 핵심 안전장치 및 기능
 - **회귀/분류 자동 분기**: 모델 메타데이터의 `task`로 분기합니다 (`task`가 없는 1.x 모델은 회귀). 분류 모델은 `pred_<타겟>`(라벨), `proba_<타겟>_<클래스>`(클래스별 확률), `conf_<타겟>`(최대 확률) 컬럼을 만들고, 확신도 0.6 미만 예측이 있으면 `low_confidence_warning: true`를 반환합니다.
 - **입력 점검 경고 (2.1.0)**: 빈 값/숫자가 아닌 값이 대치되면 `missing_input_warning`과 컬럼별 `missing_input_counts`, 학습 때 없던 범주가 오면 `unseen_category_warning`, 학습 기간 밖 날짜는 `drift_warnings`에 추가됩니다.
