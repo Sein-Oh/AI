@@ -43,6 +43,7 @@
 | 문서 등록 (PDF/HWP/Office) | 폴더: `reader.py index --folder "<폴더>"` / 파일 하나 읽기: `reader.py read --file "<파일>" [--pages 1-3] [--save]` |
 | 문서 검색 (근거 포함) | `reader.py search --query "A AND B" [--file 파일또는폴더] [--pages 3-7] [--section "장절 일부"] --save "근거.xlsx"` (띄어쓰기·기호는 무시: `SOI 1` = `SOI #1`. 사용자가 패턴을 말하면 `--regex`) |
 | 캐시된 파일 조회 | `reader.py list [--name 이름일부] [--folder 폴더]` |
+| 캐시 지우기 (원본은 그대로) | `reader.py clear --name 이름일부` / `--file "<파일>"` / `--folder "<폴더>"` / `--missing`(원본 없는 것) / `--all`. 먼저 `--dry-run`으로 목록을 보여 주고 확인받은 뒤 `next_commands[0]` 실행 |
 | 메일 | `outlook.py current`, `search --query 말 [--from 이름]`, `read --id <id>`, `reply --body "내용"`, `new --to 주소 --subject 제목 --body 내용` |
 | 되돌리기 / 창 | `office.py undo` (`--list`, `--pick N`), `office.py windows`, `office.py focus --app excel` |
 | 결과 배치 확인 | `ppt.py info --detail --slides N`, `excel.py info --detail`, `word.py info --detail` (`layout_warnings`가 0이 아니면 `warnings`를 알림) |

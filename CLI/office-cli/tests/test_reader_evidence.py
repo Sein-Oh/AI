@@ -801,3 +801,49 @@ def test_search_ignores_symbols_and_spacing_but_keeps_number_boundaries(query, t
 
 def test_snippet_highlights_symbol_insensitive_match():
     assert "**SOI #1**" in reader.make_snippet("Activities for SOI #1 are listed", ["SOI 1"], 30, False)
+
+
+# ---------------------------------------------------------------------------
+# clear: 캐시 지우기
+# ---------------------------------------------------------------------------
+
+def _cached(tmp_path, *names):
+    paths = []
+    for n in names:
+        f = tmp_path / n
+        f.write_text(f"{n} 내용", encoding="utf-8")
+        run("index", "--file", str(f))
+        paths.append(f)
+    return paths
+
+
+def test_clear_requires_target_and_dry_run_changes_nothing(tmp_path):
+    a, b = _cached(tmp_path, "a규격.txt", "b보고.txt")
+    code, out = run("clear")
+    assert code == 1 and "--dry-run" in out["message"]
+    code, out = run("clear", "--name", "규격", "--dry-run")
+    assert code == 0 and out["dry_run"] is True and out["count"] == 1 and out["planned"] == ["캐시 삭제: a규격.txt"]
+    assert "clear --name 규격" in out["next_commands"][0]["command"] and "--dry-run" not in out["next_commands"][0]["command"]
+    assert len(reader.load_index()) == 2
+
+
+def test_clear_by_name_removes_index_and_cache_file_keeps_original(tmp_path):
+    a, b = _cached(tmp_path, "a규격.txt", "b보고.txt")
+    cache_a = reader._doc_cache_path(str(a))
+    code, out = run("clear", "--name", "규격")
+    assert code == 0 and out["verified"] is True and out["remaining_in_cache"] == 1
+    assert not os.path.exists(cache_a) and a.exists()                     # 원본은 그대로
+    assert list(reader.load_index()) == [str(b)]
+    code, out = run("search", "--query", "내용")
+    assert out["count"] == 1                                             # 지운 문서는 검색 대상에서 빠짐
+
+
+def test_clear_missing_and_all(tmp_path):
+    a, b = _cached(tmp_path, "a.txt", "b.txt")
+    os.remove(a)
+    code, out = run("clear", "--missing")
+    assert code == 0 and [d["file"] for d in out["documents"]] == ["a.txt"]
+    code, out = run("clear", "--missing")
+    assert code == 0 and out["count"] == 0 and "0건" in out["agent_directive"]
+    code, out = run("clear", "--all")
+    assert code == 0 and out["remaining_in_cache"] == 0 and reader.load_index() == {}
