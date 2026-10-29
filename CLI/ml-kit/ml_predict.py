@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.7.0"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.8.0"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -1096,6 +1096,22 @@ def nearest_rows(df: pd.DataFrame, cols: List[str], target: np.ndarray, span: np
     return out
 
 
+def _crossings(xs: np.ndarray, ys: np.ndarray, y0: float) -> List[float]:
+    """x where the piecewise linear curve (xs, ys) crosses y0 (segments with NaN are skipped)."""
+    out: List[float] = []
+    for i in range(len(xs) - 1):
+        a, b = ys[i], ys[i + 1]
+        if not (np.isfinite(a) and np.isfinite(b)):
+            continue
+        if a == y0:
+            out.append(float(xs[i]))
+        elif (a - y0) * (b - y0) < 0:
+            out.append(float(xs[i] + (y0 - a) * (xs[i + 1] - xs[i]) / (b - a)))
+    if len(ys) and np.isfinite(ys[-1]) and ys[-1] == y0:
+        out.append(float(xs[-1]))
+    return sorted(set(round(v, 10) for v in out))
+
+
 # ##############################################################################
 # PART P. INFERENCE ENGINE
 # ##############################################################################
@@ -1796,6 +1812,219 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 # ==============================================================================
+# 5-B. Model-based reverse lookup (--find / --vary, 2.8.0)
+# ==============================================================================
+#
+# "Which value of <vary> makes the model predict <target> = y0, the other inputs fixed?"
+#   - <vary> is scanned over its training range in FIND_STEPS steps in one batch prediction.
+#   - Crossings closer than FIND_MERGE x range are one answer (tree models predict in steps and add
+#     near-duplicate crossings); a merged answer is reported as a span. Windows narrower than that and without an
+#     answer are step noise and dropped.
+#   - Operating windows: <vary> ranges where y0 lies inside the 90% prediction interval, i.e.
+#     prediction in [y0 - residual_upper, y0 - residual_lower].
+#   - Inputs the user did not fix: numeric -> training median (reported), categorical/date -> STOP_RETRY [후보].
+#   - Measured cross-check: the same lookup on the training rows (model_dataset.csv) when the model has
+#     <= 3 numeric inputs (table interpolation), plus the 5 nearest measured rows.
+#   - No extrapolation: tree models are flat outside the training range.
+
+FIND_STEPS = 2000
+FIND_MERGE = 0.03     # answers / windows closer than 3% of the scanned range are merged (tree models step)
+
+
+def _spans(xs: np.ndarray, ok: np.ndarray, gap: float) -> List[List[float]]:
+    """Contiguous runs of ok=True as [from, to]; runs separated by less than gap are joined."""
+    out: List[List[float]] = []
+    for x, flag in zip(xs, ok):
+        if not flag:
+            continue
+        if out and x - out[-1][1] <= gap:
+            out[-1][1] = float(x)
+        else:
+            out.append([float(x), float(x)])
+    return out
+
+
+def _model_curve(pipe: Any, meta: Dict[str, Any], base: Dict[str, Any], vary: str, xs: np.ndarray) -> np.ndarray:
+    df = pd.DataFrame({**{k: [v] * len(xs) for k, v in base.items()}, vary: xs})
+    df = apply_inference_evals(df, meta.get("derived_evals", []))
+    return np.asarray(pipe.predict(prepare_features(df, meta["feature_schema"])), dtype=float)
+
+
+def execute_find(args: argparse.Namespace) -> Dict[str, Any]:
+    goal = parse_inline_input(args.find).iloc[0].to_dict()
+    if len(goal) != 1:
+        raise InputError("--find에는 목표 하나만 주십시오 (예: --find \"생산효율=50\").")
+    (goal_name, goal_val), = goal.items()
+    try:
+        y0 = float(goal_val)
+    except (TypeError, ValueError):
+        raise InputError(f"목표 값 '{goal_val}'이(가) 숫자가 아닙니다.")
+    items = resolve_target_models(target_path=args.model, meta_path=args.meta, filter_targets=[str(goal_name)])
+    item = items[0]
+    meta, pipe, target = item["meta"], item["pipeline"], item["target"]
+    if meta.get("task", "regression") != "regression":
+        raise InputError(f"타겟 '{target}'은(는) 분류 모델입니다. 모델 반대 찾기는 숫자 타겟(회귀)만 됩니다.")
+    schema = meta.get("feature_schema")
+    if not schema:
+        raise InputError("2.1.0 이전에 학습한 모델이라 반대 찾기를 할 수 없습니다. 다시 학습하십시오.")
+    derived = [e.split("=", 1)[0].strip() for e in meta.get("derived_evals", []) if "=" in e]
+    raw_inputs = [f for f in meta.get("features_required", []) if f not in derived]
+    numeric_in = [f for f in raw_inputs if f in schema.get("numeric", [])]
+    stats = meta.get("feature_stats", {})
+
+    vary = resolve_column_names([args.vary.strip()], raw_inputs, "바꿀 입력(--vary)")[0][0]
+    if vary not in numeric_in or vary not in stats:
+        raise InputError(f"'{vary}'은(는) 숫자 입력이 아니라 반대 찾기로 바꿀 수 없습니다. [후보] {', '.join(numeric_in)}")
+    given = parse_inline_input(args.input).iloc[0].to_dict() if args.input else {}
+    names, _ = resolve_column_names([str(k) for k in given], raw_inputs, "고정 입력(-i)") if given else ([], {})
+    fixed = {n: given[k] for k, n in zip(given, names)}
+    if vary in fixed:
+        raise InputError(f"'{vary}'는 --vary로 찾는 입력이라 -i에 함께 줄 수 없습니다.")
+
+    filled: Dict[str, float] = {}
+    for f in raw_inputs:
+        if f == vary or f in fixed:
+            continue
+        if f in numeric_in and f in stats:
+            filled[f] = float(stats[f]["median"])
+        elif f in schema.get("categorical", {}):
+            raise InputError(f"모델 입력 '{f}' 값이 필요합니다. -i에 '{f}=<값>'을 넣어 주십시오. "
+                             f"[후보] {', '.join(map(str, schema['categorical'][f][:20]))}")
+        else:
+            raise InputError(f"모델 입력 '{f}' 값이 필요합니다. -i에 '{f}=<값>'을 넣어 주십시오.")
+    base = {**fixed, **filled}
+    warnings: List[str] = []
+    for f, v in fixed.items():
+        st = stats.get(f)
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if st and (fv < st["min"] or fv > st["max"]):
+            warnings.append(f"고정 입력 '{f}'={_fmt(fv)}이(가) 학습 범위({_fmt(st['min'])}~{_fmt(st['max'])}) 밖이라 답을 믿기 어렵습니다")
+
+    lo, hi = float(stats[vary]["min"]), float(stats[vary]["max"])
+    xs = np.linspace(lo, hi, FIND_STEPS + 1)
+    ys = _model_curve(pipe, meta, base, vary, xs)
+    merge = FIND_MERGE * (hi - lo)
+
+    # answers: crossings, near-duplicates merged into a span
+    answers = []
+    cross = np.array(_crossings(xs, ys, y0))
+    for span in _spans(cross, np.ones(len(cross), dtype=bool), merge):
+        mid = (span[0] + span[1]) / 2
+        answers.append({vary: round(mid, 6), **({"from": round(span[0], 6), "to": round(span[1], 6)} if span[1] > span[0] else {})})
+    # verification: the curve must bracket the target right around every answer
+    step = (hi - lo) / FIND_STEPS
+    unverified = []
+    for a in answers:
+        a_lo, a_hi = a.get("from", a[vary]) - step, a.get("to", a[vary]) + step
+        chk = _model_curve(pipe, meta, base, vary, np.linspace(max(lo, a_lo), min(hi, a_hi), 50))
+        chk = np.array([chk.min(), chk.max()])
+        if not (chk[0] <= y0 <= chk[1]):
+            unverified.append(f"{vary}={_fmt(a[vary])} 근처에서 목표값을 지나지 않음")
+        a["check"] = [round(float(c), 4) for c in chk]
+
+    # operating windows: target inside the 90% prediction interval
+    iv = meta.get("prediction_interval")
+    windows: List[Dict[str, float]] = []
+    if iv:
+        band = (y0 - float(iv["residual_upper"]), y0 - float(iv["residual_lower"]))
+        for a, b in _spans(xs, (ys >= band[0]) & (ys <= band[1]), merge):
+            if b - a < merge and not any(a <= ans[vary] <= b for ans in answers):
+                continue   # a sliver touching the band without crossing the target: step noise
+            windows.append({"from": round(a, 6), "to": round(b, 6)})
+    else:
+        warnings.append("예측 오차 정보가 없는 모델이라 운전 구간을 계산하지 않았습니다")
+
+    # measured cross-check on the training rows
+    measured: Dict[str, Any] = {}
+    data = _load_snapshot(os.path.dirname(item["joblib_path"]), {})
+    near: List[Dict[str, Any]] = []
+    if data is not None and target in data.columns and all(c in data.columns for c in raw_inputs if c in numeric_in):
+        data = data.copy()
+        data["__row"] = (coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int) if SNAPSHOT_ROW_COL in data.columns
+                         else np.arange(2, len(data) + 2))
+        excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
+        if excl in data.columns:
+            data = data[coerce_numeric(data[excl]).fillna(0) != 1]
+        for c in schema.get("categorical", {}):
+            if c in data.columns and c in base:
+                hit = normalize_category(data[c]) == normalize_category(pd.Series([base[c]])).iloc[0]
+                data = data[hit] if hit.any() else data
+        data = data[coerce_numeric(data[target]).notna()]
+        mkeys = [vary] + [f for f in numeric_in if f != vary]
+        fixed_num = np.array([float(base[f]) for f in mkeys[1:]])
+        if len(mkeys) <= MAX_KEYS:
+            try:
+                tab = Table(data, mkeys, [target], [])
+                def _measured(x: float) -> float:
+                    q = np.concatenate([[x], fixed_num])
+                    if tab.mode == "grid":
+                        return float(tab.at(q)["values"][target])
+                    v, _ = tab._scattered(q)            # inside the measured area only (no trend line)
+                    return float(v[0]) if v is not None else np.nan
+                mys = np.array([_measured(x) for x in xs])
+                m_cross = np.array(_crossings(xs, mys, y0))
+                m_ans = _spans(m_cross, np.ones(len(m_cross), dtype=bool), merge)
+                measured = {"method": "학습 데이터 표 보간 (ml_map 방식)", "count": len(m_ans),
+                            "solutions": [round((a + b) / 2, 6) for a, b in m_ans],
+                            "reachable": {"min": round(float(np.nanmin(mys)), 6), "max": round(float(np.nanmax(mys)), 6)}}
+                if tab.mode == "scattered" and len(m_ans) > 3:
+                    warnings.append(f"실측 기준 답이 {len(m_ans)}개로 많습니다 (측정 잡음). 모델 답을 기준으로 보십시오")
+            except InputError as e:
+                measured = {"note": f"실측 기준 반대 찾기를 하지 못했습니다: {e}"}
+        else:
+            measured = {"note": f"모델 숫자 입력이 {len(numeric_in)}개라 실측 기준 반대 찾기는 생략하고 가까운 실측 행만 보여 줍니다"}
+        span_y = max(float(np.ptp(coerce_numeric(data[target]))), 1e-12)
+        spans = [span_y] + [max(float(stats[f]["max"]) - float(stats[f]["min"]), 1e-12) for f in mkeys[1:]]
+        near = nearest_rows(data, [target] + mkeys[1:], np.concatenate([[y0], fixed_num]), np.array(spans),
+                            list(dict.fromkeys(mkeys + [target])))
+        if measured.get("solutions") and answers:
+            far = [a[vary] for a in answers if min(abs(a[vary] - m) for m in measured["solutions"]) > 0.05 * (hi - lo)]
+            if far:
+                warnings.append(f"모델 답 {[_fmt(v) for v in far]}이(가) 실측 기준 답 {[_fmt(v) for v in measured['solutions']]}과(와) "
+                                f"많이 다릅니다. 실제 시험으로 확인하십시오")
+    else:
+        measured = {"note": "버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없어 실측 기준 확인을 하지 못했습니다"}
+
+    reach = (float(np.min(ys)), float(np.max(ys)))
+    res: Dict[str, Any] = {
+        "status": "ok", "command": "find", "target": target, "find": {target: y0}, "vary": vary,
+        "fixed": {k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in fixed.items()},
+        "filled_defaults": {k: round(v, 6) for k, v in filled.items()},
+        "model": meta.get("champion_model"), "training_range": {vary: [round(lo, 6), round(hi, 6)]},
+        "count": len(answers), "solutions": answers, "operating_windows": windows,
+        "reachable": {"min": round(reach[0], 6), "max": round(reach[1], 6), "within": f"{vary} {_fmt(lo)}~{_fmt(hi)}"},
+        "measured": measured, "nearest_rows": near, "verified": not unverified,
+    }
+    if filled:
+        warnings.insert(0, "주지 않은 입력은 학습 데이터 중앙값으로 고정했습니다: "
+                        + ", ".join(f"{k}={_fmt(v)}" for k, v in filled.items()))
+    if warnings:
+        res["warnings"] = warnings
+    if unverified:
+        res["unverified"] = unverified
+    win_txt = ", ".join(f"{_fmt(w['from'])}~{_fmt(w['to'])}" for w in windows) or "없음"
+    if answers:
+        ans_txt = ", ".join(_fmt(a[vary]) + (f"({_fmt(a['from'])}~{_fmt(a['to'])})" if "from" in a else "") for a in answers)
+        res["preview"] = f"모델 기준 {target}={_fmt(y0)}이 되는 {vary}: {ans_txt} | 운전 구간(90% 오차 안): {win_txt}"
+    else:
+        res["preview"] = (f"모델 기준 {target}={_fmt(y0)}이 되는 {vary}: 찾은 값 없음 "
+                          f"({vary} {_fmt(lo)}~{_fmt(hi)}에서 예측 {_fmt(reach[0])}~{_fmt(reach[1])}) | 운전 구간: {win_txt}")
+    if measured.get("solutions") is not None:
+        res["preview"] += " | 실측 기준: " + (", ".join(_fmt(v) for v in measured["solutions"]) or "없음")
+    res["agent_directive"] = (
+        ("VERIFIED: 찾은 답 근처를 다시 예측해 목표값을 지나는지 확인했습니다. " if not unverified else
+         f"UNVERIFIED: 확인하지 못한 답이 있습니다 ({'; '.join(unverified)}). 재시도하지 말고 그대로 알리세요. ")
+        + ("답을 모두 알리세요(하나만 고르지 않음). " if answers else "찾은 값 없음(count 0): reachable(가능한 예측 범위)을 알리세요. ")
+        + "operating_windows(목표가 90% 예측 오차 안에 드는 운전 구간), measured(학습 데이터 기준 답), "
+        + "nearest_rows(가까운 실측 5행)를 함께 알리세요. 모델이 예측한 조건이지 보장된 조건이 아니라는 점을 덧붙이세요."
+        + (" warnings도 반드시 알리세요." if warnings else ""))
+    return res
+
+
+# ==============================================================================
 # 6. CLI Entry Point
 # ==============================================================================
 
@@ -1834,9 +2063,18 @@ def main():
     parser.add_argument("--encoding", help="결과 CSV 저장 인코딩 (기본값: Windows Excel 최적화 cp949)")
     parser.add_argument("--overwrite", action="store_true",
                         help="--out 파일이 이미 있으면 덮어쓰기 (생략 시 시각을 붙인 새 이름으로 저장)")
+    parser.add_argument("--find", help="모델 반대 찾기 목표 ('생산효율=50', 숫자 타겟). --vary와 함께")
+    parser.add_argument("--vary", help="반대 찾기에서 값을 찾을 숫자 입력 (예: 반응온도). 나머지 입력은 -i로 고정, 생략하면 학습 중앙값")
 
     args = parser.parse_args()
 
+    if args.find or args.vary:
+        if not (args.find and args.vary):
+            parser.error("모델 반대 찾기는 --find와 --vary를 함께 주어야 합니다.")
+        if args.file or args.targets or args.out:
+            parser.error("반대 찾기(--find)에는 -f, -y, -o를 쓰지 않습니다.")
+        run_cli(lambda: execute_find(args), hint="Check the target name and the input names in SKILL.md.")
+        return
     if not args.file and not args.input:
         parser.error("추론을 수행하려면 --file (배치 파일) 또는 --input (인라인 데이터) 중 하나를 지정해야 합니다.")
 

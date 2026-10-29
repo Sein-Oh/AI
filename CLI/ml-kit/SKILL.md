@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.7.0"
+  version: "2.8.0"
   platform: windows
 ---
 
@@ -30,8 +30,9 @@ metadata:
 | "모델 만들어줘", "예측 모델 학습" | 2단계 학습 |
 | "성능 올려봐", "다시 해봐" | 3단계 개선 |
 | "이 조건이면 얼마야?", "새 데이터 예측" | 4단계 예측 |
+| 모델을 만든 뒤 "생산효율이 50이 되려면 온도는?" (목표값이 되는 조건) | 4-B단계 모델 반대 찾기 |
 | "보고서 만들어줘" | 5단계 보고서 |
-| "데이터(표)에서 ~일 때 값", "보간", "맵핑", "~가 50이 되는 온도는?" | 6단계 표 보간·반대 찾기 (모델 불필요) |
+| 모델 없이 "데이터(표)에서 ~일 때 값", "보간", "맵핑", "표에서 ~가 50이 되는 온도는?" | 6단계 표 보간·반대 찾기 |
 
 실행 전에 꼭 알아야 할 것: 데이터 파일 경로, 타겟(맞힐 컬럼), 피처(입력 컬럼). 모르면 사용자에게 묻는다.
 컬럼 이름을 모르는 xlsx는 office-cli로 앞부분만 읽는다: `python "C:\CLI\office-cli\excel.py" read --target "<데이터파일>" --range A1:Z5`
@@ -102,6 +103,15 @@ python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" -f "<새데이터파일>
 | `unseen_category_warning` | 학습 때 없던 종류가 있음 (`unseen_category_warnings` 내용 전달) |
 | `missing_input_warning` | 빈 값이 있어 기준값으로 채움 (`missing_input_warnings` 내용 전달) |
 | `low_confidence_warning` | 분류 확신도가 낮은 건이 있음 (`low_confidence_warnings` 내용 전달) |
+
+## 4-B단계: 모델 반대 찾기 (목표값이 되는 입력값)
+
+```powershell
+python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" --find "<타겟>=<목표값>" --vary "<찾을입력>" -i "<고정입력1>=<값>,<고정입력2>=<값>"
+```
+- `-i`에는 사용자가 말한 나머지 입력만 넣는다. 말하지 않은 숫자 입력은 도구가 학습 중앙값으로 채운다. 글자 입력(라인 등)이 빠지면 `[후보]`가 나오니 사용자에게 묻는다.
+- 알릴 것: `solutions`(답 모두, 하나만 고르지 않음), `operating_windows`(목표가 예측 오차 안에 드는 운전 구간), `measured`(학습 데이터 기준 답),
+  `nearest_rows`(가까운 실측 5행). 0건이면 `reachable`. `warnings`는 반드시 함께. 모델이 예측한 조건이지 보장된 조건이 아니라고 덧붙인다.
 
 ## 5단계: ML 결과 보고서 (Word)
 

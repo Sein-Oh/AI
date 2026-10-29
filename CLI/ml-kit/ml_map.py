@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError, resolve_column_names, coerce_numeric,
     load_data_file, parse_inline_input, strip_unit, save_with_lock_fallback, avoid_overwrite, warn_long_path,
-    EXCLUDE_COL, INCLUDE_MARK, MAX_KEYS, Table, nearest_rows, _is_numeric_col, _cell, _fmt,
+    EXCLUDE_COL, INCLUDE_MARK, MAX_KEYS, Table, nearest_rows, _is_numeric_col, _cell, _fmt, _crossings,
 )
 
 setup_console()
@@ -271,22 +271,6 @@ def execute_forward(args) -> Dict[str, Any]:
         + ("extrapolated=true이므로 warnings의 범위 밖 내용을 반드시 함께 알리세요. " if r["extrapolated"] else "")
         + f"값은 데이터 파일의 마지막 저장 시각({tab['saved_at']}) 기준입니다.")
     return _common(tab, res, warnings)
-
-
-def _crossings(xs: np.ndarray, ys: np.ndarray, y0: float) -> List[float]:
-    """x where the piecewise linear curve (xs, ys) crosses y0 (segments with NaN are skipped)."""
-    out: List[float] = []
-    for i in range(len(xs) - 1):
-        a, b = ys[i], ys[i + 1]
-        if not (np.isfinite(a) and np.isfinite(b)):
-            continue
-        if a == y0:
-            out.append(float(xs[i]))
-        elif (a - y0) * (b - y0) < 0:
-            out.append(float(xs[i] + (y0 - a) * (xs[i + 1] - xs[i]) / (b - a)))
-    if len(ys) and np.isfinite(ys[-1]) and ys[-1] == y0:
-        out.append(float(xs[-1]))
-    return sorted(set(round(v, 10) for v in out))
 
 
 def execute_reverse(args) -> Dict[str, Any]:
