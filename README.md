@@ -16,6 +16,7 @@ AI_WORK/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 │   ├── history/               # 지난 설계·검토 기록 (1.0 설계, 1차 지침 준수 검토)
+│   ├── guide/                 # 사용자(사무직)용 사용 가이드 HTML: office-cli, ml-kit (파일 하나씩, 폐쇄망에서 브라우저로 열림)
 │   ├── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내
 │   └── test_logs/             # 사내 PC 실기 테스트 결과 원본
 ├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
