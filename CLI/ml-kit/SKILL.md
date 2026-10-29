@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.8.0"
+  version: "2.9.0"
   platform: windows
 ---
 
@@ -32,6 +32,7 @@ metadata:
 | "이 조건이면 얼마야?", "새 데이터 예측" | 4단계 예측 |
 | 모델을 만든 뒤 "생산효율이 50이 되려면 온도는?" (목표값이 되는 조건) | 4-B단계 모델 반대 찾기 |
 | "보고서 만들어줘" | 5단계 보고서 |
+| "성능예측표", "엑셀 계산기로 만들어줘", "엑셀로 배포" | 7단계 성능예측표 |
 | 모델 없이 "데이터(표)에서 ~일 때 값", "보간", "맵핑", "표에서 ~가 50이 되는 온도는?" | 6단계 표 보간·반대 찾기 |
 
 실행 전에 꼭 알아야 할 것: 데이터 파일 경로, 타겟(맞힐 컬럼), 피처(입력 컬럼). 모르면 사용자에게 묻는다.
@@ -140,6 +141,16 @@ python "C:\CLI\ml-kit\ml_map.py" -f "<데이터파일>" --find "<목표열>=<목
 - 알릴 것: `preview`, `points[0].method`와 `basis`(쓴 원본 행과 비율), `nearest_rows`(가까운 실측 5행)를 표로.
   반대 찾기는 `solutions`를 모두(하나만 고르지 않음), 0건이면 `reachable`. `output_file`이 있으면 그 경로.
 - `extrapolated`가 true이거나 `warnings`가 있으면 그 내용을 반드시 함께 알린다 (범위 밖 외삽값, 흩어진 기록).
+
+## 7단계: 성능예측표 (엑셀 계산기, ml_export.py)
+
+```powershell
+python "C:\CLI\ml-kit\ml_export.py" -m "<version_dir>" --title "<제목>"
+```
+- `<제목>`: 학습 때 데이터 설명(`description`)을 30자 안팎의 짧은 제목으로 정리해 넣는다 (예: "반응 공정 생산효율 예측"). 설명을 모르면 사용자에게 묻는다.
+- 사용자가 꼭 넣어야 할 입력을 말하면 `--keep "<입력1>,<입력2>"`를 붙인다. 입력을 줄이며 다시 학습하므로 몇 분 걸린다 (시간 제한 600000).
+- 알릴 것: `output_file`, 타겟별 `inputs`(남긴 입력)와 `dropped`(뺀 입력), `val_r2`, `table_rows`.
+  사용자가 다른 입력 조합을 원하면 `candidates`를 표로 보여 주고, 고른 안의 `next_commands` 명령을 그대로 실행한다.
 
 ## 결과 처리 (모든 단계 공통)
 

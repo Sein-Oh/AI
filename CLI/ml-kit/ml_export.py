@@ -1,0 +1,799 @@
+# -*- coding: utf-8 -*-
+"""
+ml-kit 성능예측표 내보내기 (ml_export.py, 2.9.0)
+
+Turns a trained version into ONE Excel workbook that predicts with plain formulas (no Python, no macros):
+  1. input selection : the model's raw numeric inputs (derived features follow their source inputs) are reduced
+                       by backward elimination with real retraining (the same 5-model competition), never by
+                       importance order (interacting inputs look unimportant alone). --keep inputs are never dropped.
+                       Recommended set = fewest inputs whose validation R2 is within RECOMMEND_TOL of the best.
+  2. grid table      : the chosen model evaluated on an evenly spaced grid over the training range
+                       (points per axis = min(41, MAX_ROWS ** (1/k))), with the distance of every grid node to the
+                       nearest training row (scaled inputs) for the "no measured data" warning.
+  3. workbook        : 계산기 (input cells -> prediction, 90% interval, status), 일괄계산 (many rows), 사용법,
+                       표_<target> (the grid), 정확도 (candidates), 정보. Multilinear interpolation with INDEX/MATCH only
+                       (Excel 2016+), linear extension outside the table. Every sheet is protected without a password:
+                       only the yellow input cells can be edited; nothing is hidden.
+The version folder is not changed except for <version>/export/ (the retrained model and the candidate table).
+"""
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
+    setup_console, run_cli, JsonArgumentParser, InputError, resolve_column_names, coerce_numeric, load_data_file,
+    strip_unit, avoid_overwrite, save_with_lock_fallback, apply_inference_evals, prepare_features, quote_arg,
+    VERSION, SNAPSHOT_EXCL_PREFIX, _fmt,
+)
+import ml_train as mt  # noqa: E402  same training competition as ml_train.py
+
+setup_console()
+
+import itertools  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
+from datetime import datetime  # noqa: E402
+from typing import Any, Dict, List, Optional, Tuple  # noqa: E402
+
+import joblib  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+MAX_ROWS = 200_000        # grid rows per target (Excel limit is 1,048,576; keeps the file a few MB)
+MAX_POINTS = 41           # grid points per axis
+MIN_POINTS_WARN = 6       # fewer points per axis than this: interpolation may lose accuracy (warned)
+RECOMMEND_TOL = 0.005     # recommended set: fewest inputs with validation R2 >= best - this
+UNCOVERED_DIST = 0.15     # nearest training row farther than this (inputs scaled to 0-1): "실측 없는 영역"
+BATCH_ROWS = 500          # pre-filled rows on the 일괄계산 sheet
+CHECK_POINTS = 2000       # random points for the interpolation accuracy check
+TITLE_MAX = 40
+
+
+def progress(msg: str) -> None:
+    sys.stderr.write(f"[PROGRESS] {msg}\n")
+    sys.stderr.flush()
+
+
+# ==============================================================================
+# 1. Version folder
+# ==============================================================================
+
+def load_version(vdir: str, targets_arg: Optional[str]) -> Dict[str, Any]:
+    vdir = os.path.abspath(vdir)
+    if not os.path.isdir(vdir):
+        raise FileNotFoundError(f"버전 폴더가 없습니다: {vdir}")
+    snap = os.path.join(vdir, "model_dataset.csv")
+    if not os.path.isfile(snap):
+        raise InputError(f"버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없습니다: {vdir}. 다시 학습한 버전으로 실행하십시오.")
+    metas = {}
+    for name in sorted(os.listdir(vdir)):
+        if name.startswith("model_") and name.endswith(".json"):
+            with open(os.path.join(vdir, name), encoding="utf-8") as f:
+                m = json.load(f)
+            metas[m.get("target", name[6:-5])] = m
+    if not metas:
+        raise InputError(f"버전 폴더에 모델 정보(model_*.json)가 없습니다: {vdir}")
+    names = list(metas)
+    if targets_arg:
+        names, _ = resolve_column_names([t.strip() for t in targets_arg.split(",") if t.strip()], names, "타겟(-y)")
+    skipped = [t for t in names if metas[t].get("task", "regression") != "regression"]
+    names = [t for t in names if t not in skipped]
+    if not names:
+        raise InputError("성능예측표는 숫자 타겟(회귀)만 만들 수 있습니다. 이 버전에는 숫자 타겟이 없습니다.")
+    return {"dir": vdir, "metas": metas, "targets": names, "skipped": skipped, "data": load_data_file(snap)}
+
+
+def raw_inputs(meta: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    """(raw numeric inputs, derived feature expressions) of a model; text/date raw inputs are not supported."""
+    schema = meta.get("feature_schema") or {}
+    evals = list(meta.get("derived_evals") or [])
+    derived = {e.split("=", 1)[0].strip() for e in evals if "=" in e}
+    raw = [f for f in meta.get("features_required", []) if f not in derived]
+    bad = [f for f in raw if f in schema.get("categorical", {}) or f in schema.get("datetime", {})]
+    if bad or not schema:
+        raise InputError(f"글자·날짜 입력 {bad}이(가) 있는 모델은 성능예측표로 만들 수 없습니다 (숫자 입력만 가능).")
+    return raw, evals
+
+
+def evals_for(subset: List[str], evals: List[str], raw: List[str]) -> List[str]:
+    """Derived features whose source inputs are all kept (sources = raw input names found in the expression;
+    expressions are stored with full column names)."""
+    out = []
+    for e in evals:
+        rhs = e.split("=", 1)[1]
+        if all(r in subset for r in raw if r in rhs):
+            out.append(e)
+    return out
+
+
+# ==============================================================================
+# 2. Training a subset (same competition as ml_train.py)
+# ==============================================================================
+
+def fit_subset(data: pd.DataFrame, target: str, subset: List[str], evals: List[str], raw: List[str],
+               seed: int = 42) -> Dict[str, Any]:
+    kept = evals_for(subset, evals, raw)
+    df = data[subset].apply(coerce_numeric)
+    if kept:
+        df = apply_inference_evals(df, kept)
+    derived = [e.split("=", 1)[0].strip() for e in kept]
+    cols = subset + derived
+    schema = {"numeric": cols, "categorical": {}, "datetime": {}, "input_columns": cols}
+    X = prepare_features(df, schema)
+    quiet, mt.log_progress = mt.log_progress, (lambda p, m: None)
+    try:
+        _, pipe, info, _ = mt.train_and_benchmark_models(X=X, y_series=coerce_numeric(data[target]),
+                                                         target_name=target, schema=schema, seed=seed)
+    finally:
+        mt.log_progress = quiet
+    return {"inputs": list(subset), "evals": kept, "schema": schema, "pipe": pipe,
+            "val_r2": float(info["val_r2"]), "rmse": float(info["rmse"]), "model": info["champion_model"],
+            "interval": info.get("prediction_interval")}
+
+
+def search(data: pd.DataFrame, target: str, inputs: List[str], keep: List[str], evals: List[str]) -> List[Dict[str, Any]]:
+    """Backward elimination with retraining: one candidate per input count, from all inputs down to the keep set / 1."""
+    cur = list(inputs)
+    progress(f"'{target}': 입력 {len(cur)}개 학습")
+    best = fit_subset(data, target, cur, evals, inputs)
+    cands = [best]
+    while len(cur) > max(1, len(keep)):
+        trials = []
+        for drop in [c for c in cur if c not in keep]:
+            sub = [c for c in cur if c != drop]
+            progress(f"'{target}': 입력 {len(sub)}개 시험 ({strip_unit(drop)} 빼기)")
+            trials.append((drop, fit_subset(data, target, sub, evals, inputs)))
+        if not trials:
+            break
+        drop, res = max(trials, key=lambda tr: tr[1]["val_r2"])
+        res["dropped"] = drop
+        cands.append(res)
+        cur = res["inputs"]
+    return cands
+
+
+def recommend(cands: List[Dict[str, Any]]) -> Dict[str, Any]:
+    best = max(c["val_r2"] for c in cands)
+    ok = [c for c in cands if c["val_r2"] >= best - RECOMMEND_TOL]
+    return min(ok, key=lambda c: (len(c["inputs"]), -c["val_r2"]))
+
+
+# ==============================================================================
+# 3. Grid table
+# ==============================================================================
+
+def build_grid(cand: Dict[str, Any], data: pd.DataFrame) -> Dict[str, Any]:
+    inputs = cand["inputs"]
+    k = len(inputs)
+    n = int(max(2, min(MAX_POINTS, np.floor(MAX_ROWS ** (1.0 / k) + 1e-9))))
+    lo = np.array([float(coerce_numeric(data[c]).min()) for c in inputs])
+    hi = np.array([float(coerce_numeric(data[c]).max()) for c in inputs])
+    axes = [np.linspace(lo[j], hi[j], n) for j in range(k)]
+    G = pd.DataFrame(list(itertools.product(*axes)), columns=inputs)
+    pred = predict_frame(cand, G)
+    # distance of every node to the nearest training row (inputs scaled to 0-1)
+    from scipy.spatial import cKDTree
+    span = np.where(hi - lo > 0, hi - lo, 1.0)
+    T = (np.column_stack([coerce_numeric(data[c]).to_numpy(dtype=float) for c in inputs]) - lo) / span
+    T = T[np.isfinite(T).all(axis=1)]
+    dist, _ = cKDTree(T).query((G.to_numpy(dtype=float) - lo) / span)
+    # interpolation accuracy: table vs model at random points inside the range
+    from scipy.interpolate import RegularGridInterpolator
+    rng = np.random.default_rng(0)
+    P = pd.DataFrame({c: rng.uniform(lo[j], hi[j], CHECK_POINTS) for j, c in enumerate(inputs)})
+    interp = RegularGridInterpolator(axes, pred.reshape([n] * k))(P.to_numpy(dtype=float))
+    model = predict_frame(cand, P)
+    err = interp - model
+    return {"n": n, "axes": axes, "grid": G, "pred": pred, "dist": dist, "lo": lo, "hi": hi,
+            "interp_rmse": float(np.sqrt(np.mean(err ** 2))), "interp_max": float(np.max(np.abs(err)))}
+
+
+def predict_frame(cand: Dict[str, Any], df: pd.DataFrame) -> np.ndarray:
+    d = df[cand["inputs"]].astype(float)
+    if cand["evals"]:
+        d = apply_inference_evals(d, cand["evals"])
+    return np.asarray(cand["pipe"].predict(prepare_features(d, cand["schema"])), dtype=float)
+
+
+def excel_interp(table: Dict[str, Any], x: np.ndarray, col: np.ndarray) -> float:
+    """Python mirror of the workbook formulas (same MATCH clamp, same corner order and strides)."""
+    axes, n = table["axes"], table["n"]
+    k = len(axes)
+    pos, t = [], []
+    for j in range(k):
+        p = int(np.clip(np.searchsorted(axes[j], x[j], side="right"), 1, n - 1))   # MATCH(...,1) clamped to [1, n-1]
+        a0, a1 = axes[j][p - 1], axes[j][p]
+        pos.append(p)
+        t.append((x[j] - a0) / (a1 - a0))
+    strides = [n ** (k - 1 - j) for j in range(k)]
+    val = 0.0
+    for bits in itertools.product((0, 1), repeat=k):
+        w = float(np.prod([t[j] if b else 1 - t[j] for j, b in enumerate(bits)]))
+        row = 1 + sum((pos[j] - 1 + b) * strides[j] for j, b in enumerate(bits))
+        val += w * col[row - 1]
+    return val
+
+
+# ==============================================================================
+# 4. Workbook
+# ==============================================================================
+
+def _col(i: int) -> str:
+    from openpyxl.utils import get_column_letter
+    return get_column_letter(i)
+
+
+def _label(name: str) -> Tuple[str, str]:
+    """'반응온도(°C)' -> ('반응온도', '°C')."""
+    m = re.match(r"^(.*?)\s*[\(\[]([^\(\)\[\]]*)[\)\]]\s*$", str(name))
+    return (m.group(1).strip(), m.group(2).strip()) if m else (str(name), "")
+
+
+def _nice(v: float, span: float) -> float:
+    """Rounds a value for display to ~3 significant digits of the input's range (170.0 ~ 195.0, 0.001 ~ 1.000)."""
+    dec = int(max(0, 3 - np.floor(np.log10(span)))) if span > 0 else 3
+    return round(float(v), min(dec, 6))
+
+
+def _nice_txt(v: float, span: float) -> str:
+    dec = int(max(0, 3 - np.floor(np.log10(span)))) if span > 0 else 3
+    return f"{float(v):.{min(dec, 6)}f}"
+
+
+def _sheet_name(prefix: str, name: str, used: set) -> str:
+    base = re.sub(r"[\\/\?\*\[\]:']", "_", f"{prefix}{strip_unit(name)}")[:28]
+    out, i = base, 2
+    while out in used:
+        out = f"{base[:25]}_{i}"
+        i += 1
+    used.add(out)
+    return out
+
+
+def default_title(meta: Dict[str, Any]) -> str:
+    desc = (meta.get("description") or "").strip().splitlines()[0] if meta.get("description") else ""
+    desc = re.split(r"(?<=[.!?。])\s", desc)[0] if desc else ""
+    if not desc:
+        return "성능 예측"
+    return desc if len(desc) <= TITLE_MAX else desc[:TITLE_MAX - 3].rstrip() + "..."
+
+
+def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dict[str, Any]]) -> str:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Side
+    from openpyxl.formatting.rule import FormulaRule
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.workbook.protection import WorkbookProtection
+
+    FONT = "맑은 고딕"
+    YELLOW = PatternFill("solid", fgColor="FFF2CC")
+    HEAD = PatternFill("solid", fgColor="E7ECF5")
+    ORANGE = PatternFill("solid", fgColor="FCE4D6")
+    NAVY = "1E3A8A"
+    thin = Side(style="thin", color="C9D1E0")
+    BOX = Border(left=thin, right=thin, top=thin, bottom=thin)
+    UNLOCK = Protection(locked=False)
+
+    def style(c, size=10, bold=False, color="1F2937", fill=None, align="left", border=True, fmt=None):
+        c.font = Font(name=FONT, size=size, bold=bold, color=color)
+        c.alignment = Alignment(horizontal=align, vertical="center", wrap_text=False)
+        if fill is not None:
+            c.fill = fill
+        if border:
+            c.border = BOX
+        if fmt:
+            c.number_format = fmt
+
+    wb = Workbook()
+    calc = wb.active
+    calc.title = "계산기"
+    batch = wb.create_sheet("일괄계산")
+    howto = wb.create_sheet("사용법")
+    used = {"계산기", "일괄계산", "사용법", "정확도", "정보"}
+    for p in plans:
+        p["sheet"] = _sheet_name("표_", p["target"], used)
+        p["ws"] = wb.create_sheet(p["sheet"])
+    acc = wb.create_sheet("정확도")
+    info = wb.create_sheet("정보")
+
+    # union of inputs, in model order of the first target, then the others
+    all_inputs: List[str] = []
+    for p in plans:
+        for c in p["cand"]["inputs"]:
+            if c not in all_inputs:
+                all_inputs.append(c)
+    data = vinfo["data"]
+    rng = {c: (float(coerce_numeric(data[c]).min()), float(coerce_numeric(data[c]).max()),
+               float(coerce_numeric(data[c]).median())) for c in all_inputs}
+
+    # -- table sheets ------------------------------------------------------------------------
+    for p in plans:
+        ws, tab, cand = p["ws"], p["table"], p["cand"]
+        k, n = len(cand["inputs"]), tab["n"]
+        heads = [_label(c)[0] + (f" ({_label(c)[1]})" if _label(c)[1] else "") for c in cand["inputs"]]
+        heads += [f"예측 {strip_unit(p['target'])}", "실측까지 거리"]
+        for j, h in enumerate(heads, 1):
+            style(ws.cell(row=1, column=j, value=h), bold=True, fill=HEAD, align="center")
+        G = tab["grid"].to_numpy(dtype=float)
+        for i in range(len(G)):
+            r = i + 2
+            for j in range(k):
+                ws.cell(row=r, column=j + 1, value=float(G[i, j]))
+            ws.cell(row=r, column=k + 1, value=round(float(tab["pred"][i]), 6))
+            ws.cell(row=r, column=k + 2, value=round(float(tab["dist"][i]), 4))
+        p["pred_rng"] = f"'{p['sheet']}'!${_col(k + 1)}$2:${_col(k + 1)}${len(G) + 1}"
+        p["dist_rng"] = f"'{p['sheet']}'!${_col(k + 2)}$2:${_col(k + 2)}${len(G) + 1}"
+        ax0 = k + 4
+        style(ws.cell(row=1, column=ax0 - 1, value="축 값"), bold=True, fill=HEAD)
+        p["axis_rng"] = []
+        for j in range(k):
+            c = ax0 + j
+            style(ws.cell(row=1, column=c, value=heads[j]), bold=True, fill=HEAD, align="center")
+            for i, v in enumerate(tab["axes"][j]):
+                ws.cell(row=i + 2, column=c, value=float(v))
+            p["axis_rng"].append(f"'{p['sheet']}'!${_col(c)}$2:${_col(c)}${n + 1}")
+            ws.column_dimensions[_col(c)].width = 14
+        for j in range(1, k + 3):
+            ws.column_dimensions[_col(j)].width = 15
+        ws.freeze_panes = "A2"
+        p["strides"] = [n ** (k - 1 - j) for j in range(k)]
+
+    def interp_cells(ws, p, x_refs: Dict[str, str], row: int, col0: int) -> Tuple[str, str, int]:
+        """Writes the helper cells of one interpolation (axis positions/fractions, corner terms) starting at col0.
+        Returns (prediction formula, distance formula, next free column)."""
+        cand = p["cand"]
+        k, n = len(cand["inputs"]), p["table"]["n"]
+        pos, frac = [], []
+        c = col0
+        for j, name in enumerate(cand["inputs"]):
+            x, ax = x_refs[name], p["axis_rng"][j]
+            ws.cell(row=row, column=c, value=f"=MIN(MAX(IFERROR(MATCH({x},{ax},1),1),1),{n - 1})")
+            pos.append(f"{_col(c)}{row}")
+            ws.cell(row=row, column=c + 1, value=f"=({x}-INDEX({ax},{pos[-1]}))/(INDEX({ax},{pos[-1]}+1)-INDEX({ax},{pos[-1]}))")
+            frac.append(f"{_col(c + 1)}{row}")
+            c += 2
+        p_terms, d_terms = [], []
+        for bits in itertools.product((0, 1), repeat=k):
+            w = "*".join(frac[j] if b else f"(1-{frac[j]})" for j, b in enumerate(bits))
+            idx = "1+" + "+".join(f"({pos[j]}-1{'+1' if b else ''})*{p['strides'][j]}" for j, b in enumerate(bits))
+            ws.cell(row=row, column=c, value=f"={w}*INDEX({p['pred_rng']},{idx})")
+            ws.cell(row=row, column=c + 1, value=f"={w}*INDEX({p['dist_rng']},{idx})")
+            p_terms.append(f"{_col(c)}{row}")
+            d_terms.append(f"{_col(c + 1)}{row}")
+            c += 2
+        return f"SUM({','.join(p_terms)})", f"SUM({','.join(d_terms)})", c
+
+    # -- 계산기 ------------------------------------------------------------------------------
+    calc.sheet_view.showGridLines = False
+    calc.column_dimensions["A"].width = 3
+    for col, w in zip("BCDEF", (18, 14, 10, 22, 26)):
+        calc.column_dimensions[col].width = w
+    calc.merge_cells("B2:F2")
+    style(calc["B2"], size=18, bold=True, color=NAVY, border=False)
+    calc["B2"].value = title
+    calc.merge_cells("B3:F3")
+    style(calc["B3"], size=9, color="6B7280", border=False)
+    calc["B3"].value = f"모델 {os.path.basename(vinfo['dir'])}  |  생성 {datetime.now():%Y-%m-%d}  |  ml-kit {VERSION}"
+    calc.merge_cells("B4:F4")
+    style(calc["B4"], size=10, color="374151", border=False)
+    calc["B4"].value = "노란 칸에 값을 넣으면 아래에 예측값이 바로 계산됩니다."
+    calc.row_dimensions[2].height = 30
+    r = 5
+    for j, h in enumerate(("입력", "값", "단위", "학습 범위", "상태"), 2):
+        style(calc.cell(row=r, column=j, value=h), bold=True, fill=HEAD, align="center")
+    x_refs: Dict[str, str] = {}
+    dv = DataValidation(type="decimal", operator="between", formula1="-1E+307", formula2="1E+307", allow_blank=True,
+                        showErrorMessage=True, errorTitle="숫자만 입력", error="숫자만 입력할 수 있습니다.")
+    calc.add_data_validation(dv)
+    first_input = None
+    for i, c in enumerate(all_inputs):
+        row = r + 1 + i
+        lo, hi, med = rng[c]
+        name, unit = _label(c)
+        style(calc.cell(row=row, column=2, value=name), bold=True)
+        v = calc.cell(row=row, column=3, value=_nice(med, hi - lo))
+        style(v, size=11, bold=True, fill=YELLOW, align="right")
+        v.protection = UNLOCK
+        dv.add(v.coordinate)
+        first_input = first_input or v.coordinate
+        style(calc.cell(row=row, column=4, value=unit), align="center")
+        style(calc.cell(row=row, column=5, value=f"{_nice_txt(lo, hi - lo)} ~ {_nice_txt(hi, hi - lo)}"), align="center")
+        x = f"$C${row}"
+        x_refs[c] = x
+        chk = f"OR({x}<{lo!r},{x}>{hi!r})"
+        style(calc.cell(row=row, column=6, value=f'=IF(ISNUMBER({x}),IF({chk},"범위 밖","정상"),"값을 넣으세요")'), align="center")
+    in_end = r + len(all_inputs)
+    calc.conditional_formatting.add(f"F{r + 1}:F{in_end}", FormulaRule(formula=[f'F{r + 1}<>"정상"'], fill=ORANGE))
+
+    r2 = in_end + 2
+    for j, h in enumerate(("결과", "예측값", "단위", "90% 범위", "판단"), 2):
+        style(calc.cell(row=r2, column=j, value=h), bold=True, fill=HEAD, align="center")
+    helper_col = 9
+    style(calc.cell(row=5, column=helper_col, value="계산용 셀 (자동 계산, 수정 불가)"), size=9, color="6B7280", border=False)
+    for ti, p in enumerate(plans):
+        row = r2 + 1 + ti
+        name, unit = _label(p["target"])
+        own = [x_refs[c] for c in p["cand"]["inputs"]]
+        pf, df_, nxt = interp_cells(calc, p, x_refs, row, helper_col)
+        helper_col_end = nxt
+        iv = p["cand"]["interval"] or {"residual_lower": 0.0, "residual_upper": 0.0}
+        ready = f"COUNT({','.join(own)})={len(own)}"
+        style(calc.cell(row=row, column=2, value=name), bold=True)
+        style(calc.cell(row=row, column=3, value=f'=IF({ready},{pf},"")'), size=14, bold=True, color=NAVY, align="right", fmt="0.00")
+        style(calc.cell(row=row, column=4, value=unit), align="center")
+        style(calc.cell(row=row, column=5, value=(f'=IF({ready},TEXT(C{row}+({iv["residual_lower"]!r}),"0.00")&" ~ "&'
+                                                   f'TEXT(C{row}+({iv["residual_upper"]!r}),"0.00"),"")')), align="center")
+        out_rng = "OR(" + ",".join(f"OR({x}<{rng[c][0]!r},{x}>{rng[c][1]!r})" for c, x in zip(p["cand"]["inputs"], own)) + ")"
+        style(calc.cell(row=row, column=6, value=(f'=IF(NOT({ready}),"",IF({out_rng},"참고용 (학습 범위 밖)",'
+                                                   f'IF({df_}>{UNCOVERED_DIST},"참고용 (실측 없는 영역)","정상")))')), align="center")
+        calc.conditional_formatting.add(f"F{row}", FormulaRule(formula=[f'AND(F{row}<>"",F{row}<>"정상")'], fill=ORANGE))
+        for c in range(helper_col, helper_col_end):
+            calc.column_dimensions[_col(c)].width = 9
+            calc.cell(row=row, column=c).font = Font(name=FONT, size=8, color="9CA3AF")
+    note_row = r2 + len(plans) + 2
+    calc.merge_cells(f"B{note_row}:F{note_row + 2}")
+    style(calc[f"B{note_row}"], size=9, color="374151", border=False)
+    calc[f"B{note_row}"].alignment = Alignment(wrap_text=True, vertical="top")
+    calc[f"B{note_row}"].value = ("90% 범위: 실제 값이 이 범위에 들 가능성이 약 90%입니다. "
+                                  "학습 범위 밖이거나 실측 데이터가 없는 영역의 값은 참고용입니다. "
+                                  "자세한 내용은 '사용법' 시트를 보세요.")
+    calc.print_area = f"B2:F{note_row + 2}"
+    calc.sheet_properties.pageSetUpPr.fitToPage = True
+    calc.page_setup.fitToWidth = 1
+    calc.page_setup.fitToHeight = 0
+
+    # -- 일괄계산 ------------------------------------------------------------------------------
+    batch.freeze_panes = "A3"
+    batch.merge_cells("A1:F1")
+    style(batch["A1"], size=11, bold=True, color=NAVY, border=False)
+    batch["A1"].value = f"노란 열에 조건을 붙여 넣으면 결과가 계산됩니다 (최대 {BATCH_ROWS}건)."
+    heads = [(_label(c)[0] + (f" ({_label(c)[1]})" if _label(c)[1] else "")) for c in all_inputs]
+    col = 1
+    for h in heads:
+        style(batch.cell(row=2, column=col, value=h), bold=True, fill=YELLOW, align="center")
+        batch.column_dimensions[_col(col)].width = 14
+        col += 1
+    res_cols = []
+    for p in plans:
+        tn = strip_unit(p["target"])
+        for h in (f"예측 {tn}", f"{tn} 하한(90%)", f"{tn} 상한(90%)", f"{tn} 판단"):
+            style(batch.cell(row=2, column=col, value=h), bold=True, fill=HEAD, align="center")
+            batch.column_dimensions[_col(col)].width = 16
+            res_cols.append(col)
+            col += 1
+    helper0 = col + 1
+    style(batch.cell(row=2, column=helper0, value="계산용 (자동)"), size=8, color="9CA3AF", border=False)
+    bdv = DataValidation(type="decimal", operator="between", formula1="-1E+307", formula2="1E+307", allow_blank=True,
+                         showErrorMessage=True, errorTitle="숫자만 입력", error="숫자만 입력할 수 있습니다.")
+    batch.add_data_validation(bdv)
+    bdv.add(f"A3:{_col(len(all_inputs))}{BATCH_ROWS + 2}")
+    for i in range(BATCH_ROWS):
+        row = i + 3
+        refs = {c: f"${_col(j + 1)}{row}" for j, c in enumerate(all_inputs)}
+        for j in range(len(all_inputs)):
+            cell = batch.cell(row=row, column=j + 1)
+            cell.fill = YELLOW
+            cell.protection = UNLOCK
+            cell.border = BOX
+        hc = helper0 + 1
+        rc = 0
+        for p in plans:
+            own = [refs[c] for c in p["cand"]["inputs"]]
+            pf, df_, hc = interp_cells(batch, p, refs, row, hc)
+            iv = p["cand"]["interval"] or {"residual_lower": 0.0, "residual_upper": 0.0}
+            ready = f"COUNT({','.join(own)})={len(own)}"
+            pc = res_cols[rc]
+            batch.cell(row=row, column=pc, value=f'=IF({ready},{pf},"")').number_format = "0.00"
+            batch.cell(row=row, column=pc + 1, value=f'=IF({ready},{_col(pc)}{row}+({iv["residual_lower"]!r}),"")').number_format = "0.00"
+            batch.cell(row=row, column=pc + 2, value=f'=IF({ready},{_col(pc)}{row}+({iv["residual_upper"]!r}),"")').number_format = "0.00"
+            out_rng = "OR(" + ",".join(f"OR({x}<{rng[c][0]!r},{x}>{rng[c][1]!r})" for c, x in zip(p["cand"]["inputs"], own)) + ")"
+            batch.cell(row=row, column=pc + 3, value=(f'=IF(NOT({ready}),"",IF({out_rng},"참고용 (학습 범위 밖)",'
+                                                      f'IF({df_}>{UNCOVERED_DIST},"참고용 (실측 없는 영역)","정상")))'))
+            rc += 4
+    for c in res_cols[3::4]:
+        batch.conditional_formatting.add(f"{_col(c)}3:{_col(c)}{BATCH_ROWS + 2}",
+                                         FormulaRule(formula=[f'AND({_col(c)}3<>"",{_col(c)}3<>"정상")'], fill=ORANGE))
+
+    # -- 사용법 ----------------------------------------------------------------------------------
+    lines = [
+        ("사용법", True),
+        ("1. '계산기' 시트의 노란 칸에 조건을 넣으면 예측값과 90% 범위가 바로 계산됩니다.", False),
+        ("2. 여러 조건은 '일괄계산' 시트의 노란 열에 붙여 넣으세요 (한 줄에 한 조건).", False),
+        ("3. 노란 칸 말고는 수정할 수 없습니다 (계산이 깨지지 않도록 잠겨 있습니다).", False),
+        ("", False),
+        ("결과 읽는 법", True),
+        ("- 예측값: 모델로 미리 계산해 둔 표('표_' 시트)에서 입력값 주변 값을 비율로 섞어 구한 값입니다.", False),
+        ("- 90% 범위: 실제 값이 이 범위 안에 들 가능성이 약 90%입니다. 좁을수록 정밀합니다.", False),
+        ("- 판단 '참고용 (학습 범위 밖)': 입력이 모델이 배운 범위를 벗어났습니다. 값이 부정확할 수 있습니다.", False),
+        ("- 판단 '참고용 (실측 없는 영역)': 각 입력은 범위 안이지만, 이런 조합의 실제 데이터가 근처에 없었습니다.", False),
+        ("", False),
+        ("이 파일에 대해", True),
+        ("- 입력 항목과 모델 정보는 '정보' 시트, 입력 수에 따른 정확도는 '정확도' 시트에 있습니다.", False),
+        ("- 모델이 예측한 값이므로 중요한 결정 전에는 실제 시험으로 확인하세요.", False),
+    ]
+    howto.column_dimensions["B"].width = 110
+    howto.sheet_view.showGridLines = False
+    for i, (t, bold) in enumerate(lines, 2):
+        style(howto.cell(row=i, column=2, value=t), size=12 if bold else 10, bold=bold, color=NAVY if bold else "1F2937", border=False)
+
+    # -- 정확도 / 정보 ---------------------------------------------------------------------------
+    acc.sheet_view.showGridLines = False
+    row = 2
+    for p in plans:
+        style(acc.cell(row=row, column=2, value=f"{p['target']}: 입력 수별 후보 (선택: 입력 {len(p['cand']['inputs'])}개)"),
+              size=12, bold=True, color=NAVY, border=False)
+        row += 1
+        hdr = ("입력 수", "입력", "검증 R²", "RMSE", "모델", "표 행 수", "표 보간 오차(RMSE)", "예상 최종 오차", "선택")
+        for j, h in enumerate(hdr, 2):
+            style(acc.cell(row=row, column=j, value=h), bold=True, fill=HEAD, align="center")
+        for c in p["cands"]:
+            row += 1
+            vals = (len(c["inputs"]), ", ".join(strip_unit(x) for x in c["inputs"]), round(c["val_r2"], 4), round(c["rmse"], 4),
+                    c["model"], c.get("rows"), c.get("interp_rmse"), c.get("total_rmse"), "선택" if c is p["cand"] else "")
+            for j, v in enumerate(vals, 2):
+                style(acc.cell(row=row, column=j, value=v), align="left" if j == 3 else "right")
+        row += 3
+    for col, w in zip("BCDEFGHIJ", (8, 46, 10, 10, 22, 11, 18, 15, 7)):
+        acc.column_dimensions[col].width = w
+
+    info.sheet_view.showGridLines = False
+    rows = [("제목", title), ("만든 날짜", f"{datetime.now():%Y-%m-%d %H:%M}"), ("ml-kit", VERSION),
+            ("원래 모델 버전 폴더", vinfo["dir"])]
+    for p in plans:
+        c, m = p["cand"], vinfo["metas"][p["target"]]
+        dropped = [x for x in p["all_inputs"] if x not in c["inputs"]]
+        rows += [("", ""), (f"[{p['target']}]", ""),
+                 ("원래 모델", f"{m.get('champion_model')} / 입력 {len(p['all_inputs'])}개 / 검증 R² {m.get('val_r2')}"),
+                 ("이 표의 모델", f"{c['model']} / 입력 {len(c['inputs'])}개 / 검증 R² {round(c['val_r2'], 4)} / RMSE {round(c['rmse'], 4)}"),
+                 ("입력", ", ".join(c["inputs"])),
+                 ("뺀 입력 (학습 범위)", ", ".join(f"{x} ({_fmt(rng_all(vinfo, x)[0])}~{_fmt(rng_all(vinfo, x)[1])})" for x in dropped) or "없음"),
+                 ("파생변수 (자동 계산)", ", ".join(c["evals"]) or "없음"),
+                 ("표", f"축마다 {p['table']['n']}점, {len(p['table']['grid']):,}행, 보간 오차 RMSE {round(p['table']['interp_rmse'], 4)}"),
+                 ("90% 범위 (예측값 기준)", f"{(c['interval'] or {}).get('residual_lower')} ~ +{(c['interval'] or {}).get('residual_upper')}")]
+    for i, (a, b) in enumerate(rows, 2):
+        style(info.cell(row=i, column=2, value=a), bold=True, border=False)
+        style(info.cell(row=i, column=3, value=b), border=False)
+    info.column_dimensions["B"].width = 24
+    info.column_dimensions["C"].width = 100
+
+    # -- protection (no password): only the yellow cells are editable; structure fixed --------------
+    for ws in wb.worksheets:
+        ws.protection.sheet = True
+        ws.protection.formatCells = True
+        ws.protection.formatColumns = False   # widths can still be adjusted
+        ws.protection.selectLockedCells = False
+        ws.protection.selectUnlockedCells = False
+    wb.security = WorkbookProtection(lockStructure=True)
+    wb.active = 0
+    calc.sheet_view.selection[0].activeCell = first_input
+    calc.sheet_view.selection[0].sqref = first_input
+
+    def _save(pth: str) -> None:
+        wb.save(pth)
+    return save_with_lock_fallback(path, _save, what="성능예측표")
+
+
+def rng_all(vinfo: Dict[str, Any], col: str) -> Tuple[float, float]:
+    s = coerce_numeric(vinfo["data"][col])
+    return float(s.min()), float(s.max())
+
+
+# ==============================================================================
+# 5. Verification
+# ==============================================================================
+
+def verify_workbook(path: str, plans: List[Dict[str, Any]]) -> List[str]:
+    """Re-reads the file: sheets, protection, unlocked inputs, table size; checks the formula math in Python;
+    recalculates in Excel when it is installed (Windows)."""
+    from openpyxl import load_workbook
+    problems = []
+    try:
+        wb = load_workbook(path)
+    except Exception as e:
+        return [f"저장한 파일을 다시 열지 못함: {e}"]
+    for name in ["계산기", "일괄계산", "사용법", "정확도", "정보"] + [p["sheet"] for p in plans]:
+        if name not in wb.sheetnames:
+            problems.append(f"'{name}' 시트 없음")
+        elif not wb[name].protection.sheet:
+            problems.append(f"'{name}' 시트 잠금 안 됨")
+    if not (wb.security and wb.security.lockStructure):
+        problems.append("통합문서 구조 잠금 안 됨")
+    for p in plans:
+        ws = wb[p["sheet"]] if p["sheet"] in wb.sheetnames else None
+        if ws is not None and ws.max_row - 1 < len(p["table"]["grid"]):
+            problems.append(f"'{p['sheet']}' 표 행 수 부족 ({ws.max_row - 1} < {len(p['table']['grid'])})")
+        # formula math (same corners / strides as the workbook) against an independent interpolator
+        from scipy.interpolate import RegularGridInterpolator
+        tab = p["table"]
+        rgi = RegularGridInterpolator(tab["axes"], tab["pred"].reshape([tab["n"]] * len(tab["axes"])))
+        r = np.random.default_rng(1)
+        for _ in range(20):
+            x = np.array([r.uniform(a[0], a[-1]) for a in tab["axes"]])
+            if abs(excel_interp(tab, x, tab["pred"]) - float(rgi(x)[0])) > 1e-6 * max(1.0, abs(float(rgi(x)[0]))):
+                problems.append(f"'{p['target']}' 수식 계산 확인 실패")
+                break
+    calc = wb["계산기"] if "계산기" in wb.sheetnames else None
+    if calc is not None:
+        unlocked = [c.coordinate for row in calc.iter_rows() for c in row if c.protection is not None and not c.protection.locked]
+        if not unlocked:
+            problems.append("계산기에 입력 가능한 칸이 없음")
+    return problems
+
+
+def excel_check(path: str, plans: List[Dict[str, Any]]) -> Optional[str]:
+    """Windows with Excel: open, recalculate, compare the calculator result with Python. None = checked OK,
+    'skip' = Excel not available, otherwise a problem."""
+    import importlib.util
+    if importlib.util.find_spec("win32com") is None:
+        return "skip"
+    try:
+        import win32com.client as w32
+        xl = w32.DispatchEx("Excel.Application")
+        xl.Visible = False
+        xl.DisplayAlerts = False
+        wb = xl.Workbooks.Open(os.path.abspath(path), ReadOnly=True)
+        try:
+            ws = wb.Worksheets("계산기")
+            xl.CalculateFull()
+            problems = []
+            for ti, p in enumerate(plans):
+                got = ws.Range(p["calc_cell"]).Value
+                x = np.array([float(ws.Range(p["input_cells"][c]).Value) for c in p["cand"]["inputs"]])
+                want = excel_interp(p["table"], x, p["table"]["pred"])
+                if got is None or abs(float(got) - want) > 1e-6 * max(1.0, abs(want)):
+                    problems.append(f"'{p['target']}' 엑셀 계산 {got} != {want:.6g}")
+            return "; ".join(problems) or None
+        finally:
+            wb.Close(SaveChanges=False)
+            xl.Quit()
+    except Exception as e:
+        return f"엑셀로 계산 확인 실패: {type(e).__name__}: {e}"
+
+
+# ==============================================================================
+# 6. Command
+# ==============================================================================
+
+def execute_export(args) -> Dict[str, Any]:
+    vinfo = load_version(args.model, args.targets)
+    data_all = vinfo["data"]
+    warnings: List[str] = []
+    if vinfo["skipped"]:
+        warnings.append(f"분류 타겟 {vinfo['skipped']}은(는) 성능예측표에서 뺐습니다 (숫자 타겟만 가능)")
+    plans = []
+    for target in vinfo["targets"]:
+        meta = vinfo["metas"][target]
+        inputs, evals = raw_inputs(meta)
+        missing = [c for c in inputs + [target] if c not in data_all.columns]
+        if missing:
+            raise InputError(f"학습 데이터 사본에 {missing} 열이 없습니다. 다시 학습한 버전으로 실행하십시오.")
+        data = data_all.copy()
+        excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
+        if excl in data.columns:
+            data = data[coerce_numeric(data[excl]).fillna(0) != 1]
+        data = data[coerce_numeric(data[target]).notna()].reset_index(drop=True)
+        keep = resolve_column_names([s.strip() for s in args.keep.split(",") if s.strip()], inputs, "꼭 포함할 입력(--keep)")[0] if args.keep else []
+        if args.inputs:
+            chosen_inputs = resolve_column_names([s.strip() for s in args.inputs.split(",") if s.strip()], inputs, "입력(--inputs)")[0]
+            missing_keep = [k for k in keep if k not in chosen_inputs]
+            if missing_keep:
+                raise InputError(f"--inputs에 --keep 입력 {missing_keep}이(가) 빠져 있습니다.")
+            progress(f"'{target}': 입력 {len(chosen_inputs)}개로 학습 (최적화 없음)")
+            cands = [fit_subset(data, target, chosen_inputs, evals, inputs)]
+            cand, reason = cands[0], "지정한 입력 (--inputs)"
+        else:
+            cands = search(data, target, inputs, keep, evals)
+            cand = recommend(cands)
+            best = max(c["val_r2"] for c in cands)
+            reason = (f"최고 검증 R² {best:.4f}와 {RECOMMEND_TOL} 이내에서 입력 수가 가장 적은 안"
+                      + (f" (꼭 포함: {', '.join(keep)})" if keep else ""))
+        progress(f"'{target}': 후보별 표 정확도 계산")
+        for c in cands:
+            tab = build_grid(c, data)
+            c["table"] = tab
+            c["rows"] = len(tab["grid"])
+            c["interp_rmse"] = round(tab["interp_rmse"], 4)
+            c["total_rmse"] = round(float(np.sqrt(c["rmse"] ** 2 + tab["interp_rmse"] ** 2)), 4)
+        if cand["table"]["n"] < MIN_POINTS_WARN:
+            warnings.append(f"'{target}': 입력이 {len(cand['inputs'])}개라 표가 축마다 {cand['table']['n']}점뿐입니다. "
+                            f"보간 오차 {cand['interp_rmse']} (모델 RMSE {round(cand['rmse'], 4)})")
+        plans.append({"target": target, "cand": cand, "cands": cands, "table": cand["table"], "all_inputs": inputs,
+                      "reason": reason, "keep": keep})
+
+    # retrained models and the candidate table next to the version (never inside the version files)
+    exp_dir = os.path.join(vinfo["dir"], "export")
+    os.makedirs(exp_dir, exist_ok=True)
+    for p in plans:
+        c = p["cand"]
+        safe = re.sub(r'[\\/*?:"<>|]', "_", p["target"])
+        joblib.dump(c["pipe"], os.path.join(exp_dir, f"model_{safe}.joblib"), compress=3)
+        with open(os.path.join(exp_dir, f"model_{safe}.json"), "w", encoding="utf-8") as f:
+            json.dump({"target": p["target"], "task": "regression", "features_required": c["inputs"] + [e.split("=", 1)[0].strip() for e in c["evals"]],
+                       "derived_evals": c["evals"], "feature_schema": c["schema"], "champion_model": c["model"],
+                       "val_r2": round(c["val_r2"], 4), "rmse": round(c["rmse"], 4), "prediction_interval": c["interval"],
+                       "source_version": vinfo["dir"], "exported_at": datetime.now().isoformat(timespec="seconds"),
+                       "ml_kit": VERSION}, f, ensure_ascii=False, indent=2)
+    pd.DataFrame([{"타겟": p["target"], "입력 수": len(c["inputs"]), "입력": ", ".join(c["inputs"]), "검증 R2": round(c["val_r2"], 4),
+                   "RMSE": round(c["rmse"], 4), "모델": c["model"], "표 행 수": c["rows"], "표 보간 오차": c["interp_rmse"],
+                   "예상 최종 오차": c["total_rmse"], "선택": "선택" if c is p["cand"] else ""}
+                  for p in plans for c in p["cands"]]).to_csv(os.path.join(exp_dir, "candidates.csv"), index=False, encoding="utf-8-sig")
+
+    title = (args.title or "").strip() or default_title(vinfo["metas"][plans[0]["target"]])
+    if len(title) > TITLE_MAX:
+        warnings.append(f"제목이 {len(title)}자로 길어 {TITLE_MAX}자로 줄였습니다")
+        title = title[:TITLE_MAX - 3].rstrip() + "..."
+    stem = re.sub(r"_ml_data$", "", os.path.basename(os.path.dirname(vinfo["dir"]))) or "모델"
+    default = os.path.join(os.path.dirname(os.path.dirname(vinfo["dir"])), f"{stem}_성능예측표_{os.path.basename(vinfo['dir'])}.xlsx")
+    path = args.save if args.save else default
+    if args.save and not os.path.isabs(path):
+        path = os.path.join(os.path.dirname(os.path.dirname(vinfo["dir"])), path)
+    if not path.lower().endswith(".xlsx"):
+        path += ".xlsx"
+    path = avoid_overwrite(os.path.abspath(path), what="성능예측표")
+    progress("엑셀 파일 작성")
+    real = write_workbook(path, title, vinfo, plans)
+    # remember where the calculator puts each result (for the Excel check)
+    all_inputs = list(dict.fromkeys(c for p in plans for c in p["cand"]["inputs"]))
+    for ti, p in enumerate(plans):
+        p["input_cells"] = {c: f"C{6 + all_inputs.index(c)}" for c in all_inputs}
+        p["calc_cell"] = f"C{5 + len(all_inputs) + 3 + ti}"
+    progress("저장한 파일 확인")
+    problems = verify_workbook(real, plans)
+    xl = excel_check(real, plans)
+    unverified = list(problems)
+    if xl == "skip":
+        unverified.append("엑셀이 없는 환경이라 엑셀에서 수식 계산은 확인하지 못함 (파일 구조, 잠금, 수식 계산 방식은 확인함)")
+    elif xl:
+        unverified.append(xl)
+
+    out_targets = {}
+    for p in plans:
+        c = p["cand"]
+        out_targets[p["target"]] = {
+            "inputs": c["inputs"], "dropped": [x for x in p["all_inputs"] if x not in c["inputs"]], "keep": p["keep"],
+            "val_r2": round(c["val_r2"], 4), "rmse": round(c["rmse"], 4), "model": c["model"], "reason": p["reason"],
+            "table_rows": c["rows"], "points_per_axis": c["table"]["n"], "interp_rmse": c["interp_rmse"], "total_rmse": c["total_rmse"],
+            "candidates": [{"count": len(x["inputs"]), "inputs": x["inputs"], "val_r2": round(x["val_r2"], 4), "rmse": round(x["rmse"], 4),
+                            "table_rows": x["rows"], "interp_rmse": x["interp_rmse"], "total_rmse": x["total_rmse"]} for x in p["cands"]],
+        }
+    here = os.path.dirname(os.path.abspath(__file__))
+    next_commands = []
+    for p in plans:
+        for x in p["cands"]:
+            if x is p["cand"]:
+                continue
+            cmd = (f"python {quote_arg(os.path.join(here, 'ml_export.py'))} -m {quote_arg(vinfo['dir'])} -y {quote_arg(p['target'])} "
+                   f"--inputs {quote_arg(','.join(x['inputs']))} --title {quote_arg(title)}")
+            next_commands.append({"purpose": f"'{p['target']}' 입력 {len(x['inputs'])}개 안으로 다시 만들기 (검증 R² {round(x['val_r2'], 4)})",
+                                  "command": cmd, "needs_input": False})
+    brief = "; ".join(f"{t}: 입력 {len(v['inputs'])}개 ({', '.join(strip_unit(i) for i in v['inputs'])}), 검증 R² {v['val_r2']}, 표 {v['table_rows']:,}행"
+                      for t, v in out_targets.items())
+    res = {"status": "ok", "output_file": real, "title": title, "targets": out_targets, "export_model_dir": exp_dir,
+           "verified": not unverified, "preview": f"성능예측표 생성: {brief}", "next_commands": next_commands[:8]}
+    if warnings:
+        res["warnings"] = warnings
+    if unverified:
+        res["unverified"] = unverified
+    res["agent_directive"] = (
+        ("VERIFIED: " if not unverified else "UNVERIFIED: " + "; ".join(unverified) + ". 재시도하지 말고 그대로 알리세요. ")
+        + "output_file 경로, 타겟별 입력(inputs)과 뺀 입력(dropped), 검증 R², 표 크기를 알리세요. "
+        + "다른 입력 조합을 원하면 targets.<타겟>.candidates를 보여 주고, 사용자가 고른 안의 next_commands를 그대로 실행하세요."
+        + (" warnings도 알리세요." if warnings else ""))
+    return res
+
+
+def main():
+    setup_console()
+    parser = JsonArgumentParser(description="ml-kit 성능예측표 (엑셀, 수식만, 잠금) 내보내기")
+    parser.add_argument("--model", "-m", required=True, help="학습 결과 버전 폴더 (예: 공정_ml_data/v3)")
+    parser.add_argument("--targets", "-y", help="표로 만들 숫자 타겟 (쉼표 구분, 생략 시 전부)")
+    parser.add_argument("--keep", help="입력을 줄일 때 꼭 포함할 입력 (쉼표 구분)")
+    parser.add_argument("--inputs", help="최적화 없이 이 입력 조합으로 바로 만들기 (쉼표 구분)")
+    parser.add_argument("--title", help="계산기 제목 (데이터 설명을 짧게 정리한 글, 40자 이내)")
+    parser.add_argument("--save", help="저장 경로 (.xlsx, 생략 시 데이터 폴더에 <데이터>_성능예측표_<버전>.xlsx)")
+    args = parser.parse_args()
+    run_cli(lambda: execute_export(args), hint="Check the version folder and input names in SKILL.md.")
+
+
+if __name__ == "__main__":
+    main()
