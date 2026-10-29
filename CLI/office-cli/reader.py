@@ -6,6 +6,7 @@
     search  캐시에 등록된 문서에서 검색합니다. 결과마다 근거(쪽, 장절, 번호)를 줍니다.
             --file을 주면 그 파일/폴더에서 아직 등록되지 않았거나 바뀐 문서를 먼저 등록한 뒤 검색합니다.
     list    캐시에 등록된 문서 목록 (--name, --folder로 거르기)
+    clear   캐시 지우기 (--file, --name, --folder, --missing, --all, --dry-run). 원본 문서는 그대로
 
 캐시 형식(모든 형식 공통): 문서마다 units 목록, 단위마다
     id, kind, loc, page, page_source, section(장절 경로), number(항목 번호), heading, text
@@ -1823,16 +1824,12 @@ def build_matcher(query: str, regex: bool, case_sensitive: bool):
     if not groups:
         raise rt.InputError("검색어가 비어 있습니다.")
 
-    def norm(s: str) -> str:
-        s = re.sub(r"\s+", "", unicodedata.normalize("NFC", s))   # 띄어쓰기·줄바꿈이 달라도 찾음 (설계기준 = 설계 기준)
-        return s if case_sensitive else s.lower()
-
-    keys = [[norm(t) for t in g] for g in groups]
+    pats = [[_term_pattern(unicodedata.normalize("NFC", t), flags) for t in g] for g in groups]
 
     def match_terms(text: str):
-        t = norm(text)
-        for g, k in zip(groups, keys):
-            if all(x in t for x in k):
+        t = unicodedata.normalize("NFC", text)
+        for g, ps in zip(groups, pats):
+            if all(p.search(t) for p in ps):
                 return g
         return None
     return match_terms
@@ -1864,10 +1861,26 @@ def parse_query(query: str) -> List[List[str]]:
     return [g for g in groups if g]
 
 
+_SEP = r"[\W_]*"          # 글자 사이에 끼어도 되는 것: 띄어쓰기, 줄바꿈, 기호(# - . : / ( ) 등)
+
+
 def _term_pattern(term: str, flags: int) -> "re.Pattern[str]":
-    """검색어를 글 안에서 찾는 정규식: 글자 사이 띄어쓰기·줄바꿈을 허용 (match_terms와 같은 기준)."""
-    chars = re.sub(r"\s+", "", term)
-    return re.compile(r"\s*".join(re.escape(c) for c in chars) or re.escape(term), flags)
+    """검색어를 글 안에서 찾는 정규식. 띄어쓰기·줄바꿈·기호가 달라도 찾습니다:
+    'SOI 1' = 'SOI #1' = 'SOI-1' = 'SOI1', '설계기준' = '설계 기준', PDF 줄바꿈으로 갈라진 글.
+    숫자 경계는 지킵니다: 'SOI 1'은 'SOI #10'이나 'SOI 21'과 맞지 않습니다.
+    기호를 빼면 숫자만 남는 검색어('#4')는 기호를 그대로 찾습니다 (모든 '4'와 맞지 않게)."""
+    compact = re.sub(r"\s+", "", term)
+    core = re.sub(r"[\W_]+", "", compact)
+    if not core or (core.isdigit() and core != compact):
+        chars, sep = compact or term, r"\s*"      # 기호까지 그대로 ('1.2'는 '12'와 다름)
+    else:
+        chars, sep = core, _SEP
+    body = sep.join(re.escape(c) for c in chars)
+    if chars[0].isdigit():
+        body = r"(?<![\d.])" + body              # '1.2'가 '11.2', '3.1.2'의 끝과 맞지 않게
+    if chars[-1].isdigit():
+        body += r"(?!\d)"
+    return re.compile(body, flags)
 
 
 def make_snippet(text: str, terms: List[str], context: int, case_sensitive: bool) -> str:
@@ -2192,6 +2205,88 @@ def cmd_list(args) -> Dict[str, Any]:
 
 
 # ==============================================================================
+# 8-1. 명령: clear (캐시 지우기)
+# ==============================================================================
+
+def cmd_clear(args) -> Dict[str, Any]:
+    """캐시에서 문서를 지웁니다 (색인 항목과 캐시 파일). 원본 문서는 건드리지 않습니다."""
+    if not any([args.file, args.name, args.folder, args.missing, args.all]):
+        raise rt.InputError("지울 대상을 정하세요: --file 파일, --name 이름일부, --folder 폴더, --missing(원본 없는 문서), --all(전체). "
+                            "먼저 --dry-run으로 지울 목록을 확인할 수 있습니다.")
+    if args.all and any([args.file, args.name, args.folder, args.missing]):
+        raise rt.InputError("--all은 다른 조건과 함께 쓸 수 없습니다.")
+    index = load_index()
+    file_key = os.path.normcase(os.path.abspath(os.path.expandvars(str(args.file).strip().strip('"')))) if args.file else None
+    folder = os.path.abspath(os.path.expandvars(str(args.folder).strip().strip('"'))) if args.folder else None
+    name = str(args.name or "").strip().lower()
+    targets = []
+    for path in index:
+        if args.all:
+            targets.append(path)
+            continue
+        if file_key and os.path.normcase(os.path.abspath(path)) != file_key:
+            continue
+        if name and name not in os.path.basename(path).lower() and name not in path.lower():
+            continue
+        if folder and not _under(path, folder):
+            continue
+        if args.missing and os.path.exists(path):
+            continue
+        targets.append(path)
+    cache_dir = os.path.join(rt.get_cache_dir(), "docs")
+    orphans: List[str] = []
+    if args.all and os.path.isdir(cache_dir):              # 색인에 없는 캐시 파일(중단 등으로 남은 것)도 정리
+        known = {os.path.basename(_doc_cache_path(p)) for p in index}
+        orphans = [os.path.join(cache_dir, f) for f in os.listdir(cache_dir) if f.endswith(".json") and f not in known]
+    items = [{"file": os.path.basename(p), "path": p, "missing": not os.path.exists(p)} for p in targets]
+    cond = ", ".join(x for x in (f"파일 {args.file}" if args.file else "", f"이름 '{args.name}'" if args.name else "",
+                                 f"폴더 {folder}" if folder else "", "원본 없는 문서" if args.missing else "",
+                                 "전체" if args.all else "") if x)
+    result: Dict[str, Any] = {"count": len(items), "documents": items[:MAX_LIST_ITEMS], "shown": min(len(items), MAX_LIST_ITEMS),
+                              "truncated": len(items) > MAX_LIST_ITEMS, "condition": cond}
+    if orphans:
+        result["orphan_cache_files"] = len(orphans)
+    if not items and not orphans:
+        return rt.ok(TOOL, "clear", f"0건: {cond}에 맞는 캐시 문서가 없습니다",
+                     f"VERIFIED: 0건. {cond}에 맞는 캐시 문서가 없어 지운 것이 없습니다. 사용자에게 그대로 알리세요.", **result)
+    if args.dry_run:
+        cmd = ["clear"] + [x for flag, val in (("--file", args.file), ("--name", args.name), ("--folder", args.folder))
+                           if val for x in (flag, val)] + (["--missing"] if args.missing else []) + (["--all"] if args.all else [])
+        result.update(dry_run=True, planned=[f"캐시 삭제: {i['file']}" for i in items[:MAX_LIST_ITEMS]],
+                      next_commands=[rt.next_command("reader.py", cmd, "미리 본 캐시를 실제로 지우기")])
+        return rt.ok(TOOL, "clear", f"미리보기: 캐시 문서 {len(items)}개를 지울 예정 ({cond})",
+                     "VERIFIED: 미리보기만 했습니다(변경 없음). planned를 사용자에게 보여주고 확인을 받은 뒤 next_commands[0]을 실행하세요.",
+                     **result)
+    failed: List[str] = []
+    for p in targets:
+        cf = _doc_cache_path(p)
+        try:
+            if os.path.exists(cf):
+                rt.retry_fs(lambda: os.remove(cf))
+        except OSError as e:
+            failed.append(f"{os.path.basename(p)}: {e}")
+            continue
+        index.pop(p, None)
+    for f in orphans:
+        try:
+            rt.retry_fs(lambda: os.remove(f))
+        except OSError as e:
+            failed.append(f"{os.path.basename(f)}: {e}")
+    _save_index(index)
+    # 다시 읽어 확인: 색인에서 빠졌고 캐시 파일도 없는지
+    left = load_index()
+    still = [p for p in targets if p in left or os.path.exists(_doc_cache_path(p))]
+    result.update(applied=[f"캐시 삭제: {i['file']}" for i in items[:MAX_LIST_ITEMS]], remaining_in_cache=len(left))
+    preview = f"캐시 문서 {len(targets) - len(still)}개를 지웠습니다 ({cond}). 원본 문서는 그대로입니다. 남은 캐시 문서 {len(left)}개"
+    if still or failed:
+        result["failed"] = failed[:MAX_LIST_ITEMS]
+        return rt.ok_unverified(TOOL, "clear", preview, [f"지우지 못한 캐시 {len(still) or len(failed)}개"] + failed[:3], **result)
+    return rt.ok(TOOL, "clear", preview,
+                 "VERIFIED: 캐시를 지우고 다시 확인했습니다. 원본 문서는 그대로이며, 다시 검색하면 그때 새로 읽습니다.",
+                 verified=True, **result)
+
+
+# ==============================================================================
 # 9. 진입점
 # ==============================================================================
 
@@ -2231,12 +2326,20 @@ def build_cli():
     lst = sub.add_parser("list", help="캐시에 등록된 문서 목록")
     lst.add_argument("--name", help="파일 이름/경로 일부로 거르기 (대소문자 무시)")
     lst.add_argument("--folder", "-d", help="이 폴더 아래 문서만")
+
+    c = sub.add_parser("clear", help="캐시 지우기 (원본 문서는 그대로). 다시 검색하면 새로 읽음")
+    c.add_argument("--file", "-f", help="이 문서의 캐시만")
+    c.add_argument("--name", help="파일 이름/경로 일부가 맞는 문서")
+    c.add_argument("--folder", "-d", help="이 폴더 아래 문서")
+    c.add_argument("--missing", action="store_true", help="원본 파일이 없어진 문서만")
+    c.add_argument("--all", action="store_true", help="캐시 전체")
+    c.add_argument("--dry-run", action="store_true", help="지우지 않고 지울 목록만 보기")
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     args = build_cli().parse_args(argv)
-    handlers = {"read": cmd_read, "index": cmd_index, "search": cmd_search, "list": cmd_list}
+    handlers = {"read": cmd_read, "index": cmd_index, "search": cmd_search, "list": cmd_list, "clear": cmd_clear}
     rt.run_cli(TOOL, args.command, lambda: handlers[args.command](args))
 
 

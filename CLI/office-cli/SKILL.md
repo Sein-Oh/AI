@@ -4,7 +4,7 @@ description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
   platform: windows
 ---
 
@@ -18,7 +18,7 @@ metadata:
 5. 대상 문서: `--target`을 생략하면 사용자가 보고 있는 문서(active)다. 다른 열린 문서는 `--target "<이름>"`, 닫힌 파일은 `--target "<전체경로>"`.
 6. 표, 여러 줄 글, 큰따옴표가 든 값은 인자로 넣지 않는다. 파일 쓰기 도구로 UTF-8 파일(.csv, .md)을 만든 뒤 `--file "<그 경로>"`로 넘긴다.
 7. 값에 `$`가 있으면(엑셀 수식 `=$A$1` 등) 작은따옴표 `'...'`로 감싼다.
-8. 파일 경로는 `file:///C:/...` 링크로 보고한다. 이모지를 쓰지 않는다.
+8. 파일 경로는 결과 JSON의 값을 바꾸지 않고 그대로 1번만 쓴다 (`file:///` 링크로 바꾸지 않는다). 이모지를 쓰지 않는다.
 
 ## 1. 명령
 
@@ -41,8 +41,9 @@ metadata:
 | 엑셀 범위를 워드/PPT 표로 | `office.py transfer --from excel --range A1:D10 --to word` |
 | 워드/PPT 내용을 엑셀로 | `office.py transfer --from word --what text --to excel` (`--what table --table 1`) |
 | 문서 등록 (PDF/HWP/Office) | 폴더: `reader.py index --folder "<폴더>"` / 파일 하나 읽기: `reader.py read --file "<파일>" [--pages 1-3] [--save]` |
-| 문서 검색 (근거 포함) | `reader.py search --query "A AND B" [--file 파일또는폴더] [--pages 3-7] [--section "장절 일부"] --save "근거.xlsx"` |
+| 문서 검색 (근거 포함) | `reader.py search --query "A AND B" [--file 파일또는폴더] [--pages 3-7] [--section "장절 일부"] --save "근거.xlsx"` (띄어쓰기·기호는 무시: `SOI 1` = `SOI #1`. 사용자가 패턴을 말하면 `--regex`) |
 | 캐시된 파일 조회 | `reader.py list [--name 이름일부] [--folder 폴더]` |
+| 캐시 지우기 (원본은 그대로) | `reader.py clear --name 이름일부` / `--file "<파일>"` / `--folder "<폴더>"` / `--missing`(원본 없는 것) / `--all`. 먼저 `--dry-run`으로 목록을 보여 주고 확인받은 뒤 `next_commands[0]` 실행 |
 | 메일 | `outlook.py current`, `search --query 말 [--from 이름]`, `read --id <id>`, `reply --body "내용"`, `new --to 주소 --subject 제목 --body 내용` |
 | 되돌리기 / 창 | `office.py undo` (`--list`, `--pick N`), `office.py windows`, `office.py focus --app excel` |
 | 결과 배치 확인 | `ppt.py info --detail --slides N`, `excel.py info --detail`, `word.py info --detail` (`layout_warnings`가 0이 아니면 `warnings`를 알림) |

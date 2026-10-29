@@ -19,6 +19,7 @@ Requires python-docx and matplotlib (both in the standard environment).
 
 import sys
 import os
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
@@ -42,7 +43,7 @@ import pandas as pd
 try:
     import docx
     from docx.shared import Pt, Cm, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
     from docx.enum.section import WD_ORIENT
     from docx.enum.style import WD_STYLE_TYPE
@@ -499,11 +500,20 @@ class ReportDoc:
         cap.paragraph_format.space_after = Pt(10)
 
     # -- text ----------------------------------------------------------------
-    def h1(self, text: str, page_break: bool = True) -> None:
+    def h1(self, text: str, page_break: bool = False) -> None:
         if page_break:
             self.page_break()
         p = self.doc.add_heading(text, level=1)
+        p.paragraph_format.space_before = Pt(16)
         _para_border_bottom(p, color=C_ACCENT, size=8)
+
+    def spacer(self, pt: float = 4) -> None:
+        """표와 표 사이를 나누는 아주 낮은 빈 단락 (Word는 붙은 표를 하나로 합치므로 필요)."""
+        p = self.doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        p.paragraph_format.line_spacing = Pt(pt)
 
     def h2(self, text: str) -> None:
         self.doc.add_heading(text, level=2)
@@ -539,6 +549,8 @@ class ReportDoc:
             label = f"그림 {self.figure_no}. "
         p = self.doc.add_paragraph(style="Caption")
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER if kind == "그림" else WD_ALIGN_PARAGRAPH.LEFT
+        # Table captions sit above the table: keep them on the same page
+        p.paragraph_format.keep_with_next = kind == "표"
         _set_run_font(p.add_run(label), size=8.5, color=C_INK, bold=True)
         _set_run_font(p.add_run(text), size=8.5, color=C_MUTED)
 
@@ -574,6 +586,8 @@ class ReportDoc:
                 p = cell.paragraphs[0]
                 p.paragraph_format.space_after = Pt(0)
                 p.paragraph_format.line_spacing = 1.0
+                # Short tables stay on one page
+                p.paragraph_format.keep_with_next = len(rows) <= 15 and r_i < len(rows)
                 if r_i == 0:
                     _shade(cell, C_HEAD)
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -592,7 +606,7 @@ class ReportDoc:
                 elif bold:
                     _shade(cell, "F8FAFC")
                 _set_run_font(p.add_run(text), size=font_size, bold=bold, color=color)
-        self.doc.add_paragraph().paragraph_format.space_after = Pt(2)
+        self.spacer()
 
     def kv_table(self, pairs: List[Tuple[str, Any]], caption: Optional[str] = None,
                  widths: Tuple[float, float] = (4.2, 12.8)) -> None:
@@ -612,7 +626,7 @@ class ReportDoc:
             _set_run_font(kc.paragraphs[0].add_run(str(k)), size=9, bold=True, color=C_INK)
             text = v if isinstance(v, str) else fmt(v)
             _set_run_font(vc.paragraphs[0].add_run(text), size=9, color=C_INK)
-        self.doc.add_paragraph().paragraph_format.space_after = Pt(2)
+        self.spacer()
 
     def metric_cards(self, cards: List[Tuple[str, str, str]]) -> None:
         """Row of KPI cards: (label, value, sub-text)."""
@@ -634,7 +648,7 @@ class ReportDoc:
             p3 = c.add_paragraph()
             p3.paragraph_format.space_after = Pt(0)
             _set_run_font(p3.add_run(sub), size=7.5, color=C_MUTED)
-        self.doc.add_paragraph().paragraph_format.space_after = Pt(4)
+        self.spacer(6)
 
     def note(self, title: str, text: str) -> None:
         """Finding box: light background, navy left bar."""
@@ -654,7 +668,40 @@ class ReportDoc:
             q.paragraph_format.space_after = Pt(1)
             q.paragraph_format.line_spacing = 1.25
             _set_run_font(q.add_run(line), size=9.5, color=C_INK)
-        self.doc.add_paragraph().paragraph_format.space_after = Pt(4)
+        self.spacer(6)
+
+    def formula_table(self, rows: List[Tuple[str, str, str]], caption: str) -> None:
+        """파생변수 표: 이름 | 계산식(크고 굵게, 강조 배경) | 사용 타겟과 기여도."""
+        self.caption("표", caption)
+        t = self.doc.add_table(rows=1 + len(rows), cols=3)
+        t.alignment = WD_TABLE_ALIGNMENT.CENTER
+        t.autofit = False
+        _table_borders(t)
+        _fix_widths(t, [3.6, 8.6, 4.8])
+        for i, h in enumerate(("파생변수", "계산식", "사용 타겟 (기여도, 순위)")):
+            c = t.rows[0].cells[i]
+            _shade(c, C_HEAD)
+            _cell_margins(c)
+            c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _set_run_font(c.paragraphs[0].add_run(h), size=8.5, bold=True, color=C_INK)
+        for r_i, (name, formula, used) in enumerate(rows, 1):
+            row = t.rows[r_i]
+            _no_split(row)
+            for c_i, (text, size, bold, color) in enumerate(((name, 9.5, True, C_INK), (formula, 11, True, C_ACCENT),
+                                                            (used, 8.5, False, C_INK))):
+                c = row.cells[c_i]
+                _cell_margins(c, top=90, bottom=90)
+                c.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                if c_i == 1:
+                    _shade(c, C_ACCENT_BG)
+                q = c.paragraphs[0]
+                q.paragraph_format.space_after = Pt(0)
+                for k, line in enumerate(text.split("\n")):
+                    if k:
+                        q = c.add_paragraph()
+                        q.paragraph_format.space_after = Pt(0)
+                    _set_run_font(q.add_run(line), size=size, bold=bold, color=color)
+        self.spacer()
 
     # -- figures -------------------------------------------------------------
     def figure(self, fig, caption: str, width_cm: Optional[float] = None) -> None:
@@ -683,26 +730,10 @@ def _fig(h_cm: float = 6.5, w_cm: float = FIG_WIDTH_CM, ncols: int = 1):
     return plt.subplots(1, ncols, figsize=(w_cm / 2.54, h_cm / 2.54))
 
 
-def chart_model_comparison(board: List[Dict[str, Any]], metric: str, label: str):
-    names = [e["model_name"] for e in board][::-1]
-    vals = [e.get(metric) or 0.0 for e in board][::-1]
-    colors = [MPL_NAVY if e.get("is_champion") else MPL_GRAY for e in board][::-1]
-    fig, ax = _fig(h_cm=1.2 + 0.9 * len(names))
-    bars = ax.barh(names, vals, color=colors, height=0.6)
-    lo = min(0.0, min(vals))
-    ax.set_xlim(lo, max(1.0, max(vals) * 1.05))
-    for b, v in zip(bars, vals):
-        ax.text(b.get_width() + 0.01, b.get_y() + b.get_height() / 2, f"{v:.4f}", va="center", fontsize=8, color=MPL_INK)
-    ax.set_xlabel(label)
-    ax.grid(axis="y", visible=False)
-    return fig
-
-
-def chart_actual_vs_pred(oof: pd.DataFrame, target: str, r2: float):
-    fig, ax = _fig(h_cm=7.5, w_cm=9.0)
+def _draw_actual_vs_pred(ax, oof: pd.DataFrame, target: str, r2: float) -> None:
     a, p = oof["actual"].values, oof["predicted"].values
     lo, hi = float(min(a.min(), p.min())), float(max(a.max(), p.max()))
-    pad = (hi - lo) * 0.04
+    pad = (hi - lo) * 0.04 or 1.0
     ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=MPL_ORANGE, lw=1, ls="--", label="실측 = 예측")
     ax.scatter(a, p, s=9, color=MPL_NAVY, alpha=0.55, edgecolors="none")
     ax.set_xlim(lo - pad, hi + pad)
@@ -712,53 +743,13 @@ def chart_actual_vs_pred(oof: pd.DataFrame, target: str, r2: float):
     ax.text(0.03, 0.95, f"R² = {r2:.4f}\nn = {len(a):,}", transform=ax.transAxes, va="top", fontsize=8,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=MPL_LIGHT))
     ax.legend(loc="lower right", fontsize=7, frameon=False)
-    return fig
+    ax.set_title("실측 대비 예측 (교차검증)", loc="left")
 
 
-def chart_residuals(oof: pd.DataFrame, interval: Optional[Dict[str, Any]]):
-    fig, (ax1, ax2) = _fig(h_cm=6.0, ncols=2)
-    res, pred = oof["residual"].values, oof["predicted"].values
-    ax1.hist(res, bins=30, color=MPL_NAVY, alpha=0.85, edgecolor="white", linewidth=0.4)
-    ax1.axvline(0, color=MPL_ORANGE, lw=1, ls="--")
-    if interval:
-        for v in (interval["residual_lower"], interval["residual_upper"]):
-            ax1.axvline(v, color=MPL_GRAY, lw=1, ls=":")
-    ax1.set_xlabel("잔차 (실측 - 예측)")
-    ax1.set_ylabel("빈도")
-    ax1.set_title("잔차 분포", loc="left")
-    ax2.scatter(pred, res, s=8, color=MPL_NAVY, alpha=0.5, edgecolors="none")
-    ax2.axhline(0, color=MPL_ORANGE, lw=1, ls="--")
-    if interval:
-        ax2.axhspan(interval["residual_lower"], interval["residual_upper"], color=MPL_LIGHT, alpha=0.6, zorder=0,
-                    label=f"{int(interval['level'] * 100)}% 예측 범위")
-        ax2.legend(loc="upper right", fontsize=7, frameon=False)
-    ax2.set_xlabel("예측값")
-    ax2.set_ylabel("잔차")
-    ax2.set_title("예측값 대비 잔차", loc="left")
-    fig.tight_layout(w_pad=2.0)
-    return fig
-
-
-def chart_importance(ranks: List[Dict[str, Any]], top_n: int = 12):
-    top = ranks[:top_n][::-1]
-    fig, ax = _fig(h_cm=1.2 + 0.62 * len(top))
-    vals = [r["pct"] for r in top]
-    bars = ax.barh([r["feature"] for r in top], vals,
-                   color=[MPL_NAVY if i >= len(top) - 3 else MPL_GRAY for i in range(len(top))], height=0.6)
-    for b, v in zip(bars, vals):
-        ax.text(b.get_width() + 0.5, b.get_y() + b.get_height() / 2, f"{v:.1f}%", va="center", fontsize=8)
-    ax.set_xlim(0, max(vals + [1]) * 1.15)
-    ax.set_xlabel("기여도 (%) - 순열 중요도")
-    ax.grid(axis="y", visible=False)
-    return fig
-
-
-def chart_confusion(cm: Dict[str, Any]):
+def _draw_confusion(ax, cm: Dict[str, Any]) -> None:
     labels, mat = cm["labels"], np.array(cm["matrix"], dtype=float)
     row_sum = mat.sum(axis=1, keepdims=True)
     pct = np.divide(mat, row_sum, out=np.zeros_like(mat), where=row_sum > 0)
-    size = 3.0 + 1.6 * len(labels)
-    fig, ax = _fig(h_cm=min(size, 12), w_cm=min(size + 2.0, 14.0))
     ax.imshow(pct, cmap="Blues", vmin=0, vmax=1)
     ax.grid(False)
     for i in range(len(labels)):
@@ -769,128 +760,37 @@ def chart_confusion(cm: Dict[str, Any]):
     ax.set_yticks(range(len(labels)), labels)
     ax.set_xlabel("예측 클래스")
     ax.set_ylabel("실제 클래스")
-    for s in ax.spines.values():
-        s.set_visible(False)
-    return fig
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_title("혼동행렬 (건수, 실제 대비 비율)", loc="left")
 
 
-def chart_per_class(per_class: Dict[str, Dict[str, float]]):
-    classes = list(per_class)
-    x = np.arange(len(classes))
-    w = 0.26
-    fig, ax = _fig(h_cm=6.0)
-    for k, (key, label, color) in enumerate((("precision", "정밀도", MPL_GRAY), ("recall", "재현율", MPL_NAVY),
-                                              ("f1", "F1", MPL_ORANGE))):
-        ax.bar(x + (k - 1) * w, [per_class[c][key] for c in classes], width=w, color=color, label=label)
-    ax.set_xticks(x, classes)
-    ax.set_ylim(0, 1.08)
-    ax.set_ylabel("점수")
-    ax.legend(ncol=3, fontsize=7, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 1.12))
-    ax.grid(axis="x", visible=False)
-    return fig
+def _draw_importance(ax, ranks: List[Dict[str, Any]], derived: List[str], top_n: int = 8) -> None:
+    """기여도 막대. 파생변수는 주황색으로 구별합니다."""
+    top = ranks[:top_n][::-1]
+    vals = [r["pct"] for r in top]
+    colors = [MPL_ORANGE if r["feature"] in derived else MPL_NAVY for r in top]
+    bars = ax.barh([r["feature"] for r in top], vals, color=colors, height=0.6)
+    for b, v in zip(bars, vals):
+        ax.text(b.get_width() + 0.5, b.get_y() + b.get_height() / 2, f"{v:.1f}%", va="center", fontsize=7.5)
+    ax.set_xlim(0, max(vals + [1]) * 1.2)
+    ax.set_xlabel("기여도 (%)")
+    ax.grid(axis="y", visible=False)
+    ax.tick_params(axis="y", labelsize=7.5)
+    ax.set_title("피처 기여도" + (" (주황: 파생변수)" if any(r["feature"] in derived for r in top) else ""), loc="left")
 
 
-def _roc_points(y_pos: np.ndarray, score: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    order = np.argsort(-score)
-    y = y_pos[order]
-    tps = np.cumsum(y)
-    fps = np.cumsum(~y)
-    P, N = max(tps[-1], 1), max(fps[-1], 1)
-    return np.concatenate([[0], fps / N]), np.concatenate([[0], tps / P])
-
-
-def chart_binary_curves(oof: pd.DataFrame, classes: List[str], positive: str, threshold: Optional[float], auc: Optional[float]):
-    fig, (ax1, ax2) = _fig(h_cm=6.2, ncols=2)
-    y_pos = (oof["actual"].astype(str).values == positive)
-    score = oof[f"proba_{positive}"].values
-    fpr, tpr = _roc_points(y_pos, score)
-    ax1.plot([0, 1], [0, 1], color=MPL_GRAY, lw=1, ls="--")
-    ax1.plot(fpr, tpr, color=MPL_NAVY, lw=1.6)
-    ax1.set_xlabel("거짓 양성 비율 (FPR)")
-    ax1.set_ylabel("참 양성 비율 (TPR)")
-    ax1.set_title(f"ROC 곡선 (AUC {auc:.3f})" if auc is not None else "ROC 곡선", loc="left")
-    ts = np.round(np.arange(0.05, 0.951, 0.01), 2)
-    f1s = []
-    for t in ts:
-        pred = score >= t
-        tp = (pred & y_pos).sum()
-        prec = tp / max(pred.sum(), 1)
-        rec = tp / max(y_pos.sum(), 1)
-        f1s.append(0 if prec + rec == 0 else 2 * prec * rec / (prec + rec))
-    ax2.plot(ts, f1s, color=MPL_NAVY, lw=1.6)
-    if threshold is not None:
-        ax2.axvline(threshold, color=MPL_ORANGE, lw=1, ls="--", label=f"적용 기준 {threshold:.2f}")
-        ax2.legend(fontsize=7, frameon=False, loc="lower center")
-    ax2.set_xlabel(f"'{positive}' 판정 기준 확률")
-    ax2.set_ylabel(f"'{positive}' F1")
-    ax2.set_ylim(0, 1.02)
-    ax2.set_title("판정 기준별 F1", loc="left")
-    fig.tight_layout(w_pad=2.0)
-    return fig
-
-
-def chart_target_distributions(targets: List[Dict[str, Any]]):
-    n = len(targets)
-    ncols = min(n, 3)
-    nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(FIG_WIDTH_CM / 2.54, (5.2 * nrows) / 2.54), squeeze=False)
-    for ax, t in zip(axes.ravel(), targets):
-        if t["task"] == "regression":
-            ax.hist(t["oof"]["actual"].values, bins=25, color=MPL_NAVY, alpha=0.85, edgecolor="white", linewidth=0.4)
-            ax.set_ylabel("빈도")
-        else:
-            counts = t["oof"]["actual"].astype(str).value_counts().reindex(t["classes"]).fillna(0)
-            ax.bar(counts.index, counts.values, color=MPL_NAVY, width=0.6)
-            for i, v in enumerate(counts.values):
-                ax.text(i, v, f"{int(v):,}", ha="center", va="bottom", fontsize=7)
-            ax.set_ylabel("건수")
-            ax.grid(axis="x", visible=False)
-        ax.set_title(t["name"], loc="left")
-    for ax in axes.ravel()[n:]:
-        ax.set_visible(False)
-    fig.tight_layout(w_pad=1.5, h_pad=1.5)
-    return fig
-
-
-def chart_lineage(rows: List[Dict[str, Any]], current: str, label: str):
-    fig, ax = _fig(h_cm=6.0)
-    xs = [r["version"] for r in rows]
-    ys = [r["score"] for r in rows]
-    ax.plot(xs, ys, color=MPL_NAVY, lw=1.6, marker="o", ms=4)
-    for x, y, r in zip(xs, ys, rows):
-        if x == current:
-            ax.scatter([x], [y], s=70, facecolor="white", edgecolor=MPL_ORANGE, lw=1.8, zorder=5)
-        ax.annotate(f"{y:.3f}", (x, y), textcoords="offset points", xytext=(0, 7), ha="center", fontsize=7)
-    ax.axhline(PASS_SCORE, color=MPL_GRAY, lw=1, ls=":", label=f"적합 기준 {PASS_SCORE}")
-    ax.set_ylabel(label)
-    ax.set_ylim(min(min(ys), CONDITIONAL_SCORE) - 0.05, 1.02)
-    ax.legend(fontsize=7, frameon=False, loc="lower right")
-    ax.grid(axis="x", visible=False)
-    return fig
-
-
-TREND_COLORS = [MPL_NAVY, MPL_ORANGE, "#059669", "#7C3AED", "#DC2626", "#0891B2", MPL_GRAY, "#4B5563"]
-
-
-def chart_target_trend(rows: List[Dict[str, Any]], names: List[str], current: str, label: str):
-    """Per-target validation score by version (best versions: targets were trained in different runs)."""
-    fig, ax = _fig(h_cm=6.5)
-    xs = [r["version"] for r in rows]
-    ys_all = []
-    for k, t in enumerate(names):
-        pts = [(i, r["scores"][t]) for i, r in enumerate(rows) if isinstance(r["scores"].get(t), (int, float))]
-        if not pts:
-            continue
-        ys_all += [y for _, y in pts]
-        ax.plot([i for i, _ in pts], [y for _, y in pts], color=TREND_COLORS[k % len(TREND_COLORS)], lw=1.4,
-                marker="o", ms=3.5, label=t)
-    if current in xs:
-        ax.axvline(xs.index(current), color=MPL_GRAY, lw=1, ls=":")
-    ax.set_xticks(range(len(xs)), xs)
-    ax.set_ylabel(label)
-    ax.set_ylim(min(ys_all + [CONDITIONAL_SCORE]) - 0.05, 1.02)
-    ax.legend(fontsize=7, frameon=False, loc="lower right", ncol=min(3, max(1, len(names))))
-    ax.grid(axis="x", visible=False)
+def chart_target_overview(t: Dict[str, Any], derived: List[str]):
+    """타겟 하나를 그림 한 장으로: 왼쪽 성능(회귀: 실측 대비 예측, 분류: 혼동행렬), 오른쪽 피처 기여도."""
+    c = t["champ"]
+    n = min(8, len(c["feature_importances"]))
+    fig, (ax1, ax2) = _fig(h_cm=max(6.5, 1.6 + 0.62 * n), ncols=2)
+    if t["task"] == "regression":
+        _draw_actual_vs_pred(ax1, t["oof"], t["name"], c["val_r2"])
+    else:
+        _draw_confusion(ax1, c["confusion_matrix"])
+    _draw_importance(ax2, c["feature_importances"], derived, top_n=n)
+    fig.tight_layout(w_pad=2.5)
     return fig
 
 
@@ -1039,14 +939,11 @@ def text_performance(t: Dict[str, Any]) -> str:
             f"타겟 표준편차({std:.4f})의 {c['mae'] / std:.0%} 수준입니다.",
         ]
         gap = c.get("overfit_gap", 0.0)
-        lines.append(f"학습-검증 간극은 {gap:.4f}로 " + ("과적합 위험이 낮습니다." if gap <= 0.10 else
+        lines.append(f"학습-검증 간극 {gap:.4f}: " + ("과적합 위험이 낮습니다." if gap <= 0.10 else
                      "과적합 경향이 있어 피처 축소나 데이터 추가가 권장됩니다."))
         skew = c.get("residual_skew", 0.0)
-        lines.append(f"잔차 왜도는 {skew:.3f}로 " + ("대칭에 가까워 특정 구간의 체계적 편향은 작습니다." if abs(skew) <= 0.5 else
-                     "한쪽으로 치우쳐 있어 높은/낮은 구간에서 편향된 예측이 나타날 수 있습니다."))
-        iv = c.get("prediction_interval")
-        if iv:
-            lines.append(f"{int(iv['level'] * 100)}% 예측 범위는 예측값 기준 {iv['residual_lower']:+.3f} ~ {iv['residual_upper']:+.3f}입니다.")
+        if abs(skew) > 0.5:          # 치우쳤을 때만 (대칭이면 생략)
+            lines.append(f"오차가 한쪽으로 치우쳐(왜도 {skew:.2f}) 높은/낮은 구간에서 편향된 예측이 나타날 수 있습니다.")
         return "\n".join(lines)
     pc = c["per_class"]
     worst = min(pc, key=lambda k: pc[k]["recall"])
@@ -1082,6 +979,33 @@ def text_features(t: Dict[str, Any]) -> str:
     if weak:
         lines.append(f"기여도 1% 이하 피처 {weak[:5]}은(는) 제외해도 성능 저하가 작을 가능성이 높습니다.")
     return "\n".join(lines) or "피처 중요도 정보가 없습니다."
+
+
+def pretty_formula(expr: str) -> str:
+    """'x2 = a * b / c ** 2' 의 오른쪽을 읽기 쉬운 수식으로: a × b ÷ c²."""
+    rhs = expr.split("=", 1)[1].strip() if "=" in expr else expr.strip()
+    rhs = re.sub(r"\s*\*\*\s*2(?![\d.])", "²", rhs)
+    rhs = re.sub(r"\s*\*\*\s*3(?![\d.])", "³", rhs)
+    rhs = rhs.replace("**", "^").replace("//", " 몫 ").replace("*", " × ").replace("/", " ÷ ")
+    rhs = re.sub(r"\bsqrt\(", "√(", rhs)
+    return re.sub(r"\s+", " ", rhs).strip()
+
+
+def derived_feature_rows(targets: List[Dict[str, Any]]) -> Tuple[List[Tuple[str, str, str]], List[str]]:
+    """타겟들이 쓴 파생변수: [(이름, 보기 좋은 계산식, '타겟 기여도% (순위)')], 이름 목록."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for t in targets:
+        ranks = t["champ"].get("feature_importances") or []
+        for expr in t["meta"].get("derived_evals") or []:
+            name = expr.split("=", 1)[0].strip()
+            item = found.setdefault(name, {"formula": pretty_formula(expr), "used": []})
+            pos = next((k for k, r in enumerate(ranks, 1) if r["feature"] == name), None)
+            if pos is not None:
+                item["used"].append(f"{t['name']}: {ranks[pos - 1]['pct']:.1f}% ({pos}위)")
+            else:
+                item["used"].append(t["name"])
+    rows = [(n, f"{n} = {v['formula']}", "\n".join(v["used"])) for n, v in found.items()]
+    return rows, list(found)
 
 
 # ==============================================================================
@@ -1126,286 +1050,82 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
 
     R = ReportDoc(f"{REPORT_TITLE}  |  {data_name}  |  {version}")
     d = R.doc
+    derived_rows, derived_names = derived_feature_rows(targets)
 
-    # -- Cover ---------------------------------------------------------------
-    # Title is the first paragraph of the document (top margin via spacing, not empty paragraphs)
-    title_p = R.para(REPORT_TITLE, size=28, bold=True, color=C_ACCENT, space_after=6)
-    title_p.paragraph_format.space_before = Pt(110)
-    R.para(rec.get("description") or "머신러닝 모델 학습 결과", size=13, color=C_INK, space_after=2)
-    p = R.para(f"{data_name}  ·  {', '.join(t['name'] for t in targets)}", size=10, color=C_MUTED, space_after=28)
+    # -- 제목 (표지 페이지 없이 첫 페이지에 바로 요약) ---------------------------------
+    R.para(REPORT_TITLE, size=22, bold=True, color=C_ACCENT, space_after=2)
+    R.para(rec.get("description") or "머신러닝 모델 학습 결과", size=12, color=C_INK, space_after=2)
+    head = (f"{data_name}  ·  {version} ({rec.get('timestamp', '')[:10]})  ·  {task_ko}"
+            + (f"  ·  메모: {rec['tag']}" if rec.get("tag") else "") + f"  ·  작성 {datetime.now():%Y-%m-%d}")
+    p = R.para(head, size=8.5, color=C_MUTED, space_after=6)
     _para_border_bottom(p, color=C_ACCENT, size=12)
-    fg, bg = VERDICT_STYLE[overall]
-    vt = d.add_table(rows=1, cols=2)
-    vt.autofit = False
-    _fix_widths(vt, [4.0, 4.0])
-    lc, vc = vt.rows[0].cells
-    _shade(lc, C_HEAD)
-    _shade(vc, bg)
-    for c in (lc, vc):
-        _cell_margins(c, top=120, bottom=120, left=160, right=160)
-    _set_run_font(lc.paragraphs[0].add_run("종합 판정"), size=10, bold=True, color=C_INK)
-    vc.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _set_run_font(vc.paragraphs[0].add_run(overall), size=14, bold=True, color=fg)
-    for _ in range(9):
-        d.add_paragraph()
-    R.kv_table([
-        ("문서", f"{REPORT_TITLE} (ml-kit {REPORT_VERSION})"),
-        ("학습 버전", f"{version}  ({rec.get('timestamp', '')[:19].replace('T', ' ')})"),
-        ("작업 유형", task_ko),
-        ("실험 메모", rec.get("tag") or "-"),
-    ] + ([("학습 방식", f"타겟별 최고 점수의 학습 조건으로 {len(best_src)}개 타겟을 현재 데이터로 다시 학습한 통합 버전")]
-         if best_src else []) + [
-        ("작성일", datetime.now().strftime("%Y-%m-%d %H:%M")),
-        ("작성 도구", "ml-kit ml_report.py (자동 생성)"),
-    ])
+    if best_src:
+        R.para(f"이 버전은 타겟마다 점수가 가장 높았던 학습 조건(피처, 파생변수)으로 {len(best_src)}개 타겟을 현재 데이터로 다시 학습한 통합 버전입니다.",
+               size=9, color=C_MUTED, space_after=4)
 
-    # -- Contents ------------------------------------------------------------
-    R.page_break()
-    R.para("목차", size=15, bold=True, color=C_ACCENT, space_after=12)
-    toc = ["1. 요약", "2. 데이터", "3. 분석 방법", "4. 타겟별 결과"]
-    toc += [f"    4.{i}. {t['name']}" for i, t in enumerate(targets, 1)]
-    toc += ["5. 버전 이력", "6. 운영 가이드", "부록 A. 상관관계", "부록 B. 산출물 및 실행 환경"]
-    for item in toc:
-        q = R.para(item, size=10.5 if not item.startswith(" ") else 10,
-                   color=C_INK if not item.startswith(" ") else C_MUTED, space_after=5)
-        q.paragraph_format.left_indent = Cm(0.8 if item.startswith(" ") else 0)
-
-    # -- 1. Summary ----------------------------------------------------------
+    # -- 1. 요약 ------------------------------------------------------------------
     R.h1("1. 요약")
     best = max(targets, key=lambda t: t["champ"].get("val_score") or -1)
     R.metric_cards([
         ("종합 판정", overall, f"기준 {metric_label} {PASS_SCORE} 이상"),
         (f"평균 {metric_label}", f"{rec['mean_val_score']:.4f}", f"타겟 {len(targets)}개 평균"),
-        ("학습 데이터", f"{prof.get('rows_loaded', 0):,}행", f"피처 {len(rec.get('features_used', []))}개"),
+        ("학습 데이터", f"{prof.get('rows_loaded', 0):,}행", f"피처 {len(rec.get('features_used', []))}개"
+                                                           + (f" (파생 {len(derived_rows)}개)" if derived_rows else "")),
         ("최고 성능 모델", best["champ"]["champion_model"], best["name"]),
     ])
     rows = []
     for t in targets:
         c = t["champ"]
         err = (f"MAE {c['mae']:.4f}" if task == "regression" else f"정확도 {c['accuracy']:.4f}")
-        rows.append([t["name"], c["champion_model"], c.get("val_score"), err, verdicts[t["name"]][0], verdicts[t["name"]][1]])
-    R.table(["타겟", "챔피언 모델", metric_label, "보조 지표", "판정", "근거"], rows, caption="타겟별 결과 요약",
-            widths=[3.0, 3.9, 1.8, 2.4, 1.5, 4.4], align=["left", "left", "right", "right", "center", "left"], verdict_col=4)
-    if best_src:
-        srows = []
-        for t in targets:
-            src = best_src.get(t["name"]) or {}
-            srows.append([t["name"], src.get("version", "-"), src.get("score"), t["champ"].get("val_score"),
-                          len(t["meta"].get("features_required", []))])
-        R.table(["타겟", "학습 조건 출처", "당시 점수", "이번 점수", "피처 수"], srows,
-                caption="타겟별 학습 조건 출처 (출처 버전의 피처·파생변수로 현재 데이터에 다시 학습)",
-                widths=[4.6, 3.2, 3.0, 3.0, 3.2], align=["left", "center", "right", "right", "right"])
+        rows.append([t["name"], c["champion_model"], c.get("val_score"), err, verdicts[t["name"]][0],
+                     ", ".join(r["feature"] for r in c.get("top_features", [])[:2]) or "-"])
+    R.table(["타겟", "챔피언 모델", metric_label, "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
+            widths=[3.0, 3.6, 1.8, 2.4, 1.5, 4.7], align=["left", "left", "right", "right", "center", "left"], verdict_col=4)
     recs = rec.get("recommendations") or []
+    extra = [slots[k] for k in ("lineage", "operation") if slots.get(k)]          # 없앤 장의 소견은 요약에 붙임
+    for k in ("lineage", "operation"):
+        if slots.get(k):
+            slots_used.append(k)
     summary_default = "\n".join(
-        [f"{t['name']}: {verdicts[t['name']][0]} - {t['champ']['champion_model']}, {metric_label} {t['champ']['val_score']:.4f}"
-         for t in targets] + [f"권고: {r}" for r in recs[:3]]
+        [f"{t['name']}: {verdicts[t['name']][0]} ({verdicts[t['name']][1]})" for t in targets]
+        + [f"권고: {r}" for r in recs[:2]]
         + ([f"참고: 같은 조건에서 더 높은 점수의 버전 {better['version']}({better['mean_val_score']:.4f})이 있습니다."] if better else []))
-    R.note("요약 소견", slot("summary", summary_default))
-    R.para(f"판정 기준: {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합. "
-           f"적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부.", size=8.5, color=C_MUTED)
+    R.note("요약 소견", "\n".join([slot("summary", summary_default)] + [str(x) for x in extra]))
+    R.para(f"판정 기준: {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합 "
+           f"(적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부).", size=8, color=C_MUTED, space_after=2)
 
-    # -- 2. Data -------------------------------------------------------------
-    R.h1("2. 데이터")
+    # -- 2. 데이터와 피처 -----------------------------------------------------------------
+    R.h1("2. 데이터와 피처")
     layout = prof.get("layout", {})
     layout_txt = ", ".join(f"{k.replace('_row', '')} {v}행" for k, v in layout.items() if v) or "자동 감지"
-    R.kv_table([
-        ("원본 파일", data_name),
-        ("불러온 데이터", f"{prof.get('rows_loaded', 0):,}행 x {prof.get('columns_loaded', 0)}열 (표 구조: {layout_txt})"),
-        ("학습에 사용", ", ".join(f"{t}: {n:,}행" for t, n in prof.get("rows_used", {}).items())),
-        ("타겟 결측으로 제외", ", ".join(f"{t}: {n:,}행" for t, n in prof.get("target_missing_rows", {}).items())),
-        ("결측 대치", f"피처 값 {prof.get('missing_imputed_cells', 0):,}칸 (수치=중앙값, 범주='__missing__')"),
-        ("파생변수", "; ".join(rec.get("derived_evals") or []) or "없음"),
-    ], caption="데이터 개요")
+    used = ", ".join(f"{t}: {n:,}행" for t, n in prof.get("rows_used", {}).items())
+    data_default = (f"{data_name}: {prof.get('rows_loaded', 0):,}행 x {prof.get('columns_loaded', 0)}열 (표 구조: {layout_txt}). "
+                    f"학습 사용 {used}. 피처 결측 {prof.get('missing_imputed_cells', 0):,}칸은 학습 데이터 기준값으로 대치.")
+    R.para(slot("data", data_default), size=9, space_after=4)
     schema, stats, dstats, required_inputs = merged_feature_info(targets)
     miss = prof.get("feature_missing", {})
     frows = []
     for f in schema["numeric"]:
-        s = stats.get(f, {})
-        frows.append([f, "수치", f"{fmt(s.get('min'), 3)} ~ {fmt(s.get('max'), 3)}", miss.get(f, 0)])
+        st = stats.get(f, {})
+        frows.append([f, "파생" if f in derived_names else "수치", f"{fmt(st.get('min'), 3)} ~ {fmt(st.get('max'), 3)}", miss.get(f, 0)])
     for f, parts in schema.get("datetime", {}).items():
-        s = dstats.get(f, {})
-        frows.append([f, "날짜", f"{s.get('min', '')[:10]} ~ {s.get('max', '')[:10]} ({', '.join(parts)})", miss.get(f, 0)])
+        st = dstats.get(f, {})
+        frows.append([f, "날짜", f"{st.get('min', '')[:10]} ~ {st.get('max', '')[:10]} ({', '.join(parts)})", miss.get(f, 0)])
     for f, cats in schema.get("categorical", {}).items():
         shown = ", ".join(cats[:6]) + (f" 외 {len(cats) - 6}개" if len(cats) > 6 else "")
         frows.append([f, "범주", f"{len(cats)}개: {shown}", miss.get(f, 0)])
-    R.table(["피처", "유형", "학습 범위 / 범주", "결측(칸)"], frows, caption="입력 피처 구성",
-            widths=[4.2, 1.6, 9.0, 2.2], align=["left", "center", "left", "right"])
-    R.figure(chart_target_distributions(targets), "타겟 분포 (학습에 사용된 행)")
-    top_miss = sorted([(k, v) for k, v in miss.items() if v], key=lambda x: -x[1])[:3]
-    data_default = (f"전체 {prof.get('rows_loaded', 0):,}행 중 타겟 값이 있는 행만 학습에 사용했습니다. "
-                    + (f"결측이 많은 피처는 {', '.join(f'{k}({v}칸)' for k, v in top_miss)}이며 학습 데이터 기준값으로 대치했습니다."
-                       if top_miss else "피처 결측은 없습니다."))
-    R.note("데이터 소견", slot("data", data_default))
+    R.table(["피처", "유형", "학습 범위 / 범주", "결측(칸)"], frows, caption="입력 피처",
+            widths=[4.6, 1.4, 9.0, 2.0], align=["left", "center", "left", "right"],
+            highlight_rows=[k for k, r in enumerate(frows) if r[1] == "파생"])
 
-    # -- 3. Method -----------------------------------------------------------
-    R.h1("3. 분석 방법")
-    if task == "regression":
-        models = "HistGradientBoosting, RandomForest, ExtraTrees, Ridge(alpha 자동 선택), ElasticNet(alpha, l1_ratio 자동 선택)"
-        cv = "K-Fold 교차검증 (최대 5-fold, shuffle, seed 고정)"
-        select = "교차검증 예측(OOF) 기준 R² 최고 모델"
+    R.h2("2.1. 파생변수")
+    if derived_rows:
+        R.para("아래 식으로 계산한 값을 입력 피처로 더해 학습했습니다. 예측할 때도 같은 식이 자동으로 적용됩니다.", size=9, space_after=3)
+        R.formula_table(derived_rows, caption="파생변수 계산식")
     else:
-        models = "HistGradientBoosting, RandomForest, ExtraTrees, LogisticRegression(C 자동 선택), KNeighbors"
-        cv = "Stratified K-Fold 교차검증 (클래스 비율 유지, 최대 5-fold)"
-        select = "교차검증 예측(OOF) 기준 Macro-F1 최고 모델 (클래스 불균형에 공정)"
-    R.kv_table([
-        ("작업 유형", task_ko),
-        ("전처리", "수치: 중앙값 대치 + 표준화 / 범주: 원-핫 인코딩(처음 보는 값 무시) / 날짜: 연·월·일·요일·시 분해"),
-        ("후보 모델", models),
-        ("검증 방식", cv),
-        ("챔피언 선정", select),
-        ("최종 모델", "챔피언을 전체 데이터로 다시 학습하여 저장 (전처리 + 모델 일체형)"),
-        ("피처 중요도", "순열 중요도 (최대 5,000행 표본, 5회 반복)"),
-        ("누수 방지", "전처리는 각 fold의 학습 데이터로만 적합, 타겟은 피처와 파생 수식에 사용 불가"),
-    ], caption="분석 방법", widths=(3.4, 13.6))
+        R.para("파생변수 없음 (입력 컬럼을 그대로 사용).", size=9, color=C_MUTED)
 
-    # -- 4. Per-target results -------------------------------------------------
-    R.h1("4. 타겟별 결과")
-    for i, t in enumerate(targets, 1):
-        c, board = t["champ"], t["board"]
-        if i > 1:
-            R.page_break()
-        R.h2(f"4.{i}. {t['name']}")
-        v, why = verdicts[t["name"]]
-        R.para(f"판정: {v}  ({why})", size=9.5, bold=True, color=VERDICT_STYLE[v][0])
-        if best_src:
-            R.para(source_line(t), size=9.5, color=C_INK)
-            R.para("입력 피처: " + ", ".join(t["meta"].get("features_required", [])), size=8.5, color=C_MUTED)
-
-        R.h3(f"4.{i}.1. 모델 비교")
-        if task == "regression":
-            hdr = ["순위", "모델", "검증 R²", "학습 R²", "간극", "MAE", "RMSE", "선택된 설정"]
-            body = [[e["rank"], e["model_name"], e["val_r2"], e["train_r2"], e["overfit_gap"], e["mae"], e["rmse"],
-                     ", ".join(f"{k}={v:g}" for k, v in (e.get("params") or {}).items()) or "-"] for e in board]
-            widths = [1.1, 4.1, 1.7, 1.7, 1.5, 1.8, 1.8, 3.3]
-        else:
-            hdr = ["순위", "모델", "Macro-F1", "학습 F1", "간극", "정확도", "균형 정확도", "ROC-AUC"]
-            body = [[e["rank"], e["model_name"], e["val_f1_macro"], e["train_f1_macro"], e["overfit_gap"], e["accuracy"],
-                     e["balanced_accuracy"], e.get("roc_auc")] for e in board]
-            widths = [1.1, 4.1, 1.9, 1.9, 1.6, 1.8, 2.3, 2.3]
-        R.table(hdr, body, caption=f"{t['name']} 후보 모델 교차검증 결과", widths=widths,
-                align=["center", "left"] + ["right"] * (len(hdr) - 2), highlight_rows=[0])
-        R.figure(chart_model_comparison(board, metric_key, f"교차검증 {metric_label}"), f"{t['name']} 모델별 {metric_label}")
-
-        R.h3(f"4.{i}.2. 성능 검증")
-        if task == "regression":
-            R.metric_cards([
-                ("검증 R²", f"{c['val_r2']:.4f}", "교차검증 예측 기준"),
-                ("MAE", f"{c['mae']:.4f}", "평균 절대 오차"),
-                ("RMSE", f"{c['rmse']:.4f}", "평균 제곱근 오차"),
-                ("90% 예측 범위", f"±{(c['prediction_interval']['residual_upper'] - c['prediction_interval']['residual_lower']) / 2:.3f}",
-                 "잔차 분위수 기반 근사"),
-            ])
-            R.figure(chart_actual_vs_pred(t["oof"], t["name"], c["val_r2"]), f"{t['name']} 실측 대비 예측 (교차검증)")
-            R.figure(chart_residuals(t["oof"], c.get("prediction_interval")), f"{t['name']} 잔차 진단")
-        else:
-            R.metric_cards([
-                ("Macro-F1", f"{c['val_f1_macro']:.4f}", "교차검증 예측 기준"),
-                ("정확도", f"{c['accuracy']:.4f}", "전체 정답 비율"),
-                ("균형 정확도", f"{c['balanced_accuracy']:.4f}", "클래스별 재현율 평균"),
-                ("ROC-AUC", fmt(c.get("roc_auc")), "확률 순위 성능"),
-            ])
-            pc = c["per_class"]
-            R.table(["클래스", "정밀도", "재현율", "F1", "실제 건수"],
-                    [[k, m["precision"], m["recall"], m["f1"], m["support"]] for k, m in pc.items()],
-                    caption=f"{t['name']} 클래스별 성능", widths=[4.0, 3.0, 3.0, 3.0, 3.0])
-            R.figure(chart_confusion(c["confusion_matrix"]), f"{t['name']} 혼동행렬 (건수, 실제 클래스 대비 비율)")
-            R.figure(chart_per_class(pc), f"{t['name']} 클래스별 정밀도·재현율·F1")
-            if len(t["classes"]) == 2:
-                th = c.get("decision_threshold") or {}
-                positive = th.get("positive_class") or t["classes"][1]
-                R.figure(chart_binary_curves(t["oof"], t["classes"], positive, th.get("threshold"), c.get("roc_auc")),
-                         f"{t['name']} ROC 곡선 및 '{positive}' 판정 기준별 F1")
-        R.note("성능 소견", slot("performance", text_performance(t), target=t["name"]))
-
-        R.h3(f"4.{i}.3. 피처 영향")
-        R.figure(chart_importance(c["feature_importances"]), f"{t['name']} 피처 기여도 (상위 12개)")
-        R.note("피처 소견", slot("features", text_features(t), target=t["name"]))
-
-    # -- 5. Lineage ------------------------------------------------------------
-    R.h1("5. 버전 이력")
-    lin = ctx["lineage"]
-    if best_src:
-        hist = [r for r in ctx.get("task_history", []) if r.get("targets")]
-        names = [t["name"] for t in targets]
-        trows = []
-        for r in hist:
-            scores = {}
-            for n in names:
-                ch = ((r.get("targets_benchmark") or {}).get(n) or {}).get("champion") or {}
-                if isinstance(ch.get("val_score"), (int, float)):
-                    scores[n] = ch["val_score"]
-            if scores:
-                trows.append({"version": r["version"], "date": (r.get("timestamp") or "")[:10],
-                              "tag": r.get("tag") or "-", "scores": scores})
-        R.para(f"이 버전은 타겟마다 점수가 가장 높았던 학습 조건(피처, 파생변수)을 골라 현재 데이터로 함께 다시 학습한 통합 버전입니다. "
-               f"같은 작업 유형으로 학습한 {len(trows)}개 버전의 타겟별 점수입니다.", size=9.5)
-        if len(trows) >= 2:
-            R.figure(chart_target_trend(trows, names, version, metric_label),
-                     f"버전별 타겟 {metric_label} 추이 (점선: 이 보고서 버전)")
-        cur_rows = [k for k, r in enumerate(trows) if r["version"] == version]
-        for c0 in range(0, len(names), 6):
-            chunk = names[c0:c0 + 6]
-            w_name = (17.0 - 6.0) / len(chunk)
-            R.table(["버전", "날짜", "메모"] + chunk,
-                    [[r["version"], r["date"], r["tag"]] + [r["scores"].get(n) for n in chunk] for r in trows],
-                    caption="버전별 타겟 점수 (빈칸: 그 버전에서 학습하지 않은 타겟)",
-                    widths=[1.4, 2.2, 2.4] + [w_name] * len(chunk),
-                    align=["center", "center", "left"] + ["right"] * len(chunk), highlight_rows=cur_rows,
-                    font_size=8)
-    R.para(f"같은 작업 유형과 타겟 조합({', '.join(rec['targets'])})으로 학습한 {len(lin)}개 버전의 이력입니다.", size=9.5)
-    if better:
-        R.para(f"참고: 이 보고서 버전({version}, {rec['mean_val_score']:.4f})보다 점수가 높은 버전 "
-               f"{better['version']}({better['mean_val_score']:.4f})이 있습니다.", size=9.5, bold=True, color=VERDICT_STYLE['조건부'][0])
-    if len(lin) >= 2:
-        R.figure(chart_lineage([{"version": r["version"], "score": r.get("mean_val_score") or 0.0} for r in lin],
-                               version, f"평균 {metric_label}"), f"버전별 평균 {metric_label} 추이 (원: 이 보고서 버전)")
-    lrows, prev_feats = [], None
-    for r in lin:
-        feats = set(r.get("features_used", []))
-        if prev_feats is None:
-            change = "기준 버전"
-        else:
-            added, removed = sorted(feats - prev_feats), sorted(prev_feats - feats)
-            change = "; ".join(x for x in ([f"추가 {added}" if added else ""] + [f"제외 {removed}" if removed else ""]) if x) or "피처 동일"
-        prev_feats = feats
-        delta = r.get("delta_score")
-        lrows.append([r["version"], (r.get("timestamp") or "")[:10], r.get("tag") or "-", r.get("mean_val_score"),
-                      "기준" if delta == "base" else (f"{delta:+.4f}" if isinstance(delta, (int, float)) else "-"), change])
-    cur_idx = [k for k, r in enumerate(lin) if r["version"] == version]
-    lineage_note = slot("lineage", "")
-    R.table(["버전", "날짜", "메모", f"평균 {metric_label}", "변화", "피처 변경"], lrows, caption="버전별 변경 내용",
-            widths=[1.4, 2.2, 3.2, 2.2, 1.6, 6.4], align=["center", "center", "left", "right", "right", "left"],
-            highlight_rows=cur_idx)
-    if lineage_note:
-        R.note("버전 이력 소견", lineage_note)
-
-    # -- 6. Operation ----------------------------------------------------------
-    R.h1("6. 운영 가이드")
-    here = os.path.dirname(os.path.abspath(__file__))
-    R.kv_table([
-        ("예측 명령 (파일)", f'python "{os.path.join(here, "ml_predict.py")}" -m "{ctx["version_dir"]}" -f "<새데이터.xlsx>"'),
-        ("예측 명령 (단건)", f'python "{os.path.join(here, "ml_predict.py")}" -m "{ctx["version_dir"]}" -i "피처=값,피처=값"'),
-        ("단독 배포", f"ml_predict.py 와 {version} 폴더 2가지만 복사 (numpy, pandas, scikit-learn, joblib 필요)"),
-        ("필수 입력", ", ".join(required_inputs)),
-    ], caption="예측 실행 방법", widths=(3.4, 13.6))
-    R.table(["경고 (예측 결과 JSON)", "의미", "조치"], [
-        ["drift_warning (extrapolation_warnings)", "입력값이 학습 범위(표 3) 또는 학습 기간을 벗어남", "결과를 참고값으로만 사용, 반복되면 재학습"],
-        ["unseen_category_warning", "학습 때 없던 범주 값 (예: 신규 라인)", "해당 범주 데이터를 추가해 재학습"],
-        ["missing_input_warning", "빈 값 또는 숫자가 아닌 값을 학습 기준값으로 대치", "입력 데이터 확인"],
-        ["low_confidence_warning", "분류 확률이 0.6 미만인 예측", "해당 건은 사람이 최종 판정"],
-    ], caption="예측 경고 해석", widths=[4.4, 6.6, 6.0], align=["left", "left", "left"])
-    retrain = []
-    if task == "regression":
-        for t in targets:
-            retrain.append(f"{t['name']}: 운영 중 실측 대비 MAE가 {t['champ']['mae'] * 1.5:.3f}(교차검증 MAE의 1.5배)를 넘으면 재학습")
-    else:
-        for t in targets:
-            retrain.append(f"{t['name']}: 운영 중 Macro-F1이 {max(t['champ']['val_f1_macro'] - 0.10, 0):.3f} 아래로 떨어지면 재학습")
-    retrain += ["외삽 또는 미학습 범주 경고가 전체 예측의 10% 이상이면 재학습", "공정 조건, 설비, 원료가 바뀌면 재학습"]
-    R.note("운영 소견 및 재학습 기준", slot("operation", "\n".join(retrain)))
-
-    # -- Appendix ----------------------------------------------------------------
-    R.h1("부록 A. 상관관계")
+    R.h2("2.2. 상관관계")
     corr = ctx["corr"]
     if corr is not None and corr.shape[0] >= 2:
         order = [r["feature"] for r in targets[0]["champ"]["feature_importances"]]
@@ -1413,33 +1133,76 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         cols = [cc for cc in corr.columns if cc not in numeric_targets]
         owner_rank = {f: k for k, f in enumerate(order)}
         cols = sorted(cols, key=lambda cc: min([owner_rank.get(f, 999) for f in order if cc == f or cc.startswith(f + "_")] or [999]))
-        keep = cols[:15] + numeric_targets
-        R.figure(chart_correlation(corr.loc[keep, keep]), "수치 입력 및 타겟 간 피어슨 상관계수 (중요도 상위 15개)")
+        keep = cols[:12] + numeric_targets
+        R.figure(chart_correlation(corr.loc[keep, keep]), "수치 입력 및 타겟 간 피어슨 상관계수 (중요도 상위 12개)")
         pairs = []
         for a_i, a in enumerate(cols):
             for b in cols[a_i + 1:]:
                 v = corr.loc[a, b]
                 if np.isfinite(v) and abs(v) >= 0.85:
                     pairs.append((a, b, v))
-        corr_default = ("다중공선성 주의(|r| >= 0.85) 피처 쌍: " + (", ".join(f"{a}-{b}({v:+.2f})" for a, b, v in pairs[:5])
-                        if pairs else "없음"))
+        tgt_pairs = []
+        for tn in numeric_targets:
+            col = corr[tn].drop(labels=[tn], errors="ignore").drop(labels=numeric_targets, errors="ignore").dropna()
+            if len(col):
+                top = col.abs().sort_values(ascending=False).index[:2]
+                tgt_pairs.append(f"{tn}: " + ", ".join(f"{f}({col[f]:+.2f})" for f in top))
+        corr_default = "\n".join((["타겟과 상관이 큰 입력: " + "; ".join(tgt_pairs)] if tgt_pairs else [])
+                                 + ["다중공선성 주의(|r| >= 0.85): " + (", ".join(f"{a}-{b}({v:+.2f})" for a, b, v in pairs[:5])
+                                                                      if pairs else "없음")])
         R.note("상관관계 소견", slot("correlation", corr_default))
-        R.para(f"전체 상관행렬: {os.path.join(ctx['version_dir'], 'correlation.csv')}", size=8.5, color=C_MUTED)
     else:
-        R.para("수치 입력이 2개 미만이라 상관관계를 표시하지 않습니다.", size=9.5)
+        R.para("수치 입력이 2개 미만이라 상관관계를 표시하지 않습니다.", size=9, color=C_MUTED)
 
-    R.h1("부록 B. 산출물 및 실행 환경")
-    files = sorted(os.listdir(ctx["version_dir"]))
-    R.table(["파일", "용도"], [[f, _file_purpose(f)] for f in files], caption=f"{version} 폴더 산출물",
-            widths=[6.5, 10.5], align=["left", "left"])
-    meta0 = targets[0]["meta"]
-    R.kv_table([
-        ("Python", meta0.get("python_version", "-")),
-        ("scikit-learn", meta0.get("sklearn_version", "-")),
-        ("데이터 폴더", ctx["data_root"]),
-        ("버전 폴더", ctx["version_dir"]),
-        ("학습 소요 시간", f"{rec.get('duration_sec', 0):.1f}초"),
-    ], caption="실행 환경")
+    # -- 3. 분석 방법 (한 단락) -----------------------------------------------------------
+    R.h1("3. 분석 방법")
+    if task == "regression":
+        method = ("후보 5종(HistGradientBoosting, RandomForest, ExtraTrees, Ridge, ElasticNet)을 5겹 교차검증으로 비교해 "
+                  "교차검증 예측의 R²가 가장 높은 모델을 챔피언으로 고르고, 전체 데이터로 다시 학습했습니다.")
+    else:
+        method = ("후보 5종(HistGradientBoosting, RandomForest, ExtraTrees, LogisticRegression, KNeighbors)을 클래스 비율을 유지한 "
+                  "5겹 교차검증으로 비교해 Macro-F1이 가장 높은 모델을 챔피언으로 고르고, 전체 데이터로 다시 학습했습니다.")
+    R.para(method + " 전처리(수치 중앙값 대치·표준화, 범주 원-핫, 날짜 분해)는 각 겹의 학습 데이터로만 맞춰 누수를 막았고, "
+           "피처 기여도는 순열 중요도입니다.", size=9)
+
+    # -- 4. 타겟별 결과 (타겟마다 핵심만) --------------------------------------------------
+    R.h1("4. 타겟별 결과")
+    for i, t in enumerate(targets, 1):
+        c, board = t["champ"], t["board"]
+        R.h2(f"4.{i}. {t['name']}")
+        v, why = verdicts[t["name"]]
+        R.para(f"판정: {v}  ({why})", size=9.5, bold=True, color=VERDICT_STYLE[v][0],
+               space_after=1).paragraph_format.keep_with_next = True
+        if best_src:
+            R.para(source_line(t), size=9, color=C_INK, space_after=1).paragraph_format.keep_with_next = True
+        if task == "regression":
+            iv = c.get("prediction_interval") or {}
+            half = (iv["residual_upper"] - iv["residual_lower"]) / 2 if iv else None
+            cards = [("검증 R²", f"{c['val_r2']:.4f}", c["champion_model"]), ("MAE", f"{c['mae']:.4f}", "평균 절대 오차"),
+                     ("학습-검증 간극", f"{c.get('overfit_gap', 0):.4f}", "0.15 초과면 과적합 주의"),
+                     ("90% 예측 범위", f"±{half:.3f}" if half is not None else "-", "예측값 기준")]
+            hdr = ["순위", "모델", "검증 R²", "학습 R²", "간극", "MAE"]
+            body = [[e["rank"], e["model_name"], e["val_r2"], e["train_r2"], e["overfit_gap"], e["mae"]] for e in board[:3]]
+        else:
+            cards = [("Macro-F1", f"{c['val_f1_macro']:.4f}", c["champion_model"]), ("정확도", f"{c['accuracy']:.4f}", "전체 정답 비율"),
+                     ("균형 정확도", f"{c['balanced_accuracy']:.4f}", "클래스별 재현율 평균"),
+                     ("ROC-AUC", fmt(c.get("roc_auc")), "확률 순위 성능")]
+            hdr = ["순위", "모델", "Macro-F1", "학습 F1", "간극", "정확도"]
+            body = [[e["rank"], e["model_name"], e["val_f1_macro"], e["train_f1_macro"], e["overfit_gap"], e["accuracy"]]
+                    for e in board[:3]]
+        R.metric_cards(cards)
+        R.figure(chart_target_overview(t, derived_names),
+                 f"{t['name']} " + ("실측 대비 예측" if task == "regression" else "혼동행렬") + "과 피처 기여도 (교차검증)")
+        R.table(hdr, body, caption=f"{t['name']} 상위 3개 모델 (교차검증)", widths=[1.2, 5.0, 2.7, 2.7, 2.6, 2.8],
+                align=["center", "left"] + ["right"] * 4, highlight_rows=[0])
+        if task != "regression":
+            pc = c["per_class"]
+            R.table(["클래스", "정밀도", "재현율", "F1", "실제 건수"],
+                    [[k, m["precision"], m["recall"], m["f1"], m["support"]] for k, m in pc.items()],
+                    caption=f"{t['name']} 클래스별 성능", widths=[4.0, 3.0, 3.0, 3.0, 4.0])
+        perf = slot("performance", text_performance(t), target=t["name"])
+        feats = slot("features", text_features(t), target=t["name"])
+        R.note("소견", perf + "\n" + feats)
 
     # -- Save --------------------------------------------------------------------
     if not out_path:
@@ -1467,26 +1230,6 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
                             f"'{os.path.basename(saved)}'. Overall verdict={overall}. Next step: report the file path to the user."),
     }
 
-
-def _file_purpose(name: str) -> str:
-    if name.startswith("model_") and name.endswith(".joblib"):
-        return "예측 모델 (전처리 + 챔피언 모델)"
-    if name.startswith("model_") and name.endswith(".json"):
-        return "모델 메타데이터 (피처 구성, 학습 범위, 지표)"
-    if name.startswith("oof_"):
-        return "교차검증 예측값 (보고서 그림 원본)"
-    if name.startswith("next_features_"):
-        return "다음 학습 명령용 피처 목록"
-    return {
-        "leaderboard.json": "후보 모델 비교 결과",
-        "correlation.csv": "전체 상관행렬",
-        "model_dataset.csv": "학습 데이터 스냅샷 (정제 후)",
-    }.get(name, "-")
-
-
-# ==============================================================================
-# 7. CLI
-# ==============================================================================
 
 LEGACY_SLOTS = {  # names accepted by ml_report.py 2.1 and earlier
     "slot1_residual": "performance", "residual": "performance",

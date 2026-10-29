@@ -8,14 +8,15 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))
 from make_sample import make_sample, make_class_sample  # noqa: E402
 from test_cli_smoke import run_tool, run_fail  # noqa: E402
 
 docx = pytest.importorskip("docx")
 pytest.importorskip("matplotlib")
 
-SECTIONS = ["1. 요약", "2. 데이터", "3. 분석 방법", "4. 타겟별 결과", "5. 버전 이력", "6. 운영 가이드",
-            "부록 A. 상관관계", "부록 B. 산출물 및 실행 환경"]
+SECTIONS = ["1. 요약", "2. 데이터와 피처", "2.1. 파생변수", "2.2. 상관관계", "3. 분석 방법", "4. 타겟별 결과"]
+REMOVED = ["목차", "5. 버전 이력", "6. 운영 가이드", "부록 A. 상관관계", "부록 B. 산출물 및 실행 환경"]  # 2.4.1에서 뺌
 
 
 def _headings(path):
@@ -53,10 +54,15 @@ def test_regression_report_structure(regression_report):
     d, heads = _headings(str(out))
     for sec in SECTIONS:
         assert sec in heads, sec
+    text = "\n".join(p.text for p in d.paragraphs)
+    for sec in REMOVED:
+        assert sec not in heads and sec not in text, sec
     assert "4.1. 생산효율(%)" in heads
     assert d.paragraphs[0].text == "ML 결과 보고서"  # tools/run_win_tests.py M6 reads the first paragraph
-    assert len(d.inline_shapes) == payload["figure_count"] >= 6
-    assert payload["table_count"] >= 8 and payload["verdicts"]["생산효율(%)"] in ("적합", "조건부", "부적합")
+    assert len(d.inline_shapes) == payload["figure_count"] >= 2          # 상관관계 + 타겟마다 1장
+    assert payload["table_count"] >= 3 and len(d.tables) >= 5 and payload["verdicts"]["생산효율(%)"] in ("적합", "조건부", "부적합")
+    page_breaks = sum(1 for p in d.paragraphs for r in p.runs if 'w:br w:type="page"' in r._r.xml)
+    assert page_breaks == 0                                              # 장마다 쪽을 넘기지 않음 (빈 공백)
 
 
 def test_regression_report_numbers_and_slots(regression_report):
@@ -68,7 +74,6 @@ def test_regression_report_numbers_and_slots(regression_report):
     assert f"{champ['val_r2']:.4f}" in text and f"{champ['mae']:.4f}" in text
     assert "슬롯으로 작성한 요약 문장" in text and "슬롯 피처 소견" in text
     assert set(payload["slots_used"]) == {"summary", "targets.생산효율(%).features"}
-    assert "v1" in text and "v2" in text  # version history table
 
 
 @pytest.fixture(scope="module")
@@ -88,7 +93,8 @@ def test_classification_report(binary_report):
     d, heads = _headings(payload["report_file"])
     text = _all_text(d)
     assert "혼동행렬" in text and "판정 기준" in text and "불량" in text
-    assert len(d.inline_shapes) == payload["figure_count"] >= 7  # incl. confusion, per-class, ROC/threshold
+    assert len(d.inline_shapes) == payload["figure_count"] >= 1  # 혼동행렬 + 피처 기여도 한 장
+    assert "클래스별 성능" in text
 
 
 def test_report_rejects_non_version_folder(regression_report, tmp_path):
@@ -126,3 +132,22 @@ def test_report_requires_oof_files(regression_report, tmp_path):
         f.unlink()
     payload = run_fail("ml_report.py", "-m", str(vdir))
     assert "2.2.0" in payload["message"]
+
+
+def test_derived_features_are_shown_with_formulas(tmp_path):
+    """파생변수는 2.1에 계산식(× ÷ ² 표기)과 타겟별 기여도·순위로 표시하고, 피처 표에서 '파생'으로 구별 (2.4.1)."""
+    data = make_sample(str(tmp_path / "d.csv"))
+    tr = run_tool("ml_train.py", "-f", data, "-x", "반응온도,압축압력,촉매비율,수분함량", "-y", "생산효율",
+                  "--eval", "온도x수분 = 반응온도 * 수분함량; 촉매제곱 = 촉매비율 ** 2; 압력비 = 압축압력 / 촉매비율")
+    payload = run_tool("ml_report.py", "-m", tr["version_dir"], "-o", str(tmp_path / "r.docx"))
+    text = _all_text(docx.Document(payload["report_file"]))
+    assert "온도x수분 = 반응온도(°C) × 수분함량(%)" in text
+    assert "촉매제곱 = 촉매비율(wt%)²" in text and "압력비 = 압축압력(bar) ÷ 촉매비율(wt%)" in text
+    assert "생산효율(%): " in text and "위)" in text                       # 사용 타겟의 기여도와 순위
+    assert "\n파생\n" in text                                               # 입력 피처 표의 유형
+
+
+def test_pretty_formula():
+    import ml_report
+    assert ml_report.pretty_formula("a = x ** 2 + y**3 - z ** 0.5") == "x² + y³ - z ^ 0.5"
+    assert ml_report.pretty_formula("b = sqrt(x) / y * 2") == "√(x) ÷ y × 2"

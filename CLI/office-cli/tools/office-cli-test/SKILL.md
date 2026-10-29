@@ -4,7 +4,7 @@ description: office-cli 도구의 Windows 실기 테스트(실제 Excel/Word/Pow
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.4.1"
+  version: "1.4.2"
   platform: windows
 ---
 
@@ -43,4 +43,4 @@ stdout 의 **마지막 1줄 JSON** 만 읽는다 (stderr 진행 로그는 무시
 - `agent_directive` 가 `VERIFIED:` 또는 `STOP_RETRY:` 로 시작하면 **다시 실행하지 않는다**.
 - 실패 원인을 추측하거나 코드를 고치지 않는다. `error_log` 파일을 열어 요약하거나 고치지 않는다(분석은 Claude가 한다).
 - `MANUAL-SKIP`(눈 확인 생략), `ENV-SKIP`(이 PC에 없는 기능) 은 실패가 아니다.
-- 파일 경로는 `file:///C:/...` 형식 링크로 보고한다. 이모지 금지.
+- 파일 경로는 결과 JSON의 값을 그대로 1번만 쓴다 (`file:///` 링크로 바꾸지 않는다). 이모지 금지.

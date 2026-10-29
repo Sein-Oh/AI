@@ -780,3 +780,70 @@ def test_numbering_helper_creates_part_when_template_has_none(tmp_path):
     d.save(str(path))
     units, _ = reader.parse_docx(str(path))
     assert by_text(units, "3. 일반 사항")
+
+
+@pytest.mark.parametrize("query,text,hit", [
+    ("SOI 1", "Activities for SOI #1 are listed", True),        # 2026-10-29: 'SOI 1'로 'SOI #1'을 못 찾던 문제
+    ("SOI #1", "SOI-1 검토", True),
+    ("SOI1", "SOI #1", True),
+    ("SOI 1", "SOI #10 활동", False),                            # 숫자 경계는 지킴
+    ("SOI 1", "SOI 21", False),
+    ("1.2", "제 1.2절", True),
+    ("1.2", "11.2절", False),
+    ("설계기준", "설계 기준에 따른다", True),
+    ("#4", "SOI #4 활동", True),
+    ("#4", "4개 항목", False),                                     # 기호를 빼면 숫자만 남는 검색어는 기호 그대로
+    ("C++", "C++ 코딩 규칙", True),
+])
+def test_search_ignores_symbols_and_spacing_but_keeps_number_boundaries(query, text, hit):
+    assert (reader.build_matcher(query, False, False)(text) is not None) == hit
+
+
+def test_snippet_highlights_symbol_insensitive_match():
+    assert "**SOI #1**" in reader.make_snippet("Activities for SOI #1 are listed", ["SOI 1"], 30, False)
+
+
+# ---------------------------------------------------------------------------
+# clear: 캐시 지우기
+# ---------------------------------------------------------------------------
+
+def _cached(tmp_path, *names):
+    paths = []
+    for n in names:
+        f = tmp_path / n
+        f.write_text(f"{n} 내용", encoding="utf-8")
+        run("index", "--file", str(f))
+        paths.append(f)
+    return paths
+
+
+def test_clear_requires_target_and_dry_run_changes_nothing(tmp_path):
+    a, b = _cached(tmp_path, "a규격.txt", "b보고.txt")
+    code, out = run("clear")
+    assert code == 1 and "--dry-run" in out["message"]
+    code, out = run("clear", "--name", "규격", "--dry-run")
+    assert code == 0 and out["dry_run"] is True and out["count"] == 1 and out["planned"] == ["캐시 삭제: a규격.txt"]
+    assert "clear --name 규격" in out["next_commands"][0]["command"] and "--dry-run" not in out["next_commands"][0]["command"]
+    assert len(reader.load_index()) == 2
+
+
+def test_clear_by_name_removes_index_and_cache_file_keeps_original(tmp_path):
+    a, b = _cached(tmp_path, "a규격.txt", "b보고.txt")
+    cache_a = reader._doc_cache_path(str(a))
+    code, out = run("clear", "--name", "규격")
+    assert code == 0 and out["verified"] is True and out["remaining_in_cache"] == 1
+    assert not os.path.exists(cache_a) and a.exists()                     # 원본은 그대로
+    assert list(reader.load_index()) == [str(b)]
+    code, out = run("search", "--query", "내용")
+    assert out["count"] == 1                                             # 지운 문서는 검색 대상에서 빠짐
+
+
+def test_clear_missing_and_all(tmp_path):
+    a, b = _cached(tmp_path, "a.txt", "b.txt")
+    os.remove(a)
+    code, out = run("clear", "--missing")
+    assert code == 0 and [d["file"] for d in out["documents"]] == ["a.txt"]
+    code, out = run("clear", "--missing")
+    assert code == 0 and out["count"] == 0 and "0건" in out["agent_directive"]
+    code, out = run("clear", "--all")
+    assert code == 0 and out["remaining_in_cache"] == 0 and reader.load_index() == {}
