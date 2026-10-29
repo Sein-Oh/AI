@@ -2,7 +2,7 @@
 
 AI 에이전트가 CLI 도구로 호출하는 **Agent-Computer Interface(ACI)** 툴킷 저장소입니다.
 대상 환경: **Windows 11 폐쇄망, WinPython (Python 3.13.13, PATH 등록)**, 26B~30B 경량 LLM 에이전트(스킬로 제공).
-라이브러리 버전은 [`constraints.txt`](constraints.txt) / [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+라이브러리 버전은 `AGENTS.md` "사용자 환경" 표 / [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
 
 ## 트리
 
@@ -11,9 +11,7 @@ AI_WORK/
 ├── README.md                  # 저장소 안내 (본 문서)
 ├── AGENTS.md                  # 에이전트 공통 규칙 + 사용자 환경 (단일 원본, OpenCode가 자동으로 읽음)
 ├── CLAUDE.md                  # @AGENTS.md 한 줄 (Claude Code용)
-├── opencode.json              # OpenCode가 docs/ENVIRONMENT.md도 함께 읽도록 설정
 ├── pytest.ini                 # python -m pytest -> CLI-dev/ 아래 모든 도구 테스트
-├── constraints.txt            # 표준 사용자 환경 라이브러리 버전 고정
 ├── docs/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
@@ -52,8 +50,8 @@ AI_WORK/
 ## 빠른 시작
 
 ```bash
-python -m pip install -r CLI-dev/ml-kit/requirements.txt -c constraints.txt
-python -m pip install -r CLI-dev/office-cli/requirements.txt -c constraints.txt
+python -m pip install -r CLI-dev/ml-kit/requirements.txt
+python -m pip install -r CLI-dev/office-cli/requirements.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.

@@ -1,5 +1,5 @@
-# office-cli 런타임 의존성 (버전은 루트 constraints.txt 기준)
-# 설치: python -m pip install -r CLI-dev/office-cli/requirements.txt -c constraints.txt
+# office-cli 런타임 의존성 (버전은 docs/ENVIRONMENT.md 표 기준)
+# 설치: python -m pip install -r CLI-dev/office-cli/requirements.txt
 pywin32        # 열린 Office 문서 작업 (COM)
 openpyxl       # 닫힌 xlsx 읽기
 python-docx    # 닫힌 docx 읽기

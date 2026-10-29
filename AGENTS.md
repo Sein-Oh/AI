@@ -23,10 +23,10 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 | 실행 명령 | `python`, `python -m pip` 만 사용 (`py`, `python3`, 단독 `pip` 금지). 명령 예시·스킬·배치 파일 포함 |
 | 에이전트 | **OpenCode** + 26B~30B 경량 LLM, 도구는 OpenCode 스킬로 제공 |
 | 주요 라이브러리 | pandas 3.0.5, scikit-learn 1.9.0, scipy 1.18.1, numpy/joblib(의존성), openpyxl 3.1.5, python-docx 1.2.0, python-pptx 1.0.2, matplotlib 3.11.1, seaborn 0.13.2, pymupdf 1.28.2, olefile 0.47, opencv-python 5.0.0.93, PyYAML 6.0.3, python-dateutil 2.9.0.post0, pywin32 312, pytest 9.1.1, pymupdf4llm 1.28.2, fastapi 0.141.1, fastmcp 3.4.7, mcp 1.28.1, langgraph 1.2.11, openai 2.54.0 |
-| 버전 기준 | 루트 `constraints.txt` (전체 목록). 상세 설명: `docs/ENVIRONMENT.md` |
+| 버전 기준 | 이 표. 상세 설명: `docs/ENVIRONMENT.md` |
 
 - 목록 외 패키지도 대부분 설치되어 있고, Python 3.13 / win_amd64 wheel로 추가 설치 가능.
-- 환경이 바뀌면 이 표, `constraints.txt`, `docs/ENVIRONMENT.md` 세 곳을 함께 갱신한다.
+- 환경이 바뀌면 이 표와 `docs/ENVIRONMENT.md` 두 곳을 함께 갱신한다.
 
 ## 반드시 지킬 ACI 계약 (상세: CLI-dev/README.md)
 1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr. `-h/--help` 텍스트도 stderr로 보내고 stdout에는 JSON 1줄.
@@ -107,10 +107,10 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 ## 폐쇄망 / Windows 제약
 - 런타임 네트워크 접근 금지.
 - 새 기능은 표준 환경 라이브러리를 우선 사용. 없는 패키지는 Python 3.13 / win_amd64 wheel이 있는 것만,
-  도구 `requirements.txt`(`CLI-dev/<tool>/`), `constraints.txt`, `docs/ENVIRONMENT.md`에 기록하고 미설치 시 JSON 오류로 안내.
+  도구 `requirements.txt`(`CLI-dev/<tool>/`), 위 "사용자 환경" 표, `docs/ENVIRONMENT.md`에 기록하고 미설치 시 JSON 오류로 안내.
 - 파일 저장·폴더 조작·텍스트 읽기는 JIT 자가복구 표의 공통 함수를 사용한다.
 - 도구 폴더(`CLI/<tool>/`)는 단독 배포된다. 공통 런타임 함수는 도구마다 자기 폴더에 두고, 다른 도구 폴더를 import하지 않는다.
-- 테스트는 `constraints.txt` 버전 기준으로 통과해야 한다.
+- 테스트는 "사용자 환경" 표의 버전 기준으로 통과해야 한다.
 
 ## 도구별 규칙
 ### ml-kit

@@ -1,5 +1,5 @@
 # ml-kit runtime dependencies (no network access needed at runtime)
-# Standard environment pins: ../../constraints.txt (pip install -r requirements.txt -c ../../constraints.txt)
+# Standard environment versions: docs/ENVIRONMENT.md (same list as the AGENTS.md table)
 # Install the SAME versions on the training PC and the serving PC (joblib models are version-sensitive).
 numpy>=1.26
 pandas>=2.1          # standard env: 3.0.5

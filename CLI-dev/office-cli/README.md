@@ -30,7 +30,7 @@ CLI-dev/office-cli/  개발·실기 테스트용 (사내 PC C:\CLI-dev\office-cl
 
 설치 (폐쇄망은 [`docs/WINDOWS_OFFLINE.md`](../../docs/WINDOWS_OFFLINE.md) 참고):
 ```bat
-python -m pip install -r CLI-dev/office-cli/requirements.txt -c constraints.txt
+python -m pip install -r CLI-dev/office-cli/requirements.txt
 ```
 
 ## 2. 공통 규칙

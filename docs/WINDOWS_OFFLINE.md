@@ -10,11 +10,11 @@
 
 ```bat
 cd CLI-dev\ml-kit
-python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
+python -m pip download -r requirements.txt -d wheels ^
   --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp
 ```
 - 인터넷 PC가 폐쇄망과 **같은 Windows + 같은 Python 버전**이면 `--platform` 이하 옵션은 생략 가능합니다.
-- `-c constraints.txt`로 표준 환경과 같은 버전이 받아지므로, 이미 설치된 패키지는 재설치되지 않습니다.
+- 표준 환경과 같은 버전을 받으려면 `requirements.txt` 대신 필요한 패키지만 `openpyxl==3.1.5`처럼 버전을 붙여 적습니다 (버전: `docs/ENVIRONMENT.md`).
 
 ## 2. 반입 후 폐쇄망 PC에서 설치
 
