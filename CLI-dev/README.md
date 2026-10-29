@@ -8,7 +8,7 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**의 
 
 | 도구 | 설명 | 스킬 |
 |---|---|---|
-| [`ml-kit/`](ml-kit/README.md) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 감사 보고서(회귀) | [`CLI/ml-kit/SKILL.md`](../CLI/ml-kit/SKILL.md) |
+| [`ml-kit/`](ml-kit/README.md) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 보고서 / 표 보간·반대 찾기 | [`CLI/ml-kit/SKILL.md`](../CLI/ml-kit/SKILL.md) |
 | [`office-cli/`](office-cli/README.md) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/EML 읽기와 검색 | [`CLI/office-cli/SKILL.md`](../CLI/office-cli/SKILL.md) |
 
 에이전트 런타임은 **OpenCode** 입니다. 스킬 폴더 이름 = 스킬 이름

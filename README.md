@@ -26,7 +26,8 @@ AI_WORK/
 │   │   ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
 │   │   ├── ml_train.py        # 1단계: 학습
 │   │   ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
-│   │   └── ml_report.py       # 3단계: Word 보고서
+│   │   ├── ml_report.py       # 3단계: Word 보고서
+│   │   └── ml_map.py          # 표 보간·반대 찾기 (모델 불필요)
 │   └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색
 │       ├── SKILL.md           # 에이전트용 스킬
 │       ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점

@@ -1,10 +1,10 @@
 ---
 name: ml-kit
-description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예측(분류) 모델을 학습하고(ml_train.py), 새 데이터를 예측하고(ml_predict.py), Word로 ML 결과 보고서(ml_report.py)를 만든다. 데이터 정제, 5개 모델 경쟁, 버전 관리, 입력 경고를 도구가 자동 처리하므로 명령 1회 실행 후 JSON 결과만 읽으면 된다. 예측 모델 만들기, 성능 개선, 새 조건 예측값 계산, 결과 보고서 요청 시 사용.
+description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예측(분류) 모델을 학습하고(ml_train.py), 새 데이터를 예측하고(ml_predict.py), Word로 ML 결과 보고서(ml_report.py)를 만든다. 모델 없이 표에서 사이값을 선형 보간하거나 목표값이 되는 조건을 반대로 찾는다(ml_map.py). 데이터 정제, 5개 모델 경쟁, 버전 관리, 입력 경고를 도구가 자동 처리하므로 명령 1회 실행 후 JSON 결과만 읽으면 된다. 예측 모델 만들기, 성능 개선, 새 조건 예측값 계산, 결과 보고서 요청 시 사용.
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.5.0"
+  version: "2.6.0"
   platform: windows
 ---
 
@@ -31,6 +31,7 @@ metadata:
 | "성능 올려봐", "다시 해봐" | 3단계 개선 |
 | "이 조건이면 얼마야?", "새 데이터 예측" | 4단계 예측 |
 | "보고서 만들어줘" | 5단계 보고서 |
+| "데이터(표)에서 ~일 때 값", "보간", "맵핑", "~가 50이 되는 온도는?" | 6단계 표 보간·반대 찾기 (모델 불필요) |
 
 실행 전에 꼭 알아야 할 것: 데이터 파일 경로, 타겟(맞힐 컬럼), 피처(입력 컬럼). 모르면 사용자에게 묻는다.
 컬럼 이름을 모르는 xlsx는 office-cli로 앞부분만 읽는다: `python "C:\CLI\office-cli\excel.py" read --target "<데이터파일>" --range A1:Z5`
@@ -112,6 +113,21 @@ python "C:\CLI\ml-kit\ml_report.py" -f "<데이터파일>"
 - 이후 예측(4단계)에는 결과의 `best_version_dir`을 쓴다.
 - 사용자가 보고서 문장을 직접 정해 주면, 파일 쓰기 도구로 `slots.json`(UTF-8)을 만들고 명령 끝에 `--slots "<그 경로>"`를 붙인다.
   형식: `{"summary": "<요약 문장>", "operation": "<운영 문장>"}`
+
+## 6단계: 표 보간·반대 찾기 (ml_map.py, 학습 불필요)
+
+사잇값 (기준 열과 값은 -i, 구할 열은 -y, -y를 빼면 나머지 숫자 열 전부):
+```powershell
+python "C:\CLI\ml-kit\ml_map.py" -f "<데이터파일>" -i "<기준열>=<값>" -y "<구할열>"
+```
+반대 찾기 (목표 열이 목표값이 되는 기준 값, 다른 기준은 -i로 고정, 고정할 것이 없으면 -i를 뺀다):
+```powershell
+python "C:\CLI\ml-kit\ml_map.py" -f "<데이터파일>" --find "<목표열>=<목표값>" --vary "<찾을기준열>" -i "<고정열>=<값>"
+```
+- 머리글이 1행이 아니면 2단계처럼 `--header-row`, `--unit-row`를 붙인다. 여러 점은 기준 열만 든 조회 파일로 `--points "<조회파일>"`.
+- 알릴 것: `preview`, `points[0].method`와 `basis`(쓴 원본 행과 비율), `nearest_rows`(가까운 실측 5행)를 표로.
+  반대 찾기는 `solutions`를 모두(하나만 고르지 않음), 0건이면 `reachable`. `output_file`이 있으면 그 경로.
+- `extrapolated`가 true이거나 `warnings`가 있으면 그 내용을 반드시 함께 알린다 (범위 밖 외삽값, 흩어진 기록).
 
 ## 결과 처리 (모든 단계 공통)
 
