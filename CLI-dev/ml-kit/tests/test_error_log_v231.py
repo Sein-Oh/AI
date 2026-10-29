@@ -143,3 +143,14 @@ def test_logging_failure_keeps_json_contract(tmp_path, monkeypatch, capsys):
         raise mc.InputError("입력 오류")
     code, payload = _run_inproc(capsys, body)
     assert code == 1 and payload["status"] == "error" and payload["message"] == "입력 오류"
+
+
+@pytest.mark.parametrize("script", ["ml_train.py", "ml_predict.py", "ml_report.py"])
+def test_help_is_stderr_text_and_one_json_line(script, data_dir):
+    """R7 (2.4.2): -h text goes to stderr, stdout is exactly 1 JSON line pointing at SKILL.md; not logged as an error."""
+    proc, payload = run_raw(script, "-h")          # run_raw asserts exactly 1 stdout line
+    assert proc.returncode == 0 and "usage:" in proc.stderr
+    assert payload["status"] == "ok" and payload["command"] == "help" and payload["verified"] is True
+    assert payload["agent_directive"].startswith("VERIFIED:") and "SKILL.md" in payload["agent_directive"]
+    assert os.path.normcase(payload["skill_file"]) == os.path.normcase(os.path.join(KIT, "SKILL.md"))
+    assert _log(data_dir) == ""

@@ -10,6 +10,10 @@
   공통 계약 `CLI/README.md`와 `run_all_tests.py/.bat`도 `CLI-dev/`로.
 - 테스트와 실기 러너는 옆 폴더 `../CLI/ml-kit`의 도구를 시험. 사내 PC에서는 실기 테스트 때만 `CLI-dev`를 `C:\CLI-dev`로 `C:\CLI`와 나란히 둠.
 - CLI 인자, JSON 키, 도구 동작은 그대로.
+
+### 수정
+- `-h/--help`: 도움말 텍스트는 stderr, stdout은 JSON 1줄(`command: "help"`, `skill_file`, SKILL.md를 쓰라는 안내). 이전에는 도움말이 stdout으로 나가 마지막 줄 JSON이 없었음 (남은 할 일에서 이동).
+- SKILL.md 규칙 9: 도구 코드(.py)를 읽지 않고, 방법을 못 찾으면 사용자에게 알리고 멈춤 (BEAM 에이전트가 `-h` 후 코드를 읽은 사례).
 - openpyxl 미설치 안내 문구: `requirements.txt를 설치` -> `python -m pip install openpyxl`로 설치 (requirements.txt가 도구 폴더에 없음).
 
 ## [2.4.1] - 2026-10-29
@@ -315,7 +319,7 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] `--dtypes` 컬럼명을 resolve_column_names로 매칭 + `[추천]`, int 변환의 fillna(0) 제거 또는 경고(ml_train.py:237-242)
 - [ ] 예측 `--targets` 불일치(ml_predict.py:904), 보고서 버전 없음(ml_report.py:772)에 `[추천] <후보>`
 - [ ] JSON 목록 상한 + `truncated`: `--history` records, feature_types/features_used, 오류 메시지 컬럼 목록
-- [ ] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄)
+- [x] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄) (2.4.2)
 - [ ] requirements.txt에 matplotlib 추가, 2행 주석을 `python -m pip install ...`로
 - [ ] 로그 태그 정리: `[PROGRESS  5%] [===]` -> `[PROGRESS] 5% ...`(러너 M14 파서 확인), 이력 표 머리 `[STATUS]`, 러너 `[준비]` -> `[INFO]`
 - [ ] 인자 alias: ml_report `--targets/-y`, 저장 `--save`(`--out` 유지)

@@ -226,6 +226,16 @@ def run_cli(execute: Callable[[], Dict[str, Any]], hint: str = "") -> None:
 class JsonArgumentParser(argparse.ArgumentParser):
     """argparse that reports usage errors as Agent CLI Protocol JSON instead of bare text."""
 
+    def print_help(self, file=None) -> None:  # type: ignore[override]
+        """R7: help text goes to stderr, stdout gets exactly 1 JSON line (argparse then exits 0)."""
+        super().print_help(sys.stderr)
+        skill = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] or __file__)), "SKILL.md")
+        emit_json_response({
+            "status": "ok", "tool": "ml-kit", "command": "help", "verified": True, "skill_file": skill,
+            "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 그대로 사용하세요. "
+                               "도구 코드(.py)는 읽지 마세요. 방법을 모르겠으면 사용자에게 물어보세요.",
+        })
+
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
         payload = {

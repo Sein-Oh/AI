@@ -128,7 +128,8 @@ CLI-dev/<tool>/
 
 ### R7. 도움말 (`-h/--help`)
 - `JsonArgumentParser`는 도움말 텍스트를 stderr로 쓰고, stdout에는
-  `{"status": "ok", "command": "help", "verified": true, "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 사용하세요."}` 1줄, exit 0.
+  `{"status": "ok", "command": "help", "verified": true, "skill_file": "<SKILL.md 경로>", "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 그대로 사용하세요. 도구 코드(.py)는 읽지 마세요. ..."}` 1줄, exit 0.
+  에이전트가 도움말 다음에 코드를 읽지 않고 SKILL.md로 돌아가게 하려는 것.
 - 서브명령 파서도 같은 클래스로 만든다.
 
 ### R8. 미리보기와 후보 (`--dry-run`, `[추천]`, `[후보]`)

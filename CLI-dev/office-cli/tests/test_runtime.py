@@ -338,6 +338,7 @@ def test_help_is_stderr_text_and_one_json_line(tmp_path):
         code, payload, err = run_script(tmp_path, TOOL_BODY, *argv)
         assert code == 0 and payload["command"] == "help" and payload["verified"] is True
         assert payload["agent_directive"].startswith("VERIFIED:") and "usage:" in err
+        assert payload["skill_file"].endswith("SKILL.md") and "읽지 마세요" in payload["agent_directive"]
 
 
 def test_value_error_is_internal_error_with_traceback(tmp_path):

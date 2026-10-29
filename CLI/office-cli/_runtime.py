@@ -375,7 +375,9 @@ class JsonArgumentParser(argparse.ArgumentParser):
         """R7: 도움말 텍스트는 stderr로, stdout에는 JSON 1줄 (argparse가 이어서 exit 0)."""
         super().print_help(sys.stderr)
         emit_json({"status": "ok", "tool": self.tool_name, "command": "help", "verified": True,
-                   "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 사용하세요."})
+                   "skill_file": os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md"),
+                   "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 그대로 사용하세요. "
+                                      "도구 코드(.py)는 읽지 마세요. 방법을 모르겠으면 사용자에게 물어보세요."})
 
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)

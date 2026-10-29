@@ -13,6 +13,10 @@
 - `pyproject.toml` 삭제: pytest `testpaths` 2줄뿐이었고 반입 검사에 자주 걸림.
 - 실기 테스트 스킬(`office-cli-test`)의 러너 경로: `C:\CLI-dev\office-cli\tools\run_win_tests.py`.
 
+### 수정
+- `-h` 결과 JSON에 `skill_file`(SKILL.md 경로)과 "도구 코드(.py)는 읽지 말고, 모르면 사용자에게 물어보라"는 안내 추가.
+- SKILL.md 규칙 9: 도구 코드(.py)를 읽지 않고, 방법을 못 찾으면 사용자에게 알리고 멈춤.
+
 ## [1.4.2] - 2026-10-29
 
 ### 기능
