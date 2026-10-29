@@ -20,6 +20,7 @@
 배경: 회사 PC 실기(`docs/test_logs/261029_test_log.md`). 실기 러너 71/71 통과(E3, K1~K5 포함). 오프라인 테스트 실패 4건·오류 10건과 OpenCode 대화 6개에서 나온 문제를 고쳤습니다.
 
 ### 수정
+- `pyproject.toml` 삭제: pytest `testpaths` 2줄뿐이었고 반입 검사에 자주 걸림. 도구 폴더에서 `python -m pytest`는 그대로 354개 실행(ml-kit처럼 설정 파일 없이 동작).
 - `ppt.py notes --file`, `word.py comment --file` 등: Windows 메모장 형식(CRLF) 파일을 넣으면 줄마다 빈 줄이 하나 더 생기던 문제. `read_text_file`이 줄바꿈을 `\n`으로 맞춥니다.
 - `excel.py read --target <CSV>`: CSV/TSV도 Excel 없이 읽습니다(인코딩 자동 판별, 숫자 변환, `--range`). 이전에는 확장자 오류가 나 Gemma가 pandas 코드를 직접 짰습니다.
 - reader 제목 인식: `(3) Verification Review; and`처럼 `;` `,` `and/or/및/또는`으로 끝나는 나열 항목은 장절 제목이 아닙니다(검색 근거의 장절이 나열 항목으로 바뀌던 문제). `PARSER_VERSION` 4.
@@ -364,5 +365,5 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - [ ] tools/run_win_tests.py `--agent` 모드: JsonArgumentParser와 최상위 예외 처리, 로그 태그 `[준비]` `[주의]` `[확인]` -> `[INFO]` `[WARN]`
 - [ ] .md 문자 규칙: 유니코드 화살표 26개 -> `->` (SKILL.md:44, README.md:69,133-135,140, TEST_CHECKLIST.md:34, docs/history/office-cli_WORK_PLAN_1.0.md 7곳), 원문자 -> `1.` `2.` (WORK_PLAN.md:195)
 - [x] `_STOP_RETRY_ERRORS`에서 ValueError/KeyError 제외 (1.4.0)
-- [ ] pyproject.toml `target-version = "py313"`
+- [x] pyproject.toml `target-version = "py313"`: 파일 자체를 삭제해 해당 없음 (1.4.2)
 - [ ] 인자 alias 정리(추가만): `-r`/`-c`/`-n` 충돌, `--limit` 대 `--top`, `--pages` 대 `--slides`
