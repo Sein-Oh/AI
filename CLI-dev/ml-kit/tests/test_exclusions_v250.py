@@ -55,7 +55,7 @@ def test_marks_auto_outliers_and_all_rows_score(tmp_path):
     assert (ex["manual"], ex["auto"], ex["forced_include"]) == (1, 2, 1)
     assert isinstance(ex["all_rows_score"], float) and ex["all_rows_score"] < res["mean_val_score"]
     assert "제외" not in res["feature_types"]["numeric"]                 # never a feature
-    assert "전체 R2(제외 행 포함)" in res["preview"] and "검증 R2" in res["preview"]
+    assert "검증 R2(제외 행 포함)" in res["preview"] and "검증 R2=" in res["preview"]
     assert f.read_bytes() == before                                       # data file untouched
 
     rows = pd.read_excel(res["excluded_rows_file"])
@@ -108,7 +108,7 @@ def test_classification_keeps_every_class(tmp_path):
                    "--task", "classification", "--positive-class", "불량")
     ex = res["exclusions"]["등급"]
     assert ex["manual"] == 1 and ex["auto"] == 1                          # target is a label: features only
-    assert 0 <= ex["all_rows_score"] <= 1 and "전체 Macro-F1" in res["preview"]
+    assert 0 <= ex["all_rows_score"] <= 1 and "검증 Macro-F1(제외 행 포함)" in res["preview"]
 
 
 def test_exclude_column_as_target_is_input_error(tmp_path):
@@ -143,7 +143,7 @@ def test_report_shows_terms_and_excluded_rows(tmp_path):
     doc = Document(rep["report_file"])
     text = "\n".join(p.text for p in doc.paragraphs)
     cells = " ".join(c.text for tb in doc.tables for row in tb.rows for c in row.cells)
-    assert "검증 R²" in cells and "전체 R²" in cells
+    assert "검증 R² (제외 행 미포함)" in cells and "검증 R² (제외 행 포함)" in cells
     assert "학습 제외 3행 (직접 표시 1, 자동 이상치 2)" in text and "excluded_rows.xlsx" in text
-    assert "학습 R² = 모델이 배운 행" in text
+    assert "학습 R² = 모델이 배운 행" in text and "검증 R² = 모델이 배우지 않은 행" in text
     assert "제외 행 포함 전체" not in text + cells and "교차검증 R²는" not in text

@@ -71,7 +71,7 @@ from sklearn.neighbors import KNeighborsClassifier
 TASK_REGRESSION = "regression"
 TASK_CLASSIFICATION = "classification"
 PRIMARY_METRIC = {TASK_REGRESSION: "val_r2", TASK_CLASSIFICATION: "val_f1_macro"}
-METRIC_LABEL = {TASK_REGRESSION: "검증 R2", TASK_CLASSIFICATION: "검증 Macro-F1"}   # 학습 / 검증 / 전체 점수 용어 통일 (2.5.0)
+METRIC_LABEL = {TASK_REGRESSION: "검증 R2", TASK_CLASSIFICATION: "검증 Macro-F1"}   # 점수 용어: 학습 / 검증 (제외 행 포함/미포함) (2.5.0)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -1894,7 +1894,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         delta_txt = delta_score if delta_score == "base" else f"{delta_score:+.4f}"
         excl_brief = "; ".join(
             f"{t}: 학습 제외 {e['manual'] + e['auto']}행(직접 {e['manual']}, 자동 {e['auto']}), "
-            f"전체 {short}(제외 행 포함)={e['all_rows_score'] if e['all_rows_score'] is not None else '-'}"
+            f"검증 {short}(제외 행 포함)={e['all_rows_score'] if e['all_rows_score'] is not None else '-'}"
             for t, e in exclusion_summary.items() if e["manual"] or e["auto"])
         preview = (
             f"[{current_version} 완료 / {task}] 타겟: [{target_brief}] | "
@@ -1910,7 +1910,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             f"Champion models and leaderboard packaged into '{os.path.basename(final_version_dir)}'. "
             f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. "
             + ("Some rows were left out of training ('제외' column or automatic outliers): tell the user the counts and "
-               "the 전체 score (all rows incl. excluded) from preview, and the excluded_rows_file path so they can review it. " if excl_brief else "") +
+               "the score with excluded rows (검증 ... 제외 행 포함) from preview, and the excluded_rows_file path so they can review it. " if excl_brief else "") +
             f"Next step: run next_commands[0] if the user wants to continue, or proceed to inference. "
             f"A command with needs_input=true has a placeholder: replace it with a path the user gave, or ask the user first."
         )

@@ -954,14 +954,14 @@ def _metric_info(task: str) -> Tuple[str, str]:
 
 
 def exclusion_line(t: Dict[str, Any], metric: str) -> str:
-    """'학습 제외 3행 (직접 1, 자동 이상치 2) | 전체 R² 0.81' or '' when nothing was left out."""
+    """'학습 제외 3행 (직접 1, 자동 이상치 2) | 검증 R²(제외 행 포함) 0.81' or '' when nothing was left out."""
     e = t.get("excluded") or {}
     n = int(e.get("manual", 0)) + int(e.get("auto", 0))
     parts = []
     if n:
         parts.append(f"학습 제외 {n}행 (직접 표시 {e.get('manual', 0)}, 자동 이상치 {e.get('auto', 0)})")
         if isinstance(e.get("all_rows_score"), (int, float)):
-            parts.append(f"전체 {metric} {e['all_rows_score']:.4f}")
+            parts.append(f"검증 {metric}(제외 행 포함) {e['all_rows_score']:.4f}")
     if e.get("forced_include"):
         parts.append(f"'포함' 표시 {e['forced_include']}행은 자동 제외하지 않음")
     if e.get("auto_note"):
@@ -1122,8 +1122,8 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
             row.append((t.get("excluded") or {}).get("all_rows_score", c.get("val_score")))
         rows.append(row + [err, verdicts[t["name"]][0], ", ".join(r["feature"] for r in c.get("top_features", [])[:2]) or "-"])
     if has_excl:
-        R.table(["타겟", "챔피언 모델", f"검증 {metric_label}", f"전체 {metric_label}", "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
-                widths=[2.7, 3.0, 1.7, 1.8, 2.3, 1.4, 4.1], align=["left", "left", "right", "right", "right", "center", "left"],
+        R.table(["타겟", "챔피언 모델", f"검증 {metric_label} (제외 행 미포함)", f"검증 {metric_label} (제외 행 포함)", "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
+                widths=[2.4, 2.8, 2.2, 2.2, 2.2, 1.4, 3.8], align=["left", "left", "right", "right", "right", "center", "left"],
                 verdict_col=5)
     else:
         R.table(["타겟", "챔피언 모델", f"검증 {metric_label}", "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
@@ -1140,9 +1140,10 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     R.note("요약 소견", "\n".join([slot("summary", summary_default)] + [str(x) for x in extra]))
     R.para(f"판정 기준: 검증 {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합 "
            f"(적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부). "
-           f"점수 용어: 학습 {metric_label} = 모델이 배운 행에 다시 맞춰 본 점수(과적합 확인용), "
-           f"검증 {metric_label} = 학습 제외 행을 뺀 데이터의 5겹 교차검증 점수(판정 기준)"
-           + (f", 전체 {metric_label} = 학습 제외 행까지 최종 모델로 예측해 함께 계산한 점수." if has_excl else "."),
+           f"점수 용어: 학습 {metric_label} = 모델이 배운 행을 다시 맞혀 본 점수(과적합 확인용), "
+           f"검증 {metric_label} = 모델이 배우지 않은 행을 맞혀 본 점수(5겹 교차검증, 판정 기준)."
+           + (f" 학습 제외 행이 있으면 검증 {metric_label}를 둘로 적습니다: 제외 행 미포함(판정 기준), "
+              f"제외 행 포함(학습 제외 행까지 최종 모델로 예측해 함께 계산, 이상치가 섞인 실제 데이터 기준)." if has_excl else ""),
            size=8, color=C_MUTED, space_after=2)
 
     # -- 2. 데이터와 피처 -----------------------------------------------------------------

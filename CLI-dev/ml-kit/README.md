@@ -306,15 +306,16 @@ python ml_train.py -f sample.xlsx --best --task classification
 
   | 용어 | 계산 | 쓰임 |
   |---|---|---|
-  | 학습 R² / 학습 Macro-F1 | 각 겹에서 학습한 행에 다시 맞춘 점수의 평균 (`train_r2`, `train_f1_macro`) | 학습-검증 간극(과적합) 확인 |
-  | 검증 R² / 검증 Macro-F1 | 학습 제외 행을 뺀 데이터의 5겹 교차검증 점수 (`val_r2`, `val_f1_macro`, `mean_val_score`) | 챔피언 선정, 판정, 목표 0.90 |
-  | 전체 R² / 전체 Macro-F1 | 검증 예측(학습 행) + 학습 제외 행을 최종 모델로 예측한 값으로 계산 (`all_rows_score`) | 이상치까지 포함한 실제 데이터에서의 성능 참고 |
+  | 학습 R² / 학습 Macro-F1 | 각 겹에서 학습한 행에 다시 맞춘 점수의 평균 (`train_r2`, `train_f1_macro`). 학습 제외 행은 학습하지 않으므로 항상 미포함 | 학습-검증 간극(과적합) 확인 |
+  | 검증 R² / 검증 Macro-F1 | 모델이 배우지 않은 행을 맞힌 점수. 학습 제외 행이 있을 때만 아래 둘로 나눠 적음 | |
+  | - (제외 행 미포함) | 학습 제외 행을 뺀 데이터의 5겹 교차검증 (`val_r2`, `val_f1_macro`, `mean_val_score`) | 챔피언 선정, 판정, 목표 0.90 |
+  | - (제외 행 포함) | 위 교차검증 예측 + 학습 제외 행을 최종 모델로 예측한 값 (`all_rows_score`) | 이상치가 섞인 실제 데이터에서의 성능 참고 |
 
 - 학습 범위(`feature_stats`, 예측 시 외삽 경고 기준)와 타겟 통계는 학습에 쓴 행으로만 계산합니다.
 - 산출물: `vX/excluded_rows.xlsx` (열: 타겟, 원본 행, 구분(직접 표시/자동 이상치), 이유, 실제값, 예측값). 원본 행은 엑셀 행 번호(CSV는 빈 줄을 뺀 줄 번호).
 - 결과 JSON: `exclusions` = `{타겟: {column, manual, auto, forced_include, auto_note, all_rows_score}}`, `excluded_rows_file`. 원장에는 `exclusions`, `model_<타겟>.json`에는 `excluded`, `leaderboard.json` 챔피언에는 `all_rows_score`.
   제외한 행이 없고 `포함` 표시도 없으면 이 키들은 생기지 않습니다.
-- 보고서: 요약 표에 "전체 R²" 열, 데이터 장에 제외 규칙과 타겟별 행 수, 타겟 장에 한 줄, 실측 대비 예측 그림에 학습 제외 행을 주황색 X로 표시.
+- 보고서: 요약 표에 "검증 R² (제외 행 포함)" 열, 데이터 장에 제외 규칙과 타겟별 행 수, 타겟 장에 한 줄, 실측 대비 예측 그림에 학습 제외 행을 주황색 X로 표시.
 
 ## 5. 추론 엔진 (`ml_predict.py`) 상세 가이드
 
