@@ -46,7 +46,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.4.2"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.5.0"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -535,10 +535,13 @@ def load_data_file(
 
     df_data = df_raw.iloc[start_idx:].copy()
     df_data.columns = headers
-    df_data = df_data.reset_index(drop=True)
 
     # Clean rows/cols that are entirely NaN
     df_data = df_data.dropna(how="all", axis=0).dropna(how="all", axis=1)
+    # 1-based row number in the source file for each data row (exact for .xlsx; CSV blank lines are skipped by the reader)
+    source_rows = [int(i) + 1 for i in df_data.index]
+    df_data = df_data.reset_index(drop=True)
+    df_data.attrs["source_rows"] = source_rows
     return df_data
 
 

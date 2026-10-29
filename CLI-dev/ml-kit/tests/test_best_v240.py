@@ -122,7 +122,7 @@ def test_report_f_reuses_then_rebuilds(three_runs):
     heads = [p.text for p in d.paragraphs if p.style.name.startswith("Heading")]
     for i, t in enumerate((Y1, Y2, Y3), 1):
         assert f"4.{i}. {t}" in heads
-    assert f"학습 조건 출처: v1 (당시 점수 {best['best_targets'][Y1]['source_score']:.4f}), 이번 점수" in text
+    assert f"학습 조건 출처: v1 (당시 검증 R² {best['best_targets'][Y1]['source_score']:.4f}), 이번 검증 R²" in text
 
     again = run_tool("ml_report.py", "-f", data)
     assert again["made_best"] is False and again["best_version"] == "v5"
