@@ -12,7 +12,7 @@ AI_WORK/
 ├── AGENTS.md                  # 에이전트 공통 규칙 + 사용자 환경 (단일 원본, OpenCode가 자동으로 읽음)
 ├── CLAUDE.md                  # @AGENTS.md 한 줄 (Claude Code용)
 ├── opencode.json              # OpenCode가 docs/ENVIRONMENT.md도 함께 읽도록 설정
-├── pytest.ini                 # python -m pytest -> CLI/ 아래 모든 도구 테스트
+├── pytest.ini                 # python -m pytest -> CLI-dev/ 아래 모든 도구 테스트
 ├── constraints.txt            # 표준 사용자 환경 라이브러리 버전 고정
 ├── docs/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
@@ -22,36 +22,38 @@ AI_WORK/
 │   └── test_logs/             # 사내 PC 실기 테스트 결과 원본
 ├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
 │   └── doc-classifier/        # 폴더 파일 목록화/분류 0.9.2 (다른 개발자 담당으로 보관)
-└── CLI/                       # 도구 모음 (도구 1개 = 폴더 1개)
+├── CLI/                       # 사내 PC C:\CLI로 그대로 복사. 실행 파일과 SKILL.md만
+│   ├── ml-kit/                # 회귀·분류 ML 툴킷
+│   │   ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
+│   │   ├── ml_train.py        # 1단계: 학습
+│   │   ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
+│   │   └── ml_report.py       # 3단계: Word 보고서
+│   └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색
+│       ├── SKILL.md           # 에이전트용 스킬
+│       ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
+│       ├── reader.py          # PDF/HWP/Office 파일 읽기, 캐시 등록, 근거(쪽/장절/번호) 검색 (Office 불필요)
+│       ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
+│       └── _runtime.py / _office.py   # 공통 모듈
+└── CLI-dev/                   # 개발·실기 테스트용 (필요할 때만 C:\CLI-dev로, C:\CLI와 나란히)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
-    ├── ml-kit/                # 회귀·분류 ML 툴킷 (2.4.0)
-    │   ├── SKILL.md           # 에이전트용 스킬 (짧은 명령 템플릿 + 결과 처리 규칙)
+    ├── run_all_tests.py / .bat   # Windows 통합 테스트 (옆 폴더 CLI의 도구를 시험)
+    ├── ml-kit/
     │   ├── README.md          # 상세 설명서
-    │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
+    │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
     │   ├── requirements.txt
-    │   ├── ml_train.py        # 1단계: 학습
-    │   ├── ml_predict.py      # 2단계: 예측 (단독 배포 가능) + 공통 런타임
-    │   ├── ml_report.py       # 3단계: Word 보고서
     │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
     │   └── tests/             # CLI 계약 + 회귀 테스트
-    └── office-cli/            # Office(Excel/Word/PPT/Outlook) 자동화 + 문서 읽기/검색 (1.3.0)
-        ├── SKILL.md           # 에이전트용 스킬
-        ├── README.md          # 상세 설명서
-        ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
-        ├── requirements.txt
-        ├── excel.py / word.py / ppt.py / outlook.py   # 앱별 진입점
-        ├── reader.py          # PDF/HWP/Office 파일 읽기, 캐시 등록, 근거(쪽/장절/번호) 검색 (Office 불필요)
-        ├── office.py          # 창 목록/전환, 앱 간 전달, 되돌리기
-        ├── _runtime.py / _office.py   # 공통 모듈
-        ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너), office-cli-test/ (실기 테스트 스킬)
+    └── office-cli/
+        ├── README.md / CHANGELOG.md / TEST_CHECKLIST.md / requirements.txt
+        ├── tools/             # run_win_tests.py, win_test_rules.py, office-cli-test/ (실기 테스트 스킬)
         └── tests/             # 오프라인 테스트 (가짜 COM + 실제 샘플 파일)
 ```
 
 ## 빠른 시작
 
 ```bash
-python -m pip install -r CLI/ml-kit/requirements.txt -c constraints.txt
-python -m pip install -r CLI/office-cli/requirements.txt -c constraints.txt
+python -m pip install -r CLI-dev/ml-kit/requirements.txt -c constraints.txt
+python -m pip install -r CLI-dev/office-cli/requirements.txt -c constraints.txt
 python -m pytest -q              # 전체 도구 테스트
 ```
 폐쇄망 설치는 [`docs/WINDOWS_OFFLINE.md`](docs/WINDOWS_OFFLINE.md), 에이전트 연동은 각 도구의 `SKILL.md`.
