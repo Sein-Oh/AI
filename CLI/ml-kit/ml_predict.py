@@ -29,6 +29,7 @@ import difflib
 import argparse
 import warnings
 from datetime import datetime
+from itertools import product
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
 import numpy as np
@@ -887,6 +888,212 @@ def write_csv_excel_compatible(df: pd.DataFrame, path: str, encoding: Optional[s
             df.to_csv(p, index=False, encoding="utf-8-sig")
 
     return save_with_lock_fallback(path, _write, what="CSV 파일")
+
+
+# ==============================================================================
+# C8. Table Interpolation (ml_map.py, and the measured-data comparison of ml_predict.py, 2.6.0+)
+# ==============================================================================
+#
+# grid      : every combination of the key values exists (one key: evenly spaced) -> classic multilinear
+#             interpolation, end segments extended linearly outside the table.
+# scattered : 1 key -> the two neighbouring rows; 2-3 keys -> the enclosing simplex (Delaunay, keys scaled to 0-1);
+#             outside the measured area a least-squares trend line (never the two end points).
+# Rows need a '__row' column (Excel row number shown as evidence).
+
+EXCLUDE_COL = "제외"
+INCLUDE_MARK = "포함"
+NEAREST_N = 5
+MAX_KEYS = 3              # interpolation up to 3 numeric keys; more keys -> nearest rows only
+NUMERIC_SHARE = 0.9       # a column is numeric when this share of its non-empty cells parse as numbers
+
+
+def _is_numeric_col(s: pd.Series) -> bool:
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return False
+    filled = s.notna() & (s.astype(str).str.strip() != "")
+    if filled.sum() == 0:
+        return False
+    return coerce_numeric(s)[filled].notna().mean() >= NUMERIC_SHARE
+
+
+def _cell(v: Any) -> Any:
+    """JSON / Excel friendly cell value."""
+    if isinstance(v, (pd.Timestamp, datetime)):
+        return v.isoformat(sep=" ", timespec="minutes")
+    if isinstance(v, (np.floating, float)):
+        return None if not np.isfinite(v) else round(float(v), 6)
+    if isinstance(v, np.integer):
+        return int(v)
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return None
+    return v
+
+
+def _fmt(v: float) -> str:
+    return f"{v:.6g}"
+
+
+class Table:
+    """Rows filtered by categorical keys, numeric keys (n x k) and value columns (n x m)."""
+
+    def __init__(self, df: pd.DataFrame, keys: List[str], values: List[str], warnings: List[str]):
+        self.keys, self.values = keys, values
+        K = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in keys])
+        V = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in values])
+        ok = np.isfinite(K).all(axis=1) & np.isfinite(V).all(axis=1)
+        if (~ok).sum():
+            warnings.append(f"기준 열이나 구할 열에 빈칸·글자가 있는 {int((~ok).sum())}행은 쓰지 않았습니다")
+        self.df = df[ok].reset_index(drop=True)
+        self.K, self.V = K[ok], V[ok]
+        self.rows = self.df["__row"].to_numpy()
+        n, k = self.K.shape
+        if n < max(2, k + 1):
+            raise InputError(f"계산에 쓸 수 있는 행이 {n}개뿐입니다 (기준 열 {k}개에는 {max(2, k + 1)}행 이상 필요).")
+        self.lo, self.hi = self.K.min(axis=0), self.K.max(axis=0)
+        span = self.hi - self.lo
+        self.span = np.where(span > 0, span, 1.0)
+        self._merge(warnings)
+        self.mode = "grid" if self._is_grid() else "scattered"
+        self._tri = None
+        self._trend = None
+
+    def _merge(self, warnings: List[str]) -> None:
+        """One point per key combination: identical duplicates are merged, differing ones averaged (warned)."""
+        frame = pd.DataFrame(self.K, columns=self.keys)
+        groups = frame.groupby(self.keys, sort=True).indices
+        pk, pv, pr, conflicts = [], [], [], 0
+        for _, idx in groups.items():
+            idx = np.asarray(idx)
+            vals = self.V[idx]
+            if len(idx) > 1 and not np.allclose(vals, vals[0], equal_nan=True):
+                conflicts += 1
+            pk.append(self.K[idx[0]])
+            pv.append(vals.mean(axis=0))
+            pr.append([int(r) for r in self.rows[idx]])
+        self.conflicts = conflicts
+        if conflicts:
+            warnings.append(f"같은 기준 값에 서로 다른 값이 있는 조합 {conflicts}개는 평균으로 계산했습니다")
+        self.PK, self.PV, self.PR = np.array(pk), np.array(pv), pr
+
+    def _is_grid(self) -> bool:
+        if self.conflicts:
+            return False
+        self.axes = [np.unique(self.PK[:, j]) for j in range(self.PK.shape[1])]
+        if any(len(a) < 2 for a in self.axes):
+            return False
+        if len(self.axes) == 1:
+            # One key: every table is a "full grid", so only an evenly spaced key (0, 5, 10, ...) counts as a map table.
+            # Uneven keys (process records) are interpolated the same way inside, but extrapolated by the trend line.
+            d = np.diff(self.axes[0])
+            return bool(np.allclose(d, d[0], rtol=1e-6, atol=1e-9 * max(1.0, abs(d[0]))))
+        return int(np.prod([len(a) for a in self.axes])) == len(self.PK)
+
+    # -- forward ---------------------------------------------------------------
+    def out_of_range(self, x: np.ndarray) -> Dict[str, str]:
+        def share(d: float, span: float) -> str:
+            r = d / span
+            return f"데이터 폭의 {r:.1f}배" if r >= 1 else f"데이터 폭의 {r:.0%}" if r >= 0.01 else "데이터 폭의 1% 미만"
+        out = {}
+        for j, key in enumerate(self.keys):
+            lo, hi, span = self.lo[j], self.hi[j], self.span[j]
+            if x[j] < lo:
+                out[key] = f"범위 {_fmt(lo)}~{_fmt(hi)}보다 {_fmt(lo - x[j])} 낮음 ({share(lo - x[j], span)})"
+            elif x[j] > hi:
+                out[key] = f"범위 {_fmt(lo)}~{_fmt(hi)}보다 {_fmt(x[j] - hi)} 높음 ({share(x[j] - hi, span)})"
+        return out
+
+    def _basis(self, idx: List[int], w: List[float]) -> List[Dict[str, Any]]:
+        out = []
+        for i, wi in zip(idx, w):
+            if abs(wi) > 1e-12:
+                out.append({"row": self.PR[i][0] if len(self.PR[i]) == 1 else self.PR[i], "weight": round(float(wi), 6)})
+        return out
+
+    def _grid(self, x: np.ndarray) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        seg, frac = [], []
+        for j, a in enumerate(self.axes):
+            i = int(np.clip(np.searchsorted(a, x[j], side="right") - 1, 0, len(a) - 2))
+            seg.append(i)
+            frac.append((x[j] - a[i]) / (a[i + 1] - a[i]))   # <0 or >1 outside the table: linear extension
+        index = {tuple(p): n for n, p in enumerate(self.PK)}
+        val = np.zeros(self.PV.shape[1])
+        idx, wts = [], []
+        for corner in product((0, 1), repeat=len(self.axes)):
+            w = 1.0
+            key = []
+            for j, c in enumerate(corner):
+                w *= frac[j] if c else 1.0 - frac[j]
+                key.append(self.axes[j][seg[j] + c])
+            n = index[tuple(key)]
+            val += w * self.PV[n]
+            idx.append(n)
+            wts.append(w)
+        return val, self._basis(idx, wts)
+
+    def _trend_value(self, x: np.ndarray) -> np.ndarray:
+        if self._trend is None:
+            A = np.column_stack([np.ones(len(self.PK)), (self.PK - self.lo) / self.span])
+            self._trend = np.linalg.lstsq(A, self.PV, rcond=None)[0]
+        return np.concatenate([[1.0], (x - self.lo) / self.span]) @ self._trend
+
+    def _scattered(self, x: np.ndarray) -> Tuple[Optional[np.ndarray], List[Dict[str, Any]]]:
+        if self.PK.shape[1] == 1:
+            a = self.PK[:, 0]
+            if not (a[0] <= x[0] <= a[-1]):
+                return None, []
+            i = int(np.clip(np.searchsorted(a, x[0], side="right") - 1, 0, len(a) - 2))
+            t = (x[0] - a[i]) / (a[i + 1] - a[i])
+            return (1 - t) * self.PV[i] + t * self.PV[i + 1], self._basis([i, i + 1], [1 - t, t])
+        if self._tri is None:
+            try:
+                from scipy.spatial import Delaunay
+            except ImportError:
+                raise InputError("scipy 패키지가 없어 기준 2~3개 보간을 할 수 없습니다. `python -m pip install scipy`로 설치하십시오.")
+            try:
+                self._tri = Delaunay((self.PK - self.lo) / self.span)
+            except Exception as e:  # degenerate layout (all points on a line, too few points)
+                raise InputError(f"실측 점이 한 줄로 놓여 있거나 너무 적어 둘러싼 점을 찾을 수 없습니다: {e}")
+        q = (x - self.lo) / self.span
+        s = int(self._tri.find_simplex(q))
+        if s < 0:
+            return None, []
+        T = self._tri.transform[s]
+        b = T[:-1] @ (q - T[-1])
+        w = np.append(b, 1 - b.sum())
+        verts = self._tri.simplices[s]
+        return w @ self.PV[verts], self._basis(list(verts), list(w))
+
+    def at(self, x: np.ndarray) -> Dict[str, Any]:
+        oor = self.out_of_range(x)
+        if self.mode == "grid":
+            val, basis = self._grid(x)
+            method = "격자 보간" + (" (끝 구간 직선 연장)" if oor else "")
+            extrap = bool(oor)
+        else:
+            val, basis = self._scattered(x)
+            if val is None:
+                val, basis = self._trend_value(x), []
+                method, extrap = "전체 추세선 외삽 (실측이 둘러싼 범위 밖)", True
+            else:
+                method = "위아래 실측 2점 보간" if self.PK.shape[1] == 1 else f"둘러싼 실측 {len(basis)}점 보간"
+                extrap = False
+        return {"values": {c: round(float(v), 6) for c, v in zip(self.values, val)}, "method": method,
+                "basis": basis, "extrapolated": extrap, "out_of_range": oor}
+
+
+def nearest_rows(df: pd.DataFrame, cols: List[str], target: np.ndarray, span: np.ndarray,
+                 show: List[str], n: int = NEAREST_N) -> List[Dict[str, Any]]:
+    X = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in cols])
+    d = np.sqrt(np.nansum(((X - target) / span) ** 2, axis=1))
+    d[~np.isfinite(X).all(axis=1)] = np.inf
+    out = []
+    for i in np.argsort(d, kind="stable")[:n]:
+        if not np.isfinite(d[i]):
+            break
+        rec = {"row": int(df["__row"].iloc[i]), "distance": round(float(d[i]), 4)}
+        rec.update({c: _cell(df[c].iloc[i]) for c in show})
+        out.append(rec)
+    return out
 
 
 # ##############################################################################
