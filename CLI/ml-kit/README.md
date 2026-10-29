@@ -41,6 +41,7 @@ ml-kit/
 ├── CHANGELOG.md            # 변경 이력 + 남은 할 일 (2.0.0부터 관리)
 ├── requirements.txt        # 런타임 의존성
 ├── tools/run_win_tests.py  # Windows 실기 테스트 (실제 Excel/Word, 파일 잠금, cmd/PowerShell, 배포 폴더)
+├── tools/pycaret_compare.py # 사람용: 같은 데이터로 PyCaret 회귀 결과를 내고 ml-kit 비교 명령을 알려 줌 (PyCaret 설치된 Python으로 실행)
 │                           #   --dir은 없는 경로나 빈 폴더 (러너가 만든 폴더만 다시 비움)
 │                           #   결과: 테스트 폴더 report_*.txt(요약) + tools/test_logs/testlog_<라벨>_<시각>.txt(AI 판독용 상세 로그)
 │
