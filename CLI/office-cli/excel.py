@@ -199,6 +199,33 @@ def is_closed_xlsx(target: str) -> Optional[str]:
     return raw
 
 
+def closed_csv(target: str) -> Optional[str]:
+    """--target이 CSV/TSV 파일이면 그 경로 (Excel 없이 글자로 읽음), 아니면 None."""
+    if not target or target.strip().lower() == "active":
+        return None
+    raw = os.path.abspath(os.path.expandvars(target.strip().strip('"')))
+    if not os.path.isfile(raw):
+        cand = os.path.join(rt.get_data_dir(), target.strip().strip('"'))
+        raw = cand if os.path.isfile(cand) else ""
+    return raw if raw and os.path.splitext(raw)[1].lower() in (".csv", ".tsv") else None
+
+
+def _read_matrix_csv(path: str, address: Optional[str]) -> Tuple[str, int, int, List[List[Any]], List[str]]:
+    """CSV를 엑셀 시트처럼 읽습니다 (인코딩 자동 판별, 숫자는 숫자로). --range가 있으면 그 범위만."""
+    rows = [[coerce(v) for v in r] for r in rt.read_csv_rows(path)]
+    while rows and all(v is None for v in rows[-1]):
+        rows.pop()
+    name = os.path.splitext(os.path.basename(path))[0]
+    r1, c1 = 1, 1
+    if address:
+        parts = split_sheet(address)[1].replace("$", "").split(":")
+        r1, c1 = parse_cell(parts[0])
+        r2, c2 = parse_cell(parts[-1])
+        width = max((len(r) for r in rows), default=0)
+        rows = [(r + [None] * (width - len(r)))[c1 - 1:c2] for r in rows[r1 - 1:r2]]
+    return name, r1, c1, rows, [name]
+
+
 def write_session(args, command: str):
     return off.open_target("excel", args.target, readonly=False, focus=not args.no_focus,
                            create=True, tool=TOOL, command=command)
@@ -283,8 +310,13 @@ def _search_matrix(matrix: List[List[Any]], r0: int, c0: int, text: str, limit: 
 
 
 def cmd_read(args) -> Dict[str, Any]:
-    closed = is_closed_xlsx(args.target)
-    if closed:
+    csv_path = closed_csv(args.target)
+    closed = None if csv_path else is_closed_xlsx(args.target)
+    if csv_path:
+        # CSV도 같은 명령으로 (행 수 세기, 머리글 확인): 이전에는 확장자 오류가 나 LLM이 pandas 코드를 직접 짰음
+        sheet, r0, c0, matrix, names = _read_matrix_csv(csv_path, args.range)
+        source = {"app": "Excel", "name": os.path.basename(csv_path), "path": csv_path, "source": "file(csv)"}
+    elif closed:
         sheet, r0, c0, matrix, names = _read_matrix_closed(closed, args.sheet, args.range)
         source = {"app": "Excel", "name": os.path.basename(closed), "path": closed, "source": "file(openpyxl)"}
     else:

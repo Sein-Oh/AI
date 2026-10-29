@@ -23,12 +23,17 @@
 | Excel, Word, PowerPoint, Outlook 작업 / PDF, HWP, Office 파일 읽기와 검색 / 워드 목차·메모·변경 추적, PPT 노트 | `office-cli` |
 | 표(Excel/CSV) 데이터로 예측 모델 학습, 새 데이터 예측, ML 결과 보고서 | `ml-kit` |
 
-1. 위 작업은 스킬 명령으로만 한다. openpyxl, python-docx, win32com 등으로 파이썬 코드를 직접 짜서 하지 않는다.
+1. 위 작업은 스킬 명령으로만 한다. pandas, openpyxl, python-docx, win32com 등으로 파이썬 코드를 직접 짜서 하지 않는다.
+   파일 내용이나 행 수 확인도 스킬로 한다: 엑셀/CSV는 `excel.py read --target "<파일>"`, 그 밖의 문서는 `reader.py read --file "<파일>"`.
 2. 도구는 `C:\CLI\ml-kit`, `C:\CLI\office-cli`에 있다. SKILL.md의 명령 경로를 그대로 쓴다.
-3. 해당 스킬의 SKILL.md를 먼저 읽고, 템플릿 명령을 그대로 쓴다. `<...>` 부분만 바꾸고 옵션을 지어내지 않는다.
-4. 명령은 1번만 실행한다. 출력의 **마지막 1줄 JSON**만 읽는다. `[PROGRESS]`, `[INFO]`, `[WARN]` 줄은 무시한다.
-5. JSON에 `next_commands`가 있으면 다음 단계는 그 `command`를 글자 그대로 실행한다. 명령을 새로 만들지 않는다.
-6. 파일 경로, 타겟 컬럼처럼 작업에 꼭 필요한 값을 모르면 실행 전에 사용자에게 묻는다.
+3. 해당 스킬의 SKILL.md를 먼저 읽고, 템플릿 명령을 그대로 쓴다. `<...>` 부분만 바꾸고 옵션이나 명령 이름을 지어내지 않는다.
+   스킬 불러오기가 실패하면(예: `ripgrep execution failed`) 아래 파일을 읽기 도구로 직접 읽는다. 읽기 전에는 도구 명령을 실행하지 않는다.
+   - office-cli: `C:\CLI\office-cli\SKILL.md`
+   - ml-kit: `C:\CLI\ml-kit\SKILL.md`
+4. 도구는 항상 `python "<스크립트 전체 경로>" <명령> ...`으로 실행한다. `.py` 파일 경로만 실행하면 편집기가 열리고 결과가 없다.
+5. 명령은 1번만 실행한다. 출력의 **마지막 1줄 JSON**만 읽는다. `[PROGRESS]`, `[INFO]`, `[WARN]` 줄은 무시한다.
+6. JSON에 `next_commands`가 있으면 다음 단계는 그 `command`를 글자 그대로 실행한다. 명령을 새로 만들지 않는다.
+7. 파일 경로, 타겟 컬럼처럼 작업에 꼭 필요한 값을 모르면 실행 전에 사용자에게 묻는다.
 
 ## 4. 결과 처리 (agent_directive의 첫 단어)
 | 첫 단어 | 할 일 |

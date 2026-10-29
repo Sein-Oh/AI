@@ -479,3 +479,15 @@ def test_read_closed_xlsx_without_dimension_reads_all_rows(tmp_path, capsys, mon
     monkeypatch.setattr(off, "win32com", None)
     code, out = run(capsys, "read", "--target", str(dst))
     assert code == 0 and out["values"][-1] == [10, 11, 12] and len(out["values"]) == 5
+
+
+def test_read_csv_target_without_excel(capsys, monkeypatch, tmp_path):
+    """CSV도 excel.py read로 읽음 (2026-10-29 Gemma: 확장자 오류 뒤 pandas 코드를 직접 짬). CP949, 숫자 변환, --range."""
+    p = tmp_path / "공정.csv"
+    p.write_bytes("반응온도(°C),생산효율(%)\r\n200.5,61\r\n210,63\r\n".encode("cp949"))
+    monkeypatch.setattr(off, "win32com", None)
+    code, out = run(capsys, "read", "--target", str(p))
+    assert code == 0 and out["rows"] == 3 and out["values"][1] == [200.5, 61]
+    assert out["target_resolved"]["source"] == "file(csv)"
+    code, out = run(capsys, "read", "--target", str(p), "--range", "B2:B3")
+    assert code == 0 and out["values"] == [[61], [63]] and out["range"] == "B2:B3"
