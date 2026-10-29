@@ -8,26 +8,24 @@
 도구는 **`C:\CLI\ml-kit`, `C:\CLI\office-cli`** 에 둡니다. 모든 SKILL.md와 전역 AGENTS.md의 명령 경로가 이 위치를 기준으로 적혀 있습니다.
 반입할 때는 `C:\CLI`만 바꾸면 됩니다. 실기 테스트(`C:\CLI\run_all_tests.py`)도 같은 도구를 시험합니다.
 
-OpenCode 스킬 폴더에는 둘 중 하나로 SKILL.md를 보이게 합니다.
+OpenCode 스킬 폴더(`%USERPROFILE%\.config\opencode\skills`)에는 SKILL.md가 든 폴더만 복사합니다. 도구 파일은 넣지 않습니다.
 
-**방법 A: 연결(junction), 권장.** 파일이 `C:\CLI` 한 곳에만 있어 SKILL.md를 따로 복사할 일이 없습니다. cmd에서 한 번만 실행합니다.
-```bat
-mkdir "%USERPROFILE%\.config\opencode\skills"
-mklink /J "%USERPROFILE%\.config\opencode\skills\ml-kit"          "C:\CLI\ml-kit"
-mklink /J "%USERPROFILE%\.config\opencode\skills\office-cli"      "C:\CLI\office-cli"
-mklink /J "%USERPROFILE%\.config\opencode\skills\office-cli-test" "C:\CLI\office-cli\tools\office-cli-test"
-```
+| 스킬 폴더 | 넣을 파일 |
+|---|---|
+| `skills\ml-kit\` | `C:\CLI\ml-kit\SKILL.md` |
+| `skills\office-cli\` | `C:\CLI\office-cli\SKILL.md` |
+| `skills\office-cli-test\` | `C:\CLI\office-cli\tools\office-cli-test\SKILL.md` |
+
+SKILL.md는 반입 때마다 바뀔 수 있으므로, `C:\CLI`를 갱신할 때 위 3개 파일도 같이 덮어씁니다.
+폴더 이름은 표와 같아야 합니다 (SKILL.md 맨 위 `name`과 같은 이름).
 
 **ripgrep(rg.exe)이 필요합니다.** OpenCode는 스킬을 불러올 때 ripgrep을 쓰고, 없으면 인터넷에서 받으려 합니다.
 폐쇄망에서는 받지 못해 스킬 불러오기가 `ripgrep execution failed`로 실패합니다(2026-10-29 실기: 대화 6개 모두).
 ripgrep Windows용(`ripgrep-<버전>-x86_64-pc-windows-msvc.zip`)을 반입해 `rg.exe`를 PATH에 있는 폴더(예: WinPython의 `python` 폴더)에 두고,
 PowerShell에서 `rg --version`이 나오는지 확인한 뒤 OpenCode를 다시 시작합니다. 그 전까지는 전역 AGENTS.md 3장 3번대로 SKILL.md를 직접 읽게 됩니다.
 
-**방법 B: SKILL.md만 복사.** 스킬 폴더에 `ml-kit`, `office-cli`, `office-cli-test` 폴더를 만들고 각 SKILL.md만 넣습니다.
-SKILL.md가 바뀐 반입 때는 다시 복사해야 합니다 (`C:\CLI\ml-kit\SKILL.md`, `C:\CLI\office-cli\SKILL.md`, `C:\CLI\office-cli\tools\office-cli-test\SKILL.md`).
-
 - 도구 오류 로그는 `C:\CLI\<도구>\data\logs\errors.txt`에 쌓이고, `python C:\CLI\run_all_tests.py --only diag`가 결과 파일에 붙여 줍니다.
-- 이전처럼 스킬 폴더에 도구 전체를 복사해 두었다면 그 폴더는 지우고(SKILL.md만 남기거나 연결로 바꾸고) `C:\CLI`만 쓰세요. 두 곳에 도구가 있으면 어느 쪽이 쓰였는지 헷갈립니다.
+- 이전처럼 스킬 폴더에 도구 전체를 복사해 두었다면 그 폴더는 SKILL.md만 남기고 `C:\CLI`만 쓰세요. 두 곳에 도구가 있으면 어느 쪽이 쓰였는지 헷갈립니다.
 
 ## 2. 전역 지침 (AGENTS.md)
 

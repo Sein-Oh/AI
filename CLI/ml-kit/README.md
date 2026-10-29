@@ -62,7 +62,7 @@ data/logs/errors.txt        # 실패한 실행의 오류 로그 (자동 생성, 
 도구는 `C:\CLI\ml-kit`에 둡니다. `SKILL.md`의 명령 경로가 이 위치 기준으로 적혀 있습니다 (사내 PC 배치 안내: `docs/opencode/README.md`).
 OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이름(`ml-kit`)과 같아야** 합니다.
 
-1. 스킬 폴더 `C:\Users\<사용자>\.config\opencode\skills\ml-kit\`를 `C:\CLI\ml-kit`에 연결(`mklink /J`)하거나, 그 폴더에 `SKILL.md`만 복사합니다.
+1. 스킬 폴더 `C:\Users\<사용자>\.config\opencode\skills\ml-kit\`에 `C:\CLI\ml-kit\SKILL.md`만 복사합니다 (도구 갱신 때 같이 덮어씀).
 2. 도구를 다른 위치에 두면 `SKILL.md` 안의 `C:\CLI\ml-kit`을 그 경로로 모두 바꿉니다.
 3. 권한을 제한하는 경우 `opencode.json` 에 `"permission": {"skill": {"ml-kit": "allow"}}` 를 추가합니다.
 4. OpenCode에서 에이전트가 `skill({ name: "ml-kit" })` 로 스킬을 불러오는지 확인합니다.
