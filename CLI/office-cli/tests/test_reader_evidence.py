@@ -780,3 +780,24 @@ def test_numbering_helper_creates_part_when_template_has_none(tmp_path):
     d.save(str(path))
     units, _ = reader.parse_docx(str(path))
     assert by_text(units, "3. 일반 사항")
+
+
+@pytest.mark.parametrize("query,text,hit", [
+    ("SOI 1", "Activities for SOI #1 are listed", True),        # 2026-10-29: 'SOI 1'로 'SOI #1'을 못 찾던 문제
+    ("SOI #1", "SOI-1 검토", True),
+    ("SOI1", "SOI #1", True),
+    ("SOI 1", "SOI #10 활동", False),                            # 숫자 경계는 지킴
+    ("SOI 1", "SOI 21", False),
+    ("1.2", "제 1.2절", True),
+    ("1.2", "11.2절", False),
+    ("설계기준", "설계 기준에 따른다", True),
+    ("#4", "SOI #4 활동", True),
+    ("#4", "4개 항목", False),                                     # 기호를 빼면 숫자만 남는 검색어는 기호 그대로
+    ("C++", "C++ 코딩 규칙", True),
+])
+def test_search_ignores_symbols_and_spacing_but_keeps_number_boundaries(query, text, hit):
+    assert (reader.build_matcher(query, False, False)(text) is not None) == hit
+
+
+def test_snippet_highlights_symbol_insensitive_match():
+    assert "**SOI #1**" in reader.make_snippet("Activities for SOI #1 are listed", ["SOI 1"], 30, False)

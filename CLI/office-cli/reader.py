@@ -1823,16 +1823,12 @@ def build_matcher(query: str, regex: bool, case_sensitive: bool):
     if not groups:
         raise rt.InputError("검색어가 비어 있습니다.")
 
-    def norm(s: str) -> str:
-        s = re.sub(r"\s+", "", unicodedata.normalize("NFC", s))   # 띄어쓰기·줄바꿈이 달라도 찾음 (설계기준 = 설계 기준)
-        return s if case_sensitive else s.lower()
-
-    keys = [[norm(t) for t in g] for g in groups]
+    pats = [[_term_pattern(unicodedata.normalize("NFC", t), flags) for t in g] for g in groups]
 
     def match_terms(text: str):
-        t = norm(text)
-        for g, k in zip(groups, keys):
-            if all(x in t for x in k):
+        t = unicodedata.normalize("NFC", text)
+        for g, ps in zip(groups, pats):
+            if all(p.search(t) for p in ps):
                 return g
         return None
     return match_terms
@@ -1864,10 +1860,26 @@ def parse_query(query: str) -> List[List[str]]:
     return [g for g in groups if g]
 
 
+_SEP = r"[\W_]*"          # 글자 사이에 끼어도 되는 것: 띄어쓰기, 줄바꿈, 기호(# - . : / ( ) 등)
+
+
 def _term_pattern(term: str, flags: int) -> "re.Pattern[str]":
-    """검색어를 글 안에서 찾는 정규식: 글자 사이 띄어쓰기·줄바꿈을 허용 (match_terms와 같은 기준)."""
-    chars = re.sub(r"\s+", "", term)
-    return re.compile(r"\s*".join(re.escape(c) for c in chars) or re.escape(term), flags)
+    """검색어를 글 안에서 찾는 정규식. 띄어쓰기·줄바꿈·기호가 달라도 찾습니다:
+    'SOI 1' = 'SOI #1' = 'SOI-1' = 'SOI1', '설계기준' = '설계 기준', PDF 줄바꿈으로 갈라진 글.
+    숫자 경계는 지킵니다: 'SOI 1'은 'SOI #10'이나 'SOI 21'과 맞지 않습니다.
+    기호를 빼면 숫자만 남는 검색어('#4')는 기호를 그대로 찾습니다 (모든 '4'와 맞지 않게)."""
+    compact = re.sub(r"\s+", "", term)
+    core = re.sub(r"[\W_]+", "", compact)
+    if not core or (core.isdigit() and core != compact):
+        chars, sep = compact or term, r"\s*"      # 기호까지 그대로 ('1.2'는 '12'와 다름)
+    else:
+        chars, sep = core, _SEP
+    body = sep.join(re.escape(c) for c in chars)
+    if chars[0].isdigit():
+        body = r"(?<![\d.])" + body              # '1.2'가 '11.2', '3.1.2'의 끝과 맞지 않게
+    if chars[-1].isdigit():
+        body += r"(?!\d)"
+    return re.compile(body, flags)
 
 
 def make_snippet(text: str, terms: List[str], context: int, case_sensitive: bool) -> str:
