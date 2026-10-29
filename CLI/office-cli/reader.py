@@ -41,7 +41,7 @@ SUPPORTED = {
 }
 UNIT_NAMES = {"pdf": "단락", "pptx": "슬라이드", "xlsx": "행", "csv": "행"}
 PAGE_TYPES = ("pdf", "pptx")   # read --pages가 실제 쪽/슬라이드 번호인 형식 (그 밖은 항목 번호)
-PARSER_VERSION = 3          # 파서가 바뀌면 올려서 기존 캐시를 무효화 (2: 공통 단위 형식, 장절/번호/쪽, 3: PDF 머리글·2단, DOCX 변경 추적·표 행 쪽)
+PARSER_VERSION = 4          # 파서가 바뀌면 올려서 기존 캐시를 무효화 (2: 공통 단위 형식, 장절/번호/쪽, 3: PDF 머리글·2단, DOCX 변경 추적·표 행 쪽, 4: 나열 항목은 제목 아님)
 MAX_SHEET_ROWS = 20000      # xlsx 시트당 최대 행 수
 MAX_FOLDER_FILES = 300      # 한 번에 새로 등록(파싱)할 최대 파일 수
 MAX_FOLDER_DEPTH = 3        # 폴더 기본 탐색 깊이
@@ -103,6 +103,8 @@ _UNIT_AFTER = re.compile(r"\s*(?:%|\u2103|\u00b0|\u2126|\u03a9|"
                          r"[kKMGmun\u03bc]?(?:V|A|W|Hz|Pa|bar|g|m|L|s|dB|lx|ppm|ohm)(?=[\s/,.)\]]|$)|"
                          r"(?:초|분|시간|일|주|개월|년|회|개|배|도|kg|mm|cm|km|mA|kA)(?=[\s/,.)\]]|$))")
 # 목차 줄: 점선 리더나 탭 뒤에 쪽 번호 (1.2 설계 기준 ........ 12)
+# 문장 중간에서 끝나는 나열 항목: "(3) Verification Review; and", "가) 시험 장비,", "1) 설계 검토 및"
+_LIST_CONTINUES = re.compile(r"(?:[;,]|[;,]?\s+(?:and|or|및|또는|그리고))\s*$", re.IGNORECASE)
 _TOC_LINE = re.compile(r"(?:[.\u00b7\u2026\u2025\u30fb\u2219_-]{3,}|\t)\s*\d{1,4}\s*$")
 
 
@@ -201,7 +203,7 @@ def heading_title(info: Optional[Dict[str, Any]], line: str, strong: bool = Fals
         return None
     if len(s) > (120 if strong else HEADING_MAX_CHARS):
         return None
-    if _SENTENCE_END.search(s):
+    if _SENTENCE_END.search(s) or _LIST_CONTINUES.search(s):
         return None
     if _NOUN_LIKE_END.search(s) and len(rest) >= 8:   # 개조식 문장 끝 (~함, ~임). 짧은 명사(소음)는 제외
         return None

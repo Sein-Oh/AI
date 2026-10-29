@@ -90,10 +90,26 @@ def hash_pdf(path):
     ], font="helv")
 
 
+def _numbering_part(d):
+    """문서의 번호 매기기 파트. 없으면 만듭니다: 회사 PC처럼 python-docx 기본 템플릿이 보안 프로그램으로 바뀌어
+    numbering.xml이 없으면 python-docx가 NotImplementedError를 냄 (2026-10-29 실기)."""
+    try:
+        return d.part.numbering_part
+    except (KeyError, NotImplementedError):
+        from docx.opc.constants import CONTENT_TYPE as CT, RELATIONSHIP_TYPE as RT
+        from docx.opc.packuri import PackURI
+        from docx.oxml import parse_xml
+        from docx.parts.numbering import NumberingPart
+        part = NumberingPart(PackURI("/word/numbering.xml"), CT.WML_NUMBERING, parse_xml(f"<w:numbering {W_NS}/>"),
+                             d.part.package)
+        d.part.relate_to(part, RT.NUMBERING)
+        return d.part.numbering_part
+
+
 def add_numbering(d):
     """numbering.xml에 3.로 시작하는 다단계 번호(3. / 3.1. / 3.1.1 / 가))를 넣고 numId 90을 돌려줍니다."""
     from docx.oxml import parse_xml
-    numbering = d.part.numbering_part.element
+    numbering = _numbering_part(d).element
     numbering.insert(0, parse_xml(
         f'<w:abstractNum {W_NS} w:abstractNumId="90">'
         '<w:lvl w:ilvl="0"><w:start w:val="3"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>'
@@ -620,6 +636,7 @@ def test_pdf_two_columns_read_left_column_first(tmp_path):
 
 
 @pytest.mark.parametrize("line", ["10.5 kV 이하", "1.5 kV 1분", "3 mm 이상", "2 개월", "1.2 설계 기준 ........ 12",
+                                  "(3) Verification Review; and", "가) 시험 장비,", "1) 설계 검토 및",
                                   "1. 사업 개요 ······ 3", "2.1 범위\t5"])
 def test_measurements_and_toc_lines_are_not_headings(line):
     assert reader.heading_title(reader.classify_number(line), line, strong=True) is None
@@ -747,3 +764,19 @@ def test_read_pages_on_docx_uses_real_pages(tmp_path):
     d.save(str(path))
     code, out = run("read", "--file", str(path), "--pages", "2")
     assert code == 0 and out["pages_mode"] == "page" and [u["text"] for u in out["units"]] == ["2쪽 문단"]
+
+
+def test_numbering_helper_creates_part_when_template_has_none(tmp_path):
+    """회사 PC 기본 템플릿처럼 numbering.xml이 없는 문서에서도 번호 단락을 만들 수 있어야 함 (테스트 도우미 자체 확인)."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    d = new_docx()
+    for rid, rel in list(d.part.rels.items()):
+        if rel.reltype == RT.NUMBERING:
+            del d.part.rels[rid]
+    d.part.__dict__.pop("numbering_part", None)
+    add_numbering(d)
+    numbered(d, "일반 사항", 0)
+    path = tmp_path / "n.docx"
+    d.save(str(path))
+    units, _ = reader.parse_docx(str(path))
+    assert by_text(units, "3. 일반 사항")

@@ -323,3 +323,10 @@ def test_notes_read_with_slide_and_missing_body(pp, capsys):
     pp["prs"].Slides(3).NotesPage.Shapes.Placeholders.items.pop()   # 노트 본문 개체틀 없음
     code, out = run(capsys, "notes", "--slide", "3", "--text", "x")
     assert code == 1 and "본문 개체틀" in out["message"]
+
+
+def test_notes_from_crlf_file_has_no_blank_lines(pp, capsys, tmp_path):
+    f = tmp_path / "노트_crlf.md"
+    f.write_bytes("첫 줄\r\n둘째 줄\r\n".encode("utf-8"))        # Windows 메모장 형식
+    code, out = run(capsys, "notes", "--slide", "2", "--file", str(f))
+    assert code == 0 and pp["prs"].Slides(2).NotesPage.body.TextFrame.TextRange.Text == "첫 줄\r둘째 줄"

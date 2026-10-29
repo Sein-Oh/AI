@@ -409,3 +409,9 @@ def test_lock_fallback_reports_recovered(tmp_path, monkeypatch):
     out = rt.save_with_lock_fallback(target, writer, "CSV 파일")
     assert out != target and os.path.exists(out)
     assert rt.RECOVERED == [f"표.csv 잠김(CSV 파일) -> {os.path.basename(out)}로 저장"]
+
+
+def test_read_text_file_normalizes_crlf(tmp_path):
+    p = tmp_path / "w.txt"
+    p.write_bytes("가\r\n나\r\n".encode("cp949"))
+    assert rt.read_text_file(str(p)) == "가\n나\n"

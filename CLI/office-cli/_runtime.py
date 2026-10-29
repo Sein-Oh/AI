@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.4.0"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.4.1"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -533,14 +533,15 @@ def resolve_output_path(path: Optional[str], default_stem: str, ext: str, overwr
 # ==============================================================================
 
 def read_text_file(path: str) -> str:
-    """Windows 도구들이 쓰는 인코딩(UTF-8 +/- BOM, UTF-16 BOM, CP949/EUC-KR)을 자동 판별해 읽습니다."""
+    """Windows 도구들이 쓰는 인코딩(UTF-8 +/- BOM, UTF-16 BOM, CP949/EUC-KR)을 자동 판별해 읽습니다.
+    줄바꿈은 \\n 하나로 맞춥니다 (Windows 메모장의 CRLF가 Office에 넣을 때 빈 줄로 남지 않게)."""
     with open(path, "rb") as f:
         raw = f.read()
     if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
-        return raw.decode("utf-16")
+        return raw.decode("utf-16").replace("\r\n", "\n")
     for enc in ("utf-8-sig", "cp949", "euc-kr"):
         try:
-            return raw.decode(enc)
+            return raw.decode(enc).replace("\r\n", "\n")
         except UnicodeDecodeError:
             continue
     raise InputError(f"텍스트 파일 인코딩 인식 실패 (UTF-8/UTF-16/CP949 아님): {path}")

@@ -7,3 +7,4 @@
 |---|---|---|---|
 | `test_log_20261028_1차실기.txt` | ml-kit 2.3.0, office-cli 1.2.0 | ml-kit 실기 12/14, office-cli 실기 중단(A5 이후 Excel 닫힘), 오프라인 실패 다수 | PR #15 (ml-kit 2.3.1, office-cli 1.2.1) |
 | `test_result_PC_20261028_150604.txt` | ml-kit 2.3.1, office-cli 1.2.1 | ml-kit 실기 14/14, office-cli 실기 65/65, 오프라인 실패 4건 | PR #16 (ml-kit 2.3.2) |
+| `261029_test_log.md` | ml-kit 2.4.0, office-cli 1.4.0 | ml-kit 실기 14/14, office-cli 실기 71/71(E3, K1~K5 포함), office-cli 오프라인 실패 4건·오류 10건, OpenCode 대화 6개(스킬 불러오기 실패: ripgrep) | office-cli 1.4.1 |

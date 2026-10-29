@@ -18,6 +18,11 @@ mklink /J "%USERPROFILE%\.config\opencode\skills\office-cli"      "C:\CLI\office
 mklink /J "%USERPROFILE%\.config\opencode\skills\office-cli-test" "C:\CLI\office-cli\tools\office-cli-test"
 ```
 
+**ripgrep(rg.exe)이 필요합니다.** OpenCode는 스킬을 불러올 때 ripgrep을 쓰고, 없으면 인터넷에서 받으려 합니다.
+폐쇄망에서는 받지 못해 스킬 불러오기가 `ripgrep execution failed`로 실패합니다(2026-10-29 실기: 대화 6개 모두).
+ripgrep Windows용(`ripgrep-<버전>-x86_64-pc-windows-msvc.zip`)을 반입해 `rg.exe`를 PATH에 있는 폴더(예: WinPython의 `python` 폴더)에 두고,
+PowerShell에서 `rg --version`이 나오는지 확인한 뒤 OpenCode를 다시 시작합니다. 그 전까지는 전역 AGENTS.md 3장 3번대로 SKILL.md를 직접 읽게 됩니다.
+
 **방법 B: SKILL.md만 복사.** 스킬 폴더에 `ml-kit`, `office-cli`, `office-cli-test` 폴더를 만들고 각 SKILL.md만 넣습니다.
 SKILL.md가 바뀐 반입 때는 다시 복사해야 합니다 (`C:\CLI\ml-kit\SKILL.md`, `C:\CLI\office-cli\SKILL.md`, `C:\CLI\office-cli\tools\office-cli-test\SKILL.md`).
 
