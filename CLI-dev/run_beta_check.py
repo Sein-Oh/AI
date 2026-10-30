@@ -97,10 +97,10 @@ def group_b(work, st):
     safe("B", "B2", "생산효율: 직접 제외 1, 자동 제외 1 이상, '포함' 1", b2)
     def b3():
         import pandas as pd
-        rows = pd.read_excel(p["excluded_rows_file"])
+        rows = pd.read_csv(p["excluded_rows_file"], encoding="cp949")
         manual = rows[rows["구분"] == "직접 표시"]
         return (int(manual["원본 행"].iloc[0]) == 105 and manual["이유"].iloc[0] == "센서오류"), manual.to_dict("records")
-    safe("B", "B3", "excluded_rows.xlsx: '센서오류'가 엑셀 105행으로 기록", b3)
+    safe("B", "B3", "excluded_rows.csv: '센서오류'가 엑셀 105행으로 기록", b3)
     safe("B", "B4", "데이터 파일을 고치지 않음", lambda: (sha(data) == before, "해시 다름"))
     safe("B", "B5", "preview에 '검증 R2(제외 행 포함)' 용어", lambda: ("검증 R2(제외 행 포함)" in p["preview"], p["preview"][:200]))
 

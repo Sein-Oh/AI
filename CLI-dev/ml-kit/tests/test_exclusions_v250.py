@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 2.5.0: rows left out of training ('제외' column + automatic outliers), all-rows score, report terms.
-The data file is never modified; the excluded rows are listed in <version>/excluded_rows.xlsx.
+The data file is never modified; the excluded rows are listed in <version>/excluded_rows.csv.
 """
 import json
 import os
@@ -58,7 +58,7 @@ def test_marks_auto_outliers_and_all_rows_score(tmp_path):
     assert "검증 R2(제외 행 포함)" in res["preview"] and "검증 R2=" in res["preview"]
     assert f.read_bytes() == before                                       # data file untouched
 
-    rows = pd.read_excel(res["excluded_rows_file"])
+    rows = pd.read_csv(res["excluded_rows_file"], encoding="cp949")
     by_row = {int(r["원본 행"]): r for _, r in rows.iterrows()}
     assert set(by_row) == {7, 32, 52}                                     # Excel rows (header is row 1)
     assert by_row[52]["구분"] == "직접 표시" and by_row[52]["이유"] == "센서오류"
@@ -144,7 +144,7 @@ def test_report_shows_terms_and_excluded_rows(tmp_path):
     text = "\n".join(p.text for p in doc.paragraphs)
     cells = " ".join(c.text for tb in doc.tables for row in tb.rows for c in row.cells)
     assert "검증 R² (제외 행 미포함)" in cells and "검증 R² (제외 행 포함)" in cells
-    assert "학습 제외 3행 (직접 표시 1, 자동 이상치 2)" in text and "excluded_rows.xlsx" in text
+    assert "학습 제외 3행 (직접 표시 1, 자동 이상치 2)" in text and "excluded_rows.csv" in text
     terms = next(p.text for p in doc.paragraphs if p.text.startswith("판정 기준:")).split("\n")   # one term per line
     assert terms[1] == "점수 용어" and terms[2].startswith("- 학습 R²: 모델이 배운 행")
     assert terms[3].startswith("- 검증 R²: 모델이 배우지 않은 행") and terms[5].startswith("- 검증 R² (제외 행 포함)")
