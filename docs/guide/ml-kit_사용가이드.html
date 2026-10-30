@@ -107,14 +107,14 @@ th { background: var(--soft); font-weight: 700; }
 <button id="menu" type="button">목차 열기/닫기</button>
 <nav id="side">
   <div class="brand">ml-kit 사용 가이드</div>
-  <div class="ver">베타 | ml-kit 2.9.2 | Gemma 기준</div>
+  <div class="ver">베타 | ml-kit 2.9.3 | Gemma 기준</div>
   <input id="tocq" type="search" placeholder="목차에서 찾기 (예: 차트)">
   <div id="toc"></div>
 </nav>
 <main>
 <header class="top">
   <h1>ml-kit 사용 가이드</h1>
-  <p>엑셀 데이터로 예측 모델을 만들고, 새 조건의 결과를 예측하고, 보고서를 만드는 방법 | 베타테스트용 | ml-kit 2.9.2</p>
+  <p>엑셀 데이터로 예측 모델을 만들고, 새 조건의 결과를 예측하고, 보고서를 만드는 방법 | 베타테스트용 | ml-kit 2.9.3</p>
 </header>
 
 <p class="lead">ml-kit은 엑셀이나 CSV로 모아 둔 과거 데이터에서 <b>규칙을 스스로 배워</b>, 새로운 조건에서 결과가 어떻게 될지 <b>예측</b>하는 도구입니다.
@@ -443,11 +443,10 @@ th { background: var(--soft); font-weight: 700; }
   <tr><td>계산기</td><td>노란 칸에 값을 넣으면 예측값, 90% 범위, 판단이 바로 나옵니다. 범위 밖 입력은 주황색으로 표시</td></tr>
   <tr><td>일괄계산</td><td>여러 조건(최대 500건)을 노란 열에 붙여 넣으면 한꺼번에 계산</td></tr>
   <tr><td>사용법</td><td>받는 사람을 위한 사용 안내</td></tr>
-  <tr><td>표</td><td>모델로 미리 계산해 둔 표 (예측은 이 표의 주변 값을 비율로 섞어 구함)</td></tr>
   <tr><td>정확도, 정보</td><td>입력 수별 정확도 후보, 모델·입력·뺀 입력·만든 날짜</td></tr>
 </table>
 <ul>
-  <li>노란 칸 말고는 모두 잠겨 있어 실수로 표나 수식을 지울 수 없습니다. 암호는 없고 숨긴 것도 없습니다.</li>
+  <li>노란 칸 말고는 모두 잠겨 있어 실수로 수식을 지울 수 없습니다. 암호는 없습니다. 계산에 쓰는 표는 파일 안에 숨겨져 있어 보이지 않습니다.</li>
   <li>입력이 많을수록 표가 커지고 정확도가 조금 떨어질 수 있어, 입력 수를 줄이는 과정이 들어갑니다. 정확도 시트에 그 결과가 있습니다.</li>
   <li>계산기 제목은 학습할 때 넣은 데이터 설명을 에이전트가 짧게 정리해 넣습니다.</li>
 </ul>

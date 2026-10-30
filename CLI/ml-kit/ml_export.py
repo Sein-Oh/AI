@@ -11,9 +11,9 @@ Turns a trained version into ONE Excel workbook that predicts with plain formula
                        (points per axis = min(41, MAX_ROWS ** (1/k))), with the distance of every grid node to the
                        nearest training row (scaled inputs) for the "no measured data" warning.
   3. workbook        : 계산기 (input cells -> prediction, 90% interval, status), 일괄계산 (many rows), 사용법,
-                       표_<target> (the grid), 정확도 (candidates), 정보. Multilinear interpolation with INDEX/MATCH only
+                       표_<target> (the grid, veryHidden), 정확도 (candidates), 정보. Multilinear interpolation with INDEX/MATCH only
                        (Excel 2016+), linear extension outside the table. Every sheet is protected without a password:
-                       only the yellow input cells can be edited; nothing is hidden.
+                       only the yellow input cells can be edited. Only the grid sheets are hidden.
 The version folder is not changed except for <version>/export/ (the retrained model and the candidate table).
 """
 import sys
@@ -298,6 +298,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
     for p in plans:
         p["sheet"] = _sheet_name("표_", p["target"], used)
         p["ws"] = wb.create_sheet(p["sheet"])
+        p["ws"].sheet_state = "veryHidden"   # 2.9.3: the grid is not shown (not even in "unhide"); formulas still read it
     acc = wb.create_sheet("정확도")
     info = wb.create_sheet("정보")
 
@@ -507,7 +508,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
         ("3. 노란 칸 말고는 수정할 수 없습니다 (계산이 깨지지 않도록 잠겨 있습니다).", False),
         ("", False),
         ("결과 읽는 법", True),
-        ("- 예측값: 모델로 미리 계산해 둔 표('표_' 시트)에서 입력값 주변 값을 비율로 섞어 구한 값입니다.", False),
+        ("- 예측값: 모델로 미리 계산해 파일 안에 넣어 둔 표에서, 입력값 주변 값을 비율로 섞어 구한 값입니다.", False),
         ("- 90% 범위: 실제 값이 이 범위 안에 들 가능성이 약 90%입니다. 좁을수록 정밀합니다.", False),
         ("- 판단 '참고용 (학습 범위 밖)': 입력이 모델이 배운 범위를 벗어났습니다. 값이 부정확할 수 있습니다.", False),
         ("- 판단 '참고용 (실측 없는 영역)': 각 입력은 범위 안이지만, 이런 조합의 실제 데이터가 근처에 없었습니다.", False),

@@ -66,7 +66,8 @@ def test_search_keeps_interacting_input_and_builds_locked_workbook(version, tmp_
     wb = openpyxl.load_workbook(r["output_file"])
     assert wb.sheetnames == ["계산기", "일괄계산", "사용법", "표_효율", "정확도", "정보"]
     assert all(wb[n].protection.sheet for n in wb.sheetnames) and wb.security.lockStructure
-    assert all(wb[n].sheet_state == "visible" for n in wb.sheetnames)                   # nothing hidden
+    assert wb["표_효율"].sheet_state == "veryHidden"                                    # grid not shown (2.9.3)
+    assert all(wb[n].sheet_state == "visible" for n in wb.sheetnames if not n.startswith("표_"))
     calc = wb["계산기"]
     unlocked = [c.coordinate for row in calc.iter_rows() for c in row if not c.protection.locked]
     assert unlocked == ["C6", "C7", "C8"] and calc["B6"].value == "온도"
