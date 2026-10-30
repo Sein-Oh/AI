@@ -14,6 +14,7 @@ AI_WORK/
 ├── pytest.ini                 # python -m pytest -> CLI-dev/ 아래 모든 도구 테스트
 ├── docs/
 │   ├── ENVIRONMENT.md         # 표준 사용자 환경 정의 + 도구별 호환 현황
+│   ├── HANDOFF.md             # 작업 인계 (다른 PC·새 대화에서 이어 하기)
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 │   ├── history/               # 지난 설계·검토 기록 (1.0 설계, 1차 지침 준수 검토)
 │   ├── guide/                 # 사용자(사무직)용 사용 가이드 HTML: office-cli, ml-kit (파일 하나씩, 폐쇄망에서 브라우저로 열림)
