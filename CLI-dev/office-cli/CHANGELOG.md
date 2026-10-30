@@ -1,4 +1,4 @@
-# CHANGELOG – office-cli
+# CHANGELOG - office-cli
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
@@ -7,6 +7,7 @@
 전체 검토와 회사 PC 오류 로그에서 찾은 오류 수정.
 
 ### 수정
+- 문서: 문자 규칙(유니코드 화살표, 긴 줄표) 정리, README 구성도(word outline/comment/revisions, ppt notes, reader clear), 결과 처리 표에 `UNVERIFIED:`, 깨진 SKILL.md 링크.
 - `excel write`: 머리글을 먼저 쓰고 수식 검사에서 실패해 머리글만 남던 문제. 모든 검사를 마친 뒤 씀. 수식이 여러 개인데 범위가 없으면
   머리글 행부터의 범위를 `[추천]` (이전 예시를 따르면 한 행씩 밀려 `#VALUE!`인데 ok).
 - `excel write`: 값이 있는 칸을 확인 없이 덮어쓰던 문제 (SKILL.md "덮어쓸 칸"과 불일치). 이제 `needs_user_decision`, 사용자가 원하면 `--overwrite`.
@@ -375,33 +376,28 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 ### 1.4.0 점검에서 남긴 것
 - R1 사후 확인: 기존 쓰기 명령(excel write/replace/style/sheet/range/chart, word write/replace/export, ppt write/replace/export, transfer, undo, outlook)이 다시 읽지 않고 `VERIFIED:`. 명령마다 다시 읽어 비교하거나 `ok_unverified`로.
 - PowerPoint 닫힌 파일의 열기 암호, DRM 인증 창이 뜨는 문서: 백그라운드에서 멈출 수 있음 (감시 시간 초과 후 정리 필요).
-- 엑셀: 열 전체 범위(`A:A`)를 사용 범위로 자르기, 조건부 강조 `포함:`의 상대참조(활성 셀 기준), 같은 이름 차트가 여러 시트에 있을 때 `[후보]`, `--map` 연쇄 치환, 보호된 시트 사전 확인, 잘못된 시트 이름 검사 전에 시트가 만들어지는 문제.
+- 엑셀: 열린 문서의 열 전체 범위(`A:A`)를 사용 범위로 자르기 (닫힌 파일·CSV는 1.4.5), 조건부 강조 `포함:`의 상대참조(활성 셀 기준), 같은 이름 차트가 여러 시트에 있을 때 `[후보]`, `--map` 연쇄 치환, 보호된 시트 사전 확인, 잘못된 시트 이름 검사 전에 시트가 만들어지는 문제.
 - 워드: 열린 문서의 자동 번호 제목(`ListFormat.ListString`)이 `outline`/`--section`에 나오지 않음(닫힌 파일과 번호 체계 다름), 목차(TOC) 안의 앵커 후보 구별, 머리글 안 글상자 치환, `replace --find`만 준 경우.
 - reader: HWP(바이너리) 개요 번호, PDF `find_tables` 성능(선이 있는 쪽만), 색인 저장 일괄화, BOM 없는 UTF-16 판별.
 - transfer relay 실패 시 넣은 빈 단락 정리.
 
 ### 확인 필요
-- Windows 실기 검증: 집 PC(Office 2007)에서 A~F, H 자동 판정 통과(1.0.1). 회사 PC(Office 16) 1차(1.2.0)는 A5 정리가 A.xlsx를 닫아 중단, D1·D4(PDF)와 G1·G2·G4는 통과. 남은 것: 1.2.1로 회사 PC 전체 재실행(`errors_*.txt`의 정리 기록에서 A5가 두 번째 Excel PID만 끝냈는지 확인), 눈 확인 항목.
+- Windows 실기 검증: 회사 PC(Office 16)에서 1.4.1 실기 러너 71/71 통과. 남은 것: 1.4.5 쓰기 변경(write 덮어쓰기 확인, transfer 글자 유지)의 실기 확인, 눈 확인 항목.
 - 실제 HWP 5.0 파일과 DRM 문서로 `reader.py` 검증. 실제 규격서(PDF/Word/HWPX)로 장절·쪽 인식 확인 (1.3.0).
 - 회사 PC에서 `office.py transfer --probe` 결과 확인. (집 PC Office 2007: export, redraw 성공 / relay는 "워드에 붙여넣기 안 됨"으로 실패)
 - 남은 Office 2007 실기 확인: `.xls/.doc/.ppt`(OOXML 아님)는 문서 식별값이 없어 같은 경로 새 파일 판별을 하지 않습니다.
 
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
 상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI-dev/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
-- [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel.py:513, word.py:445, ppt.py:623, office.py:570)
-- [x] 결과 JSON `recovered` 배열과 `note_recovered` (1.4.0): 잠금·기존 파일 새 이름 저장, 낡은 캐시 다시 읽기. 남은 것: transfer 방식 대체, 오래된 스냅샷 정리도 `recovered`로
+- [ ] `_runtime.ok()`의 `VERIFIED:` 강제 제거. 쓰기 명령은 저장 후 다시 읽어 확인(값·단락·도형 수, 출력 파일 존재·크기)한 경우만 `VERIFIED:`. "다시 읽어서 확인하지 마세요" 문구 수정 (excel write, word write, ppt write, office transfer)
+- [ ] `recovered` 나머지: transfer 방식 대체, 오래된 스냅샷 정리 (잠금·기존 파일 새 이름 저장, 낡은 캐시는 1.4.0)
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
-- [x] COM 호출 거부(0x8001010A, 0x80010001) 재시도: `_office.BusyMessageFilter` (1.4.0, 실기 확인 필요)
 - [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)에 적용. (1.4.0: undo 복원 복사는 `retry_fs`, retry_fs는 일시적 오류만 재시도 완료)
 - [ ] COM 내보내기(excel.py, word.py, ppt.py export)의 잠금 대비 `save_with_lock_fallback`. (1.4.0: 기존 출력 파일은 새 이름 저장 + `recovered` 완료)
-- [x] `--save`가 기존 파일을 덮어쓰는 문제: 기존 파일이면 새 이름 저장 + `recovered` (1.4.0). 남은 것: 덮어쓰기를 원할 때의 `--overwrite` 인자
+- [ ] `--save`로 기존 파일을 덮어쓰기를 원할 때의 `--overwrite` 인자 (기존 파일 새 이름 저장은 1.4.0)
 - [ ] `--dry-run`: excel replace/range clear·move/sheet delete/chart delete --all, word replace/write --pos replace, ppt replace/slide delete·clear. (1.4.0: 스냅샷이 없는 쓰기는 undo가 건너뛰지 않음, `undo --list`의 `undo_available: false`. 쓰기 결과에도 표시하는 것은 남음)
 - [ ] 빈 결과 `count: 0` + "찾은 항목 없음": excel read 빈 범위, word/ppt read 0단위, outlook list, office windows, info --all, chart list, undo --list
 - [ ] 잘리는 결과에 `truncated` + 전체 결과 파일 경로: excel read --search(50), excel replace cells(30), undo --list(20), outlook list/search. `body_truncated` 옆에 `truncated`
-- [ ] next_commands: excel write 자리표시 `--title 차트` 제거(excel.py:509), word.py:136·ppt.py:183 transfer 명령에 `--from-target`
-- [x] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄) (1.4.0)
+- [ ] next_commands: excel write의 차트 명령 자리표시 `--title 차트` 제거, word·ppt의 transfer 명령에 `--from-target`
 - [ ] tools/run_win_tests.py `--agent` 모드: JsonArgumentParser와 최상위 예외 처리, 로그 태그 `[준비]` `[주의]` `[확인]` -> `[INFO]` `[WARN]`
-- [ ] .md 문자 규칙: 유니코드 화살표 26개 -> `->` (SKILL.md:44, README.md:69,133-135,140, TEST_CHECKLIST.md:34, docs/history/office-cli_WORK_PLAN_1.0.md 7곳), 원문자 -> `1.` `2.` (WORK_PLAN.md:195)
-- [x] `_STOP_RETRY_ERRORS`에서 ValueError/KeyError 제외 (1.4.0)
-- [x] pyproject.toml `target-version = "py313"`: 파일 자체를 삭제해 해당 없음 (1.4.3)
-- [ ] 인자 alias 정리(추가만): `-r`/`-c`/`-n` 충돌, `--limit` 대 `--top`, `--pages` 대 `--slides`
+- [ ] 인자 이름 정리 (베타라 별칭 없이 바꿈): `-r`/`-c`/`-n` 충돌, `--limit` 대 `--top`, `--pages` 대 `--slides`

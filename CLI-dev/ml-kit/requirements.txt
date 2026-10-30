@@ -8,3 +8,4 @@ joblib>=1.3
 openpyxl>=3.1        # standard env: 3.1.5 (.xlsx input/output)
 python-docx>=1.1     # standard env: 1.2.0 (ml_report.py)
 scipy>=1.10          # standard env: 1.18.1 (ml_map.py interpolation; also a scikit-learn dependency)
+matplotlib>=3.8      # standard env: 3.11.1 (ml_report.py charts)

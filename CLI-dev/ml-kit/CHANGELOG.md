@@ -1,4 +1,4 @@
-# CHANGELOG – ml-kit
+# CHANGELOG - ml-kit
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
@@ -20,6 +20,9 @@
 - 내부 오류(ValueError, KeyError)를 입력 오류(STOP_RETRY)로 분류하던 문제: 이제 `ERROR:`와 오류 로그 traceback (R5).
 - ml_map 반대 찾기의 `truncated`는 항상 있고, 잘렸으면 `shown`도.
 - 학습 후 안내의 보고서 명령 설명이 `--title`을 말하지만 명령에는 없던 불일치 (제목은 데이터 설명에서 자동).
+
+### 문서
+- requirements.txt에 matplotlib (보고서 그림). README: 성능예측표·excluded_rows.csv 폴더 구조, 보고서 `--title`, 결과 키 `export_*`. SKILL.md 결과 처리 표에 `[후보]`.
 
 ## [2.9.5] - 2026-10-30
 
@@ -318,6 +321,13 @@ LLM이 타겟·버전을 고르기를 원하지 않습니다. 사용자와 정�
 
 ## [2.2.0] - 2026-10-27
 
+### 실기
+- Windows 실기 테스트 러너 `tools/run_win_tests.py` (M1~M14). 집 PC(Windows 11, Python 3.13.13, scikit-learn 1.9.0, Office 2007) 14개 모두 통과:
+  Excel이 만든 보고서형 xlsx(제목/단위 행, 날짜 셀, 범주, 한글+공백 경로), Excel 저장 CP949 CSV, 입력 xlsx가 Excel에 열린 상태,
+  결과 CSV를 Excel로 열 때 한글, 결과 CSV/보고서가 열려 잠긴 상태(새 이름 저장), 보고서를 Word로 열기,
+  `next_commands`를 cmd.exe/PowerShell에 그대로 실행, 단독 배포 폴더, 2만 행(학습 10.6초, 예측 3.6초),
+  동시 학습 잠금, 학습 강제 종료 뒤 복구, 오류/출력 계약.
+
 ### 기능
 - **ML 결과 보고서** (`ml_report.py` 새로 작성): 버전 폴더 하나의 **모든 타겟을 Word 문서 1개**로 만듭니다. 회귀·분류 모두 지원.
   - 구성: 표지, 목차, 요약(타겟별 판정), 데이터, 분석 방법, 타겟별 결과(모델 비교, 성능 검증, 피처 영향), 버전 이력, 운영 가이드, 부록.
@@ -432,18 +442,11 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] `ml_export.py --format html` (검토 완료, 2.9.0 실기 테스트 후 결정): 같은 최적화·격자를 브라우저 한 파일로.
   엑셀 행 한도가 없어 입력이 많을 때 격자를 더 촘촘하게(직선형 모델은 식 그대로), 슬라이더·반응 곡선·운전 구간(반대 찾기),
   CSV 일괄계산과 내려받기. 회사에서 HTML 배포·실행은 문제없음 확인 (사용자, 2026-10-30).
-- [ ] 성능예측표 엑셀의 회사 PC 실기 확인: 엑셀 재계산 VERIFIED, 문서 보안 아래 열기 (`docs/opencode/실기테스트_2026-10-30.md` 2단계 F7, 4단계 V8)
+- [ ] 성능예측표 엑셀을 문서 보안 아래에서 파이썬 없는 PC로 열기 (`docs/opencode/실기테스트_2026-10-30.md` 4단계 V8). 엑셀 재계산은 회사 PC 통과 (2.9.4)
 - [ ] 집 PC(Office 2007)에서 `tools/run_win_tests.py` M6/M7(보고서 열기·잠금)을 새 보고서로 재확인
 - [ ] `-x` 생략 시 피처 자동 선택 (ID/일련번호 배제 규칙)
 - [ ] 무거운 import 지연 로딩 (`--history` 응답 속도)
-- [x] Windows 실기 테스트 러너 `tools/run_win_tests.py` (M1~M14). 집 PC(Windows 11, Python 3.13.13, scikit-learn 1.9.0, Office 2007) 14개 모두 통과:
-  Excel이 만든 보고서형 xlsx(제목/단위 행, 날짜 셀, 범주, 한글+공백 경로), Excel 저장 CP949 CSV, 입력 xlsx가 Excel에 열린 상태,
-  결과 CSV를 Excel로 열 때 한글, 결과 CSV/보고서가 열려 잠긴 상태(새 이름 저장), 보고서를 Word로 열기,
-  `next_commands`를 cmd.exe/PowerShell에 그대로 실행, 단독 배포 폴더, 2만 행(학습 10.6초, 예측 3.6초),
-  동시 학습 잠금, 학습 강제 종료 뒤 복구, 오류/출력 계약.
-- [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
 - [ ] 260자 넘는 긴 경로
-- [ ] `--best`: 2.4.0 이전 기록은 `--dtypes`가 원장에 없어 자동 판별로 다시 학습함 (필요하면 `feature_types`로 복원)
 - [ ] `--best`: 조건이 다른 타겟들이 같은 이름의 파생변수를 다른 수식으로 만들면 `model_dataset.csv`·`correlation.csv`에는 첫 수식 값만 들어감 (모델은 타겟별로 정확)
 - [ ] 회사 PC에서 6타겟 실제 데이터로 `ml_report.py -f` 소요 시간 확인
 
@@ -458,9 +461,6 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - [ ] `--dtypes` 컬럼명을 resolve_column_names로 매칭 + `[추천]`, int 변환의 fillna(0) 제거 또는 경고(ml_train.py:237-242)
 - [ ] 예측 `--targets` 불일치(ml_predict.py:904), 보고서 버전 없음(ml_report.py:772)에 `[추천] <후보>`
 - [ ] JSON 목록 상한 + `truncated`: `--history` records, feature_types/features_used, 오류 메시지 컬럼 목록
-- [x] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄) (2.4.2)
-- [ ] requirements.txt에 matplotlib 추가, 2행 주석을 `python -m pip install ...`로
 - [ ] 로그 태그 정리: `[PROGRESS  5%] [===]` -> `[PROGRESS] 5% ...`(러너 M14 파서 확인), 이력 표 머리 `[STATUS]`, 러너 `[준비]` -> `[INFO]`
-- [ ] 인자 alias: ml_report `--targets/-y`, 저장 `--save`(`--out` 유지)
+- [ ] 인자 이름 통일: ml_report `--targets`(다른 도구와 같게), 저장 `--out` -> `--save` (베타라 별칭 없이 바꿈)
 - [ ] 테스트 보강: exit 130 롤백, 성공 경로 `VERIFIED:` 검사 확대, 빈 데이터 (덮어쓰기 차단은 2.3.0)
-- [ ] 이 섹션 위의 완료 `[x]` 항목(Windows 러너 M1~M14)을 2.2.0 항목으로 이동

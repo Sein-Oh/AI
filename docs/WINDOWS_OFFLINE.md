@@ -31,7 +31,7 @@ python -m pip install --no-index --find-links wheels -r requirements.txt
 `.joblib` 모델은 scikit-learn 버전에 민감합니다. **학습 PC와 예측 PC에 같은 wheel 묶음**을 설치하십시오.
 버전이 다르면 `ml_predict.py`가 `[WARN] scikit-learn 버전 불일치`를 출력합니다.
 설치 후 `python -m pip freeze > wheels\lock.txt`로 고정 버전을 기록해 두면 다음 반입 때 같은 버전을 받을 수 있습니다
-(`pip download -r wheels\lock.txt ...`).
+(`python -m pip download -r wheels\lock.txt ...`).
 
 ## 4. Windows 사용 시 주의
 
@@ -42,4 +42,4 @@ python -m pip install --no-index --find-links wheels -r requirements.txt
 | 경로가 240자 초과 | `[WARN]` 출력. 데이터를 `C:\work\` 같은 짧은 경로로 이동 |
 | 메모장/PowerShell로 만든 txt·json (UTF-8 BOM, UTF-16, CP949) | 자동 인식 |
 | CSV 출력 | CP949 기본 (Excel 더블클릭 시 한글 정상), 표현 불가 문자 시 utf-8-sig |
-| 에이전트가 stdout 읽기 | 항상 UTF-8 1줄 JSON (`PYTHONIOENCODING` 설정 불필요) |
+| 에이전트가 stdout 읽기 | 항상 UTF-8 1줄 JSON. PowerShell에서는 한글이 깨지지 않게 SKILL.md의 인코딩 줄(`$env:PYTHONIOENCODING='utf-8'; ...`)을 명령 앞에 붙임 |

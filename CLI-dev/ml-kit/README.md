@@ -84,6 +84,7 @@ OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이
 ├── history.jsonl              # [SSOT 스트리밍] 회차별 실험 메타데이터 누적 원장 (JSON Lines)
 ├── history.json               # [SSOT 표준배열] 가독성 및 LLM 일괄 조회를 위한 동기화 원장 (JSON Array)
 ├── ML결과보고서_<데이터>_vX.docx # [ML 결과 보고서] ml_report.py 기본 저장 위치
+├── 성능예측표_<데이터>_vX.xlsx   # [성능예측표] 회귀 보고서와 함께 생성 (ml_export.py, 2.9.2)
 ├── .train.lock                # [동시 실행 잠금] 학습 중에만 OS 잠금 (비정상 종료 시 자동 해제)
 ├── .tmp_vX/                   # [임시 트랜잭션] 원자적 스테이징 폴더 (작업 성공 시 vX로 치환, 실패 시 자동 GC)
 └── vX/                        # [버전 체크포인트 디렉토리] (v1, v2, v3, ...)
@@ -93,6 +94,8 @@ OpenCode는 `skills/<name>/SKILL.md` 를 찾으며 **폴더 이름이 스킬 이
     ├── correlation.csv        # 전체 상관행렬 (원장에는 피처 30개 이하로 축약 저장)
     ├── oof_<타겟>.csv          # 챔피언의 교차검증 예측값 (실측·예측·잔차 또는 클래스별 확률, 보고서 그림 원본, 2.2.0)
     ├── next_features_*.txt    # next_commands용 피처 목록 (피처 15개 초과 시)
+    ├── excluded_rows.csv      # 학습에서 뺀 행 (원본 행, 구분, 이유, 실제값, 예측값, 2.5.0 / CSV는 2.9.5)
+    ├── export/                # 성능예측표용으로 다시 학습한 모델과 후보 표 (2.9.0)
     └── model_dataset.csv      # 학습 당시 헤더 정제, 결측치 대치, 파생변수가 완료된 스냅샷 (CP949/UTF-8 호환)
 ```
 
@@ -438,6 +441,7 @@ python ml_predict.py \
 | `--data-dir`, `-d` (`--history`, `-H`) | 데이터 폴더. `-v`가 없으면 가장 최근 학습과 같은 task·타겟 조합 중 최고 점수 버전 |
 | `--version`, `-v` | `-d`와 함께 쓸 버전 (`v2` 또는 `2`) |
 | `--target`, `-t` | 문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 `all` = 전체) |
+| `--title` | 성능예측표 계산기 맨 위 제목 (30자 안팎, 생략 시 학습 때 데이터 설명에서, 2.9.2) |
 | `--slots` | 소견 덮어쓰기 JSON (파일 또는 문자열) |
 | `--out`, `-o` | 저장 경로 (생략 시 데이터 폴더의 `ML결과보고서_<데이터>_<버전>.docx`). 이미 있으면 `<이름>_<시각>.docx`로 저장하고 `recovered`에 기록 |
 | `--overwrite` | 같은 이름의 보고서가 있으면 덮어쓰기 (사용자 확인 후에만) |
@@ -775,6 +779,8 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
 `-f`(2.4.0)로 만들면 위 키는 첫 번째 보고서(회귀가 있으면 회귀) 기준이고, 다음 키가 추가됩니다:
 `made_best`, `best_version_dir`(예측에 쓸 폴더), `best_versions`, `best_targets`(`--best`와 같은 형식), `report_count`,
 `best_reports`(`[{report_file, version, task, targets, overall_verdict, verdicts}]`, 회귀와 분류가 섞이면 2개), `next_commands`(최고 버전 예측 명령).
+회귀 보고서면 성능예측표 키도 추가됩니다 (2.9.2): `export_file`(성능예측표 경로), `export`(타겟별 `inputs`, `dropped`, `val_r2`, `table_rows`, `agreement`),
+`export_verified`(엑셀로 재계산 확인), `export_unverified`(확인하지 못한 것), 실패하면 `export_note`(보고서는 정상).
 `agent_directive`에 `ml_predict.py -m <best_version_dir>`이 들어갑니다. 2.1 이전의 타겟별 키(`target`, `metrics`, `slots_filled`, `reports`, `target_count`)는 문서가 하나로 합쳐지면서 2.2.0에서 없어졌습니다.
 
 보고서 서식 템플릿 (2.3.1): python-docx의 `templates/default-docx-template` 폴더(XML 파일)를 먼저 쓰고, 없으면 `default.docx`를 씁니다.
@@ -828,7 +834,7 @@ flowchart TD
 - `ml_predict.py --input "..."`를 호출하여 예측값을 도출하고, `drift_warning` 발생 여부를 통해 도메인 적합성을 스스로 검증(Self-Correction)합니다.
 
 ### 5) 5턴: ML 결과 보고서 발간
-- 모든 타겟이 목표 성능(0.90)에 도달하면 `next_commands[0]`에 보고서 명령(`ml_report.py -m <version_dir>`)이 들어갑니다. 실행하면 그 버전의 Word 보고서가 만들어집니다.
+- 모든 타겟이 목표 성능(0.90)에 도달하면 `next_commands[0]`에 보고서 명령(`ml_report.py -f <데이터파일>`)이 들어갑니다. 실행하면 Word 보고서와 (회귀면) 성능예측표가 만들어집니다.
 
 ---
 
