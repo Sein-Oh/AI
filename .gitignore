@@ -30,3 +30,9 @@ CLI/office-cli/config.json
 
 # Windows 통합 테스트 결과 (CLI-dev/run_all_tests.py)
 CLI-dev/test_result_*.txt
+
+# 베타 도구 점검 결과 (CLI-dev/run_beta_check.py, grade_opencode.py)
+CLI-dev/beta_check_*.md
+CLI-dev/beta_check_*.xlsx
+CLI-dev/grade_*.md
+CLI-dev/grade_*.xlsx
