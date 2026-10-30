@@ -41,8 +41,16 @@ def test_report_makes_calculator_in_the_same_folder(tmp_path, with_export):
     assert rep["export_file"] == os.path.join(root, "성능예측표_p_v1.xlsx") and os.path.isfile(rep["export_file"])
     assert rep["export"]["효율"]["inputs"] == ["온도", "압력"] and "성능예측표" in rep["preview"]
     assert "export_file" in rep["agent_directive"]
+    a = rep["export"]["효율"]["agreement"]                                       # 2.9.4: agreement with the model
+    assert 95 < a["agreement_pct"] <= 100 and a["p95_diff_pct"] >= 0
     import openpyxl
-    assert openpyxl.load_workbook(rep["export_file"])["계산기"]["B2"].value == "시험 효율 예측"
+    wb = openpyxl.load_workbook(rep["export_file"])
+    assert wb["계산기"]["B2"].value == "시험 효율 예측"
+    notes = " ".join(str(c.value) for row in wb["계산기"].iter_rows() for c in row if isinstance(c.value, str))
+    assert f"평균 {a['agreement_pct']:.1f}% 일치" in notes
+    from docx import Document
+    text = "\n".join(p.text for p in Document(rep["report_file"]).paragraphs)
+    assert "성능예측표 (엑셀 계산기): 성능예측표_p_v1.xlsx" in text and f"평균 {a['agreement_pct']:.1f}% 일치" in text
 
 
 def test_classification_report_has_no_calculator(tmp_path, with_export):

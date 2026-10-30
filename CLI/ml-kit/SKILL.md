@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.9.3"
+  version: "2.9.4"
   platform: windows
 ---
 
@@ -123,7 +123,7 @@ python "C:\CLI\ml-kit\ml_report.py" -f "<데이터파일>" --title "<제목>"
   입력을 줄이며 다시 학습하므로 몇 분 걸린다 (시간 제한 600000).
 - 도구가 이력에서 타겟마다 가장 좋았던 학습 조건으로 모든 타겟을 묶은 최고 모델을 자동으로 만들고(필요할 때만 다시 학습, 몇 분 걸릴 수 있으니 시간 제한 600000) 보고서 1개를 만든다. 타겟이나 버전을 고르지 않는다.
 - 회귀와 분류 타겟이 섞여 있으면 보고서가 2개(`best_reports`)다.
-- 알릴 것: `report_file`, `export_file`(성능예측표)과 `export`의 타겟별 `inputs`(남긴 입력), `overall_verdict`(적합/조건부/부적합), `made_best`(true면 이번에 다시 학습함),
+- 알릴 것: `report_file`, `export_file`(성능예측표)과 `export`의 타겟별 `inputs`(남긴 입력)·`agreement.agreement_pct`(모델 대비 일치도 %), `overall_verdict`(적합/조건부/부적합), `made_best`(true면 이번에 다시 학습함),
   `best_targets`의 타겟별 `source_version`(학습 조건 출처), `source_score`(그때 점수), `new_score`(이번 점수)를 짧게.
 - `export_note`나 `export_unverified`가 있으면 그대로 알린다 (보고서는 정상).
 - 이후 예측(4단계)에는 결과의 `best_version_dir`을 쓴다.

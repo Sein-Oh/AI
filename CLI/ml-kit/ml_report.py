@@ -1052,7 +1052,7 @@ def derived_feature_rows(targets: List[Dict[str, Any]]) -> Tuple[List[Tuple[str,
 # ==============================================================================
 
 def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[str],
-                 overwrite: bool = False) -> Dict[str, Any]:
+                 overwrite: bool = False, export: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     _setup_matplotlib()
     rec, targets, version = ctx["record"], ctx["targets"], ctx["version"]
     task = rec["task"]
@@ -1149,6 +1149,14 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         criteria += [f"- 검증 {metric_label} (제외 행 미포함): 학습 제외 행 없이 계산 (판정 기준)",
                      f"- 검증 {metric_label} (제외 행 포함): 학습 제외 행까지 최종 모델로 예측해 함께 계산 (이상치가 섞인 실제 데이터 기준)"]
     R.para("\n".join(criteria), size=8, color=C_MUTED, space_after=2)
+    if export and export.get("result"):
+        ex = export["result"]
+        lines = [f"성능예측표 (엑셀 계산기): {os.path.basename(ex['output_file'])}"]
+        for t, v in ex["targets"].items():
+            a = v["agreement"]
+            lines.append(f"- {t}: 입력 {len(v['inputs'])}개 ({', '.join(strip_unit(i) for i in v['inputs'])}), "
+                         f"모델 예측과 평균 {a['agreement_pct']:.1f}% 일치, 95% 조건에서 차이 {a['p95_diff_pct']:.1f}% 이내")
+        R.para("\n".join(lines), size=8.5, color=C_INK, space_after=4)
 
     # -- 2. 데이터와 피처 -----------------------------------------------------------------
     R.h1("2. 데이터와 피처")
@@ -1357,27 +1365,40 @@ def resolve_version_dir(args: argparse.Namespace) -> str:
     return os.path.join(root, best["version"])
 
 
-def attach_export(result: Dict[str, Any], version_dir: str, task: str, title: Optional[str]) -> None:
+def make_export(version_dir: str, task: str, title: Optional[str]) -> Optional[Dict[str, Any]]:
     """2.9.2: the report and the performance calculator (ml_export.py) are made as a set (regression versions only).
-    A failure of the calculator never fails the report: it becomes export_note."""
+    Made BEFORE the Word report so the report can state the calculator's agreement with the model (2.9.4).
+    A failure never fails the report: {"note": ...}."""
     if task != "regression" or os.environ.get("ML_KIT_SKIP_EXPORT") == "1":
-        return
+        return None
     try:
         import ml_export  # heavy (retraining); only when a report is made
-        res = ml_export.execute_export(argparse.Namespace(model=version_dir, targets=None, keep=None, inputs=None,
-                                                          title=title, save=None))
-        result["export_file"] = res["output_file"]
-        result["export"] = {t: {k: v[k] for k in ("inputs", "dropped", "val_r2", "table_rows")} for t, v in res["targets"].items()}
-        result["export_verified"] = res["verified"]
-        if res.get("unverified"):
-            result["export_unverified"] = res["unverified"]
-        result["preview"] += f" | 성능예측표: {os.path.basename(res['output_file'])}"
-        result["agent_directive"] += (" 성능예측표(엑셀 계산기) export_file도 함께 만들었습니다: 경로와 타겟별 남긴 입력(export.<타겟>.inputs)을 알리세요."
-                                      + (" export_unverified 내용도 그대로 알리세요." if res.get("unverified") else ""))
+        return {"result": ml_export.execute_export(argparse.Namespace(model=version_dir, targets=None, keep=None,
+                                                                      inputs=None, title=title, save=None))}
     except Exception as e:
-        result["export_note"] = f"성능예측표를 만들지 못했습니다 (보고서는 정상): {type(e).__name__}: {str(e)[:200]}"
+        note = f"성능예측표를 만들지 못했습니다 (보고서는 정상): {type(e).__name__}: {str(e)[:200]}"
+        sys.stderr.write(f"[WARN] {note}\n")
+        return {"note": note}
+
+
+def attach_export(result: Dict[str, Any], export: Optional[Dict[str, Any]]) -> None:
+    if not export:
+        return
+    if export.get("note"):
+        result["export_note"] = export["note"]
         result["agent_directive"] += " export_note를 그대로 알리세요."
-        sys.stderr.write(f"[WARN] {result['export_note']}\n")
+        return
+    res = export["result"]
+    result["export_file"] = res["output_file"]
+    result["export"] = {t: {k: v[k] for k in ("inputs", "dropped", "val_r2", "table_rows", "agreement")}
+                        for t, v in res["targets"].items()}
+    result["export_verified"] = res["verified"]
+    if res.get("unverified"):
+        result["export_unverified"] = res["unverified"]
+    result["preview"] += f" | 성능예측표: {os.path.basename(res['output_file'])}"
+    result["agent_directive"] += (" 성능예측표(엑셀 계산기) export_file도 함께 만들었습니다: 경로, 타겟별 남긴 입력(export.<타겟>.inputs), "
+                                  "모델 대비 일치도(export.<타겟>.agreement.agreement_pct)를 알리세요."
+                                  + (" export_unverified 내용도 그대로 알리세요." if res.get("unverified") else ""))
 
 
 def execute_report(args: argparse.Namespace) -> Dict[str, Any]:
@@ -1391,8 +1412,9 @@ def execute_report(args: argparse.Namespace) -> Dict[str, Any]:
         return execute_best_report(args, target_filter)
     vdir = resolve_version_dir(args)
     ctx = load_version(vdir, target_filter)
-    result = build_report(ctx, parse_slots(args.slots), args.out, overwrite=args.overwrite)
-    attach_export(result, vdir, result["task"], getattr(args, "title", None))
+    export = make_export(vdir, ctx["record"]["task"], getattr(args, "title", None))
+    result = build_report(ctx, parse_slots(args.slots), args.out, overwrite=args.overwrite, export=export)
+    attach_export(result, export)
     return result
 
 
@@ -1414,6 +1436,7 @@ def execute_best_report(args: argparse.Namespace, target_filter: Optional[List[s
     here = os.path.dirname(os.path.abspath(__file__))
     versions = info["best_versions"]
     reports: List[Dict[str, Any]] = []
+    export = None
     for bv in versions:
         flt = None
         if target_filter:
@@ -1421,8 +1444,10 @@ def execute_best_report(args: argparse.Namespace, target_filter: Optional[List[s
             if not flt:
                 continue
         ctx = load_version(bv["version_dir"], flt)
+        ex = make_export(bv["version_dir"], bv["task"], getattr(args, "title", None)) if export is None else None
+        export = export or ex
         reports.append(build_report(ctx, slots, _numbered_out(args.out, bv["version"], len(versions) > 1),
-                                    overwrite=args.overwrite))
+                                    overwrite=args.overwrite, export=ex))
     if not reports:
         all_targets = [t for bv in versions for t in bv["targets"]]
         raise InputError(f"지정한 타겟 {target_filter}이(가) 최고 버전에 없습니다. [후보] {', '.join(all_targets[:10])}")
@@ -1455,10 +1480,7 @@ def execute_best_report(args: argparse.Namespace, target_filter: Optional[List[s
         f"report_file 링크, overall_verdict, best_targets의 타겟별 출처 버전과 점수를 사용자에게 알리세요. "
         f"이후 예측에는 best_version_dir을 쓰세요 ({predict})."
     )
-    reg = next((r for r in reports if r["task"] == "regression"), None)
-    if reg is not None:
-        attach_export(result, next(bv["version_dir"] for bv in versions if bv["version"] == reg["version"]), "regression",
-                      getattr(args, "title", None))
+    attach_export(result, export)
     return result
 
 

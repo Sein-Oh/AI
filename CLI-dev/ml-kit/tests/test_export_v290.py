@@ -74,6 +74,10 @@ def test_search_keeps_interacting_input_and_builds_locked_workbook(version, tmp_
     batch = wb["일괄계산"]
     assert not batch["A3"].protection.locked and batch["E3"].protection.locked
     assert wb["표_효율"].max_row - 1 == t["table_rows"]
+    a = t["agreement"]
+    assert a["points"] == 2000 and a["agreement_pct"] > 90 and a["max_diff_pct"] >= a["p95_diff_pct"]
+    assert any("일치도" in str(c.value) for row in wb["정확도"].iter_rows() for c in row)
+    assert any(str(c.value).startswith("모델 예측과 평균") for row in wb["정보"].iter_rows() for c in row if c.value)
     assert any("엑셀" in u for u in r.get("unverified", [])) or r["verified"]          # Excel check only on Windows
 
 
@@ -169,3 +173,14 @@ def test_workbook_has_no_full_paths(version):
     texts = [str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
     assert not any(parent in t for t in texts)
     assert any(t == os.path.join("s_ml_data", "v1") for t in texts)
+
+
+def test_agreement_basis_near_zero():
+    """An output passing near zero is compared relative to its range (a % of a tiny value means nothing)."""
+    import ml_export as ex
+    model = np.linspace(-1, 1, 101)
+    a = ex.agreement(model + 0.02, model, {"residual_lower": -0.1, "residual_upper": 0.1})
+    assert a["basis"] == "출력 범위 대비" and a["agreement_pct"] == pytest.approx(99.0)
+    assert a["within_interval_pct"] == 100.0
+    b = ex.agreement(np.full(10, 101.0), np.full(10, 100.0) + np.arange(10) * 0.0, None)
+    assert b["basis"] == "예측값 대비" and b["agreement_pct"] == pytest.approx(99.0) and b["within_interval_pct"] is None
