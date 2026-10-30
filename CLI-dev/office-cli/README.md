@@ -107,7 +107,7 @@ python -m pip install -r CLI-dev/office-cli/requirements.txt
 |---|---|
 | `read` | `--range`, `--sheet`, `--search 글자`(셀 주소 반환), `--max-rows`, `--save [경로.csv]`. `--target`이 CSV/TSV 파일이면 Excel 없이 읽음(인코딩 자동 판별, 숫자 변환, `source: file(csv)`) |
 | `info` | 시트별 사용 범위와 차트. `--all`: 열린 통합문서 전체. `--detail`: 차트 종류·계열 수·위치와 데이터를 가리는 차트 경고 |
-| `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(쓸 열 전체에서 가장 아래 행 다음에, 시작 행의 머리글과 같으면 생략), `--sheet`, `--new-sheet`(없는 시트를 새로 만들 때만). 쓸 칸에 값이 있으면 아무것도 쓰지 않고 `needs_user_decision`(사용자가 원하면 `--overwrite`, `--append`는 확인 없음). 모든 검사를 마친 뒤에 씁니다(실패하면 시트는 그대로). 숫자만 `--formula`로 주면 `--values`를 `[추천]`. Excel이 다른 값으로 바꿔 버릴 글자(앞자리 0 코드 `01234`, 15자리 초과 숫자, `1-2`·`3/4`, `(100)`, `1E5`)는 글자 그대로 씁니다 |
+| `write` | `--range` 시작 셀 또는 범위. 입력은 `--value`, `--values JSON`, `--file (.csv/.md 표/.txt)`, `--formula F1 [F2 ...]` 중 하나. `--header "a,b"`, `--append`(쓸 열 전체에서 가장 아래 행 다음에, 시작 행의 머리글과 같으면 생략), `--sheet`, `--new-sheet`(없는 시트를 새로 만들 때만). 쓸 칸에 값이 있으면 아무것도 쓰지 않고 `needs_user_decision`(사용자가 원하면 `--overwrite`, `--append`는 확인 없음). 모든 검사를 마친 뒤에 씁니다(실패하면 시트는 그대로). 쓴 뒤 칸을 다시 읽어 비교합니다(같으면 `VERIFIED:`, 다르면 `UNVERIFIED:` + 다른 칸, 1.4.6). 숫자만 `--formula`로 주면 `--values`를 `[추천]`. Excel이 다른 값으로 바꿔 버릴 글자(앞자리 0 코드 `01234`, 15자리 초과 숫자, `1-2`·`3/4`, `(100)`, `1E5`)는 글자 그대로 씁니다 |
 | `replace` | `--find/--replace` 또는 `--map JSON`, `--whole`, `--all-sheets`, 서식 옵션. 수식 셀은 내용 보존 |
 | `style` | `--theme navy\|slate\|teal\|emerald`, `--bg`, `--color`, `--bold`, `--align`, `--number-format`, `--border`, `--highlight ">=100:pink"`(조건부 서식), `--clear` |
 | `export` | `--save 경로.csv\|.xlsx\|.pdf`, `--columns A,C,E` |

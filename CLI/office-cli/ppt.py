@@ -642,10 +642,29 @@ def cmd_write(args) -> Dict[str, Any]:
                     w = SlideWriter(prs, s, theme)
                 w.image(image, args.width)
             created.append(f"슬라이드 {no}: " + ", ".join(w.created))
+        expect = [args.title or ""] + [sec["title"] or "" for sec in md_sections] \
+            + [sec["lines"][0][0] for sec in md_sections if sec["lines"]] \
+            + ([_text_lines(args.text)[0][0]] if args.text and _text_lines(args.text) else []) \
+            + ([str(table_rows[0][0])] if table_rows else []) + ([cards[0][0]] if cards else [])
+        problems = _verify_slides(prs, sorted(set(touched)), expect)
         t.set_focus(slide=touched[-1])
         resolved = t.resolved()
-    return rt.ok(TOOL, "write", "; ".join(created), "VERIFIED: 쓰기 완료. 다시 읽어서 확인하지 마세요.",
-                 target_resolved=resolved, slides_written=sorted(set(touched)))
+    if problems:
+        return rt.ok_unverified(TOOL, "write", "; ".join(created), problems,
+                                target_resolved=resolved, slides_written=sorted(set(touched)))
+    return rt.ok(TOOL, "write", "; ".join(created), "VERIFIED: 쓴 슬라이드를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요.",
+                 verified=True, target_resolved=resolved, slides_written=sorted(set(touched)))
+
+
+def _verify_slides(prs: Any, slides: List[int], expect: List[str]) -> List[str]:
+    """R1: 쓴 슬라이드를 다시 읽어 제목·첫 줄·표 머리글·카드 제목이 들어 있는지 확인합니다 (공백 무시)."""
+    try:
+        got = "".join(re.sub(r"\s+", "", slide_units(prs.Slides(n), n)["title"] + slide_units(prs.Slides(n), n)["text"])
+                      for n in slides)
+    except Exception as e:
+        return [f"쓴 슬라이드를 다시 읽지 못함: {type(e).__name__}"]
+    missing = [x for x in expect if x and re.sub(r"\s+|\*\*|__", "", x)[:20] not in got]
+    return [f"다시 읽은 슬라이드에서 '{x[:20]}'을(를) 찾지 못함" for x in missing]
 
 
 # ==============================================================================

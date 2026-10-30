@@ -67,6 +67,15 @@ def test_write_plain_text_at_end(wd, capsys):
     code, out = run(capsys, "write", "--text", "새 문단입니다")
     assert code == 0, out
     assert paras(wd["doc"])[:4] == ["추진 배경", "2026년 계획입니다.", "일정", "새 문단입니다"]
+    assert out["agent_directive"].startswith("VERIFIED:") and out["verified"] is True        # 넣은 범위를 다시 읽음 (R1)
+
+
+def test_write_table_first_markdown_is_verified_and_missing_text_is_not(wd, capsys, monkeypatch):
+    code, out = run(capsys, "write", "--text", "| 공정 | 수율 |\n|---|---|\n| 가열 | 98 |")
+    assert code == 0 and out["agent_directive"].startswith("VERIFIED:")
+    monkeypatch.setattr(word, "_verify_inserted", lambda *a: ["넣은 범위에서 'x'을(를) 찾지 못함"])
+    code, out = run(capsys, "write", "--text", "새 문단")
+    assert code == 0 and out["agent_directive"].startswith("UNVERIFIED:") and out["unverified"]
 
 
 def test_write_after_anchor_goes_after_whole_paragraph(wd, capsys):

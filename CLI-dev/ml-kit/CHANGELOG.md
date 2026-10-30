@@ -2,6 +2,12 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.9.8] - 2026-10-30
+
+### 변경 (R1 사후 확인)
+- 예측: 결과 파일(CSV/xlsx)을 저장한 뒤 다시 읽어 행·열 수와 열 이름을 비교. 같으면 `VERIFIED:` + `verified: true`, 다르거나 못 읽으면 `UNVERIFIED:` + `unverified`.
+- 보고서: 저장한 Word 파일을 다시 열어 버전 표기와 표 수(타겟 수 이상)를 확인. `verified`/`unverified`, `-f`는 보고서 전체 기준.
+
 ## [2.9.7] - 2026-10-30
 
 베타 정책(AGENTS.md: 이전 버전 호환 불필요)에 따라 예전 버전 호환 코드를 지웠습니다. 이전 버전 폴더는 같은 데이터로 다시 학습해서 씁니다.
@@ -464,7 +470,6 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 ### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
 상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI-dev/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
 - [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)
-- [ ] 예측 결과와 보고서 저장 후 다시 읽어 확인(행 수, docx 열기), 실패하면 `VERIFIED:` 대신 사유
 - [ ] `recovered` 나머지: cp949 -> utf-8-sig 폴백, .xls -> .xlsx 저장 (잠금 새 이름 저장과 덮어쓰기 회피는 2.3.0), 폴백에도 `[WARN]`
 - [ ] `--history` 원장 0건을 `status: ok` + `record_count: 0`으로 (ml_train.py:1582, `no_history`는 별도 키로 유지), 빈 행만 있는 입력의 0행 명시 오류(ml_predict.py:444)
 - [ ] 파괴적 작업 미리보기 `--dry-run` (R8): 학습 `--overwrite`, 예측·보고서 `--overwrite` 대상

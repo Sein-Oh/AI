@@ -586,6 +586,7 @@ def cmd_write(args) -> Dict[str, Any]:
                     cells_rng.Value = payload
                 written.append(addr(a, b, c, d))
 
+        problems = _verify_written(ws, ops)
         first = parse_cell(written[0].split(":")[0])
         last_ref = written[-1].split(":")[-1]
         last = parse_cell(last_ref)
@@ -610,8 +611,10 @@ def cmd_write(args) -> Dict[str, Any]:
         result["next_commands"] = [rt.next_command("excel.py", ["chart", "--target", tgt, "--range", f"{sheet_ref}!{full}",
                                                                 "--type", "line", "--title", "차트"],
                                                    "방금 쓴 범위로 차트 만들기 (--type, --title은 원하는 값으로)")]
-    return rt.ok(TOOL, "write", f"{sheet_name}!{full}에 썼습니다 ({result['rows']}행 x {result['cols']}열)",
-                 "VERIFIED: 쓰기 완료. 다시 읽어서 확인하지 마세요.", **result)
+    preview = f"{sheet_name}!{full}에 썼습니다 ({result['rows']}행 x {result['cols']}열)"
+    if problems:
+        return rt.ok_unverified(TOOL, "write", preview, problems, **result)
+    return rt.ok(TOOL, "write", preview, "VERIFIED: 쓴 칸을 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요.", verified=True, **result)
 
 
 # ==============================================================================
@@ -978,6 +981,44 @@ def cmd_sheet(args) -> Dict[str, Any]:
         names = [str(sheets(i).Name) for i in range(1, sheets.Count + 1)]
         resolved = t.resolved()
     return rt.ok(TOOL, "sheet", msg, target_resolved=resolved, sheets=names)
+
+
+def _same_cell(want: Any, got: Any) -> bool:
+    """쓴 값과 다시 읽은 값이 같은지. 앞의 '(글자로 두기)는 값에 남지 않고, Excel이 날짜 등으로 바꾼 글자는 비어 있지만 않으면 인정."""
+    if isinstance(want, str) and want.startswith("'"):
+        want = want[1:]
+    if want is None or want == "":
+        return got is None or got == ""
+    if isinstance(want, (int, float)) and not isinstance(want, bool):
+        try:
+            return abs(float(got) - float(want)) <= 1e-9 * max(1.0, abs(float(want)))
+        except (TypeError, ValueError):
+            return False
+    if isinstance(got, str):
+        return got == str(want)
+    return got is not None and got != ""
+
+
+def _verify_written(ws: Any, ops: List[Tuple[int, int, int, int, str, Any]]) -> List[str]:
+    """R1: 쓴 칸을 다시 읽어 비교합니다. 수식은 첫 칸의 수식(대소문자·공백 무시), 값은 칸마다."""
+    problems: List[str] = []
+    norm = lambda f: re.sub(r"\s+", "", str(f)).upper()  # noqa: E731
+    for a, b, c, d, kind, payload in ops:
+        try:
+            if kind == "formula":
+                got = ws.Cells(a, b).Formula
+                if norm(got) != norm(payload):
+                    problems.append(f"{addr(a, b)} 수식이 {got!r} (쓴 수식 {payload!r})")
+                continue
+            got_rows = off.range_to_matrix(ws.Range(ws.Cells(a, b), ws.Cells(c, d)).Value)
+            want_rows = payload if kind == "values" else [[payload] * (d - b + 1) for _ in range(c - a + 1)]
+            bad = [addr(a + i, b + j) for i, row in enumerate(want_rows) for j, w in enumerate(row)
+                   if not _same_cell(w, got_rows[i][j] if i < len(got_rows) and j < len(got_rows[i]) else None)]
+            if bad:
+                problems.append(f"다시 읽은 값이 다른 칸 {len(bad)}개: {', '.join(bad[:5])}")
+        except Exception as e:
+            problems.append(f"{addr(a, b, c, d)}를 다시 읽지 못함: {type(e).__name__}")
+    return problems
 
 
 def _is_number(text: str) -> bool:

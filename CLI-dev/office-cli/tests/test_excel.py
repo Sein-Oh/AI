@@ -102,6 +102,18 @@ def test_write_over_existing_values_needs_overwrite(xl, capsys):
     assert code == 0 and ws.values[(2, 2)] == "new"
 
 
+def test_write_reads_back_and_reports_mismatch(xl, capsys, monkeypatch):
+    # R1: VERIFIED는 쓴 칸을 다시 읽어 같을 때만. Excel이 값을 바꿨으면 UNVERIFIED와 그 칸
+    app, wb = xl
+    code, out = run(capsys, "write", "--range", "A1", "--values", '[["코드","값"],["001",7]]')
+    assert code == 0 and out["agent_directive"].startswith("VERIFIED:") and out["verified"] is True
+    ws = ws_of(wb)
+    real_set = ws.set
+    monkeypatch.setattr(ws, "set", lambda r, c, v: real_set(r, c, 999 if (r, c) == (2, 5) else v))
+    code, out = run(capsys, "write", "--range", "D1", "--values", '[["x","y"],[1,2]]')
+    assert code == 0 and out["agent_directive"].startswith("UNVERIFIED:") and "E2" in out["unverified"][0]
+
+
 def test_write_csv_new_sheet_and_append_skips_header(xl, capsys, tmp_path):
     app, wb = xl
     f = tmp_path / "d.csv"
