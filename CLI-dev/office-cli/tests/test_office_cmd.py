@@ -199,7 +199,7 @@ def test_undo_closed_file_restores_backs_up_and_consumes(tmp_path, monkeypatch, 
     code, out = run(capsys, "undo", "--list", "--app", "excel")
     assert out["snapshots"][0]["command"].endswith("undo --pick 1 --app excel")     # 같은 필터로 고르기
     code, out = run(capsys, "undo")
-    assert code == 0 and out["restored_as"] == "file_replaced"
+    assert code == 0 and out["restored_as"] == "file_replaced" and out["agent_directive"].startswith("VERIFIED:")   # 스냅샷과 비교 (R1)
     assert orig.read_bytes() == b"snapshot-of-a.xlsx"
     assert open(out["pre_undo_backup"], "rb").read() == b"current"
     code, out = run(capsys, "undo")

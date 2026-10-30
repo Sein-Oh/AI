@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.4.7"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.4.8"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -194,10 +194,12 @@ def ok(tool: str, command: str, preview: str, directive: str = "", **fields: Any
     """성공 응답. directive를 생략하면 'VERIFIED: 완료' 문구를 씁니다."""
     payload: Dict[str, Any] = {"status": "ok", "tool": tool, "command": command, "preview": preview}
     payload.update(fields)
-    if not directive:
+    if not directive:     # 읽기·조회 명령: 읽은 결과 자체가 확인
         directive = "VERIFIED: 작업이 완료되었습니다. 같은 명령을 다시 실행하거나 결과를 다시 조회하지 마세요."
     elif not directive.startswith("VERIFIED:"):
-        directive = "VERIFIED: " + directive
+        # R1: VERIFIED:를 대신 붙이지 않음. 확인하지 못한 결과는 ok_unverified를 써야 함 (개발 중 실수를 잡는 내부 오류)
+        raise ValueError(f"ok()의 directive는 'VERIFIED:'로 시작해야 합니다 (확인하지 못했으면 ok_unverified): {directive[:40]}")
+    payload.setdefault("verified", True)
     payload["agent_directive"] = directive
     _attach_recovered(payload)
     return payload

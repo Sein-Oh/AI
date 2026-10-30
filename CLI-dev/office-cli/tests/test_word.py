@@ -165,6 +165,7 @@ def test_replace_no_infinite_loop_and_counts(wd, capsys):
     wd["doc"] = FakeWordDocument("가 가 가")
     code, out = run(capsys, "replace", "--find", "가", "--replace", "가가")
     assert code == 0 and out["replaced"] == 3 and wd["doc"].text.startswith("가가 가가 가가")
+    assert out["agent_directive"].startswith("VERIFIED:")              # 바꾼 글이 찾는 글을 품어도 확인 (R1)
 
 
 def test_replace_empty_deletes_and_formatting(wd, capsys):
@@ -172,14 +173,14 @@ def test_replace_empty_deletes_and_formatting(wd, capsys):
     code, out = run(capsys, "replace", "--find", "초안 ", "--replace", "")
     assert out["replaced"] == 1 and wd["doc"].text.startswith("보고서 초안")
     code, out = run(capsys, "replace", "--find", "보고서", "--bold", "--color", "blue")
-    assert out["replaced"] == 1
+    assert out["replaced"] == 1 and out["agent_directive"].startswith("VERIFIED:")
     assert any(len(e) == 3 and e[1] == "Bold" and e[2] is True for e in wd["doc"].log)
 
 
 def test_replace_map_and_limits(wd, capsys):
     wd["doc"] = FakeWordDocument("Draft 진행중")
     code, out = run(capsys, "replace", "--map", '{"Draft": "Final", "진행중": "완료"}')
-    assert out["replaced"] == 2 and wd["doc"].text.startswith("Final 완료")
+    assert out["replaced"] == 2 and wd["doc"].text.startswith("Final 완료") and out["agent_directive"].startswith("VERIFIED:")
     code, out = run(capsys, "replace", "--find", "x" * 300, "--replace", "y")
     assert code == 1 and "255" in out["message"]
     code, out = run(capsys, "replace", "--find", "없음", "--replace", "y")
@@ -246,3 +247,10 @@ def test_anchor_on_last_paragraph_makes_new_paragraph(wd, capsys):
     assert code == 0, out
     p = paras(wd["doc"])
     assert "일정" in p and "끝에 붙일 문단" in p and p.index("끝에 붙일 문단") == p.index("일정") + 1
+
+
+def test_replace_unverified_when_text_remains(wd, capsys, monkeypatch):
+    wd["doc"] = FakeWordDocument("초안 보고서")
+    monkeypatch.setattr(word, "_count_text", lambda *a, **k: 1)
+    code, out = run(capsys, "replace", "--find", "초안", "--replace", "최종")
+    assert code == 0 and out["agent_directive"].startswith("UNVERIFIED:") and "남아" in out["unverified"][0]

@@ -1093,6 +1093,17 @@ def cmd_replace(args) -> Dict[str, Any]:
                     rng.Collapse(0)            # wdCollapseEnd: 바꾼 글 뒤부터 이어서 찾기 (바꾼 글을 다시 찾지 않음)
                 if n:
                     counts[find] = counts.get(find, 0) + n
+        # R1: 다시 찾아 확인. 바꾼 글이 찾는 글을 품지 않으면 찾는 글이 남지 않아야 하고, 아니면 바꾼 글이 그만큼 있어야 함
+        problems = []
+        if counts and not limit_hit:
+            for find, n in counts.items():
+                rep = mapping[find]
+                if find not in rep:
+                    left = _count_text(t.doc, find, args.match_case, args.whole_word)
+                    if left:
+                        problems.append(f"'{find}'이(가) {left}곳 남아 있음")
+                elif _count_text(t.doc, rep, args.match_case, args.whole_word) < n:
+                    problems.append(f"'{rep}'이(가) 바꾼 수({n})보다 적음")
         if counts:
             t.set_focus()
         resolved = t.resolved()
@@ -1105,7 +1116,21 @@ def cmd_replace(args) -> Dict[str, Any]:
         result["limit_reached"] = True
         return rt.ok(TOOL, "replace", f"{total}곳 처리 (문구당 5000곳 상한 도달, 일부 남았을 수 있음)",
                      "VERIFIED: 상한까지 처리했습니다. 남은 곳이 있을 수 있으니 사용자에게 알리세요.", **result)
-    return rt.ok(TOOL, "replace", f"{total}곳 처리: " + ", ".join(f"'{k}' {v}곳" for k, v in counts.items()), **result)
+    preview = f"{total}곳 처리: " + ", ".join(f"'{k}' {v}곳" for k, v in counts.items())
+    if problems:
+        return rt.ok_unverified(TOOL, "replace", preview, problems, **result)
+    return rt.ok(TOOL, "replace", preview, "VERIFIED: 문서를 다시 찾아 확인했습니다.", verified=True, **result)
+
+
+def _count_text(doc: Any, text: str, match_case: bool, whole_word: bool, limit: int = 5000) -> int:
+    """문서 전체(본문, 머리글/바닥글, 글상자 등)에서 글이 몇 곳 있는지 (다시 읽어 확인용)."""
+    n = 0
+    for story in _stories(doc):
+        rng = story.Duplicate
+        while n < limit and _find(rng, text, match_case, whole_word):
+            n += 1
+            rng.Collapse(0)
+    return n
 
 
 # ==============================================================================

@@ -342,11 +342,13 @@ def _finalize(mail: Any, send: bool, command: str, attached: List[str]) -> Dict[
                     "agent_directive": "STOP_RETRY: 발송하지 않았습니다. 사용자에게 수신자 주소 확인을 요청하세요.", **extra}
         mail.Send()
         extra["sent"] = True
-        return rt.ok(TOOL, command, f"메일을 보냈습니다: '{extra['subject']}' -> {extra['to']}",
-                     "VERIFIED: 사용자의 명시적 요청에 따라 발송했습니다.", **extra)
+        # R1: 발송은 Outlook이 처리하므로 실제로 나갔는지는 여기서 확인할 수 없음 (보낸 편지함 확인은 사용자 몫)
+        return rt.ok_unverified(TOOL, command, f"메일 발송을 Outlook에 맡겼습니다: '{extra['subject']}' -> {extra['to']}",
+                                ["실제 발송 여부(보낸 편지함)는 확인하지 않음. 사용자에게 보낸 편지함을 확인하라고 알리세요"], **extra)
     mail.Display()
     return rt.ok(TOOL, command, f"메일 작성 창을 띄웠습니다: '{extra['subject']}' -> {extra['to'] or '(받는 사람 미입력)'}",
-                 "VERIFIED: 작성 창을 띄웠습니다. 발송은 사용자가 직접 [보내기]를 눌러야 합니다. 대신 발송하지 마세요.", **extra)
+                 "VERIFIED: 작성 창의 받는 사람과 제목을 다시 읽었습니다. 발송은 사용자가 직접 [보내기]를 눌러야 합니다. 대신 발송하지 마세요.",
+                 verified=True, **extra)
 
 
 def _load_signature(mail: Any) -> None:

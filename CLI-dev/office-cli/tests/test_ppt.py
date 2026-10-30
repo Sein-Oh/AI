@@ -166,9 +166,11 @@ def test_replace_in_shapes_tables_no_loop(pp, capsys):
     tbl.Table.Cell(1, 1).Shape.TextFrame.TextRange.Text = "초안"
     code, out = run(capsys, "replace", "--find", "초안", "--replace", "초안본", "--bold")
     assert code == 0 and out["replaced"] == 3 and out["slides"] == [1]
+    assert out["agent_directive"].startswith("VERIFIED:")                  # 바꾼 글이 찾는 글을 품음 -> 바꾼 글 확인
     assert live(s)[1].TextFrame.TextRange.Text == "초안본 초안본 진행중"
     code, out = run(capsys, "replace", "--find", "진행중", "--replace", "")
     assert out["replaced"] == 1 and live(s)[1].TextFrame.TextRange.Text == "초안본 초안본 "
+    assert out["agent_directive"].startswith("VERIFIED:")                  # 다시 읽어 '진행중'이 없음 (R1)
 
 
 def test_read_does_not_move_view(pp, capsys):
@@ -186,14 +188,14 @@ def test_slide_actions(pp, capsys):
     prs = pp["prs"]
     first = prs.Slides(1)
     code, out = run(capsys, "slide", "--action", "move", "--slide", "1", "--to", "3")
-    assert code == 0 and prs.Slides(3) is first
+    assert code == 0 and prs.Slides(3) is first and out["agent_directive"].startswith("VERIFIED:")
     code, out = run(capsys, "slide", "--action", "duplicate", "--slide", "3")
-    assert out["slides_total"] == 4
+    assert out["slides_total"] == 4 and out["agent_directive"].startswith("VERIFIED:")     # 장 수를 다시 읽음 (R1)
     code, out = run(capsys, "slide", "--action", "clear")
     assert code == 1 and "--all-slides" in out["message"]
     prs.Slides(2).Shapes.add(FakeShape("x", text="a"))
     code, out = run(capsys, "slide", "--action", "clear", "--slide", "2")
-    assert code == 0 and prs.Slides(2).Shapes.Count == 0
+    assert code == 0 and prs.Slides(2).Shapes.Count == 0 and out["agent_directive"].startswith("VERIFIED:")
     code, out = run(capsys, "slide", "--action", "delete", "--slide", "9")
     assert code == 1
 

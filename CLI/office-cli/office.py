@@ -240,10 +240,12 @@ def insert_picture_word(target: str, image: str, anchor: Optional[str], occurren
     import word
     with off.open_target("word", target, readonly=False, create=True, tool=TOOL, command="transfer") as t:
         start, _ = word._insert_position(t.doc, anchor, "after" if anchor else "end", occurrence)
+        before = _count_pictures(lambda: t.doc.InlineShapes.Count)
         w = word.Writer(t.doc, start, None)
         w.image(image, None)
+        after = _count_pictures(lambda: t.doc.InlineShapes.Count)
         t.set_focus()
-        return t.resolved()
+        return {**t.resolved(), "_problem": _picture_problem(before, after)}
 
 
 def _ppt_slide(prs: Any, slide: Optional[str], title: str) -> Tuple[Any, int]:
@@ -262,9 +264,25 @@ def insert_picture_ppt(target: str, image: str, slide: Optional[str], title: str
     import ppt
     with off.open_target("ppt", target, readonly=False, create=True, tool=TOOL, command="transfer") as t:
         s, no = _ppt_slide(t.doc, slide, title)
+        before = _count_pictures(lambda: s.Shapes.Count)
         ppt.SlideWriter(t.doc, s, off.get_theme("navy")).image(image, None)
+        after = _count_pictures(lambda: s.Shapes.Count)
         t.set_focus(slide=no)
-        return t.resolved()
+        return {**t.resolved(), "_problem": _picture_problem(before, after)}
+
+
+def _count_pictures(read) -> Optional[int]:
+    try:
+        return int(read())
+    except Exception:
+        return None
+
+
+def _picture_problem(before: Optional[int], after: Optional[int]) -> str:
+    """R1: 그림을 넣은 뒤 그림(도형) 수가 늘었는지. 못 읽었으면 그렇다고 적습니다."""
+    if before is None or after is None:
+        return "그림 수를 다시 읽지 못함"
+    return "" if after > before else "넣은 뒤에도 그림 수가 늘지 않음"
 
 
 def relay_chart(chart_obj: Any, to_word: Optional[str], to_ppt: Optional[str], anchor: Optional[str],
@@ -351,6 +369,7 @@ def _excel_chart_transfer(args, targets: List[str]) -> Dict[str, Any]:
         raise rt.InputError("엑셀 차트는 word, ppt로만 보낼 수 있습니다.")
     results: Dict[str, Any] = {}
     errors: Dict[str, List[str]] = {}
+    unverified: List[str] = []
     with off.open_target("excel", args.from_target, readonly=True) as src:
         ws, chart_obj = excel.find_chart(src, args.chart, args.sheet)
         title = excel._chart_title(chart_obj) or str(chart_obj.Name)
@@ -375,13 +394,17 @@ def _excel_chart_transfer(args, targets: List[str]) -> Dict[str, Any]:
                                            args.to_target if kind == "ppt" else None, args.anchor, args.slide, title,
                                            args.occurrence)
                         results[kind] = {"method": "relay", "target_resolved": done[kind]}
+                        unverified.append(f"{off.APP_LABEL[kind]}: 붙여넣기(relay) 방식은 넣은 그림을 다시 확인하지 못함")
                     else:
                         if method not in images:
                             images[method] = (image_by_export if method == "export" else image_by_redraw)(chart_obj, stem)
                         img = images[method]
                         resolved = (insert_picture_word(args.to_target, img, args.anchor, args.occurrence) if kind == "word"
                                     else insert_picture_ppt(args.to_target, img, args.slide, title))
+                        problem = resolved.pop("_problem", "")
                         results[kind] = {"method": method, "target_resolved": resolved, "image_file": img}
+                        if problem:
+                            unverified.append(f"{off.APP_LABEL[kind]}: {problem}")
                     pending.remove(kind)
                 except Exception as e:
                     if isinstance(e, rt.InputError) and e.no_fallback:
@@ -399,9 +422,11 @@ def _excel_chart_transfer(args, targets: List[str]) -> Dict[str, Any]:
                                 "office.py transfer --probe로 이 PC에서 되는 방식을 확인하세요.")
     used = ", ".join(f"{off.APP_LABEL[k]}({v['method']})" for k, v in results.items())
     preview = f"차트 '{title}'를 넣었습니다: {used}" + (f" / 실패: {', '.join(failed)}" if failed else "")
-    directive = "VERIFIED: 전달 완료." if not failed else \
-        "VERIFIED: 일부만 전달했습니다. failures 내용을 사용자에게 알리세요."
-    return rt.ok(TOOL, "transfer", preview, directive, **payload)
+    if unverified:
+        return rt.ok_unverified(TOOL, "transfer", preview, unverified + ([f"일부 실패: {', '.join(failed)} (failures)"] if failed else []), **payload)
+    directive = "VERIFIED: 넣은 그림을 다시 세어 확인했습니다." if not failed else \
+        "VERIFIED: 일부만 전달했습니다 (넣은 곳은 그림을 다시 세어 확인). failures 내용을 사용자에게 알리세요."
+    return rt.ok(TOOL, "transfer", preview, directive, verified=not failed, **payload)
 
 
 def _excel_range_rows(args) -> Tuple[List[List[Any]], str]:
@@ -881,6 +906,7 @@ def cmd_undo(args) -> Dict[str, Any]:
     off.require_com()
     off.init_com()
     info = restore_snapshot(snap)
+    problems = _verify_restored(snap)                       # R1: 스냅샷을 지우기 전에 비교
     off.delete_snapshot(snap["meta_file"])                 # 사용한 스냅샷은 소비 -> 다음 undo는 그 이전으로
     detail = info.pop("detail", "")
     preview = f"'{snap['name']}'을(를) '{snap.get('by') or '이전 작업'}' 이전 상태로 되돌렸습니다 ({info['restored_as']})"
@@ -889,8 +915,26 @@ def cmd_undo(args) -> Dict[str, Any]:
     directive = "VERIFIED: 되돌리기 완료. " + (f"{detail}. " if detail else "") + (
         "되돌리기 직전 상태는 pre_undo_backup에 보관했습니다. preview를 사용자에게 그대로 알리세요."
         if info.get("pre_undo_backup") else "preview를 사용자에게 그대로 알리세요.")
-    return rt.ok(TOOL, "undo", preview, directive,
-                 restored=True, app=off.APP_LABEL[snap["app"]], name=snap["name"], original_path=snap.get("original_path", ""), **info)
+    fields = dict(restored=True, app=off.APP_LABEL[snap["app"]], name=snap["name"], original_path=snap.get("original_path", ""), **info)
+    if problems:
+        return rt.ok_unverified(TOOL, "undo", preview, problems, **fields)
+    return rt.ok(TOOL, "undo", preview, directive, **fields)
+
+
+def _verify_restored(snap: Dict[str, Any]) -> List[str]:
+    """R1: 되돌린 원본 파일이 스냅샷과 같은지 (워드 XML 스냅샷은 Word가 다시 저장하므로 파일이 있는지만)."""
+    import filecmp
+    orig, data = snap.get("original_path", ""), snap.get("snapshot_file", "")
+    if not orig:
+        return []                                           # 저장한 적 없는 문서: Office 안에서 되돌림
+    if not os.path.isfile(orig):
+        return ["되돌린 원본 파일이 없음"]
+    if snap.get("snapshot_format") == "flat_xml":
+        return []
+    try:
+        return [] if filecmp.cmp(data, orig, shallow=False) else ["되돌린 원본 파일이 스냅샷과 다름"]
+    except OSError as e:
+        return [f"되돌린 파일을 비교하지 못함: {type(e).__name__}"]
 
 
 # ==============================================================================

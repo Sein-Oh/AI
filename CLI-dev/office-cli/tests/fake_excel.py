@@ -59,6 +59,10 @@ class FakeFormatConditions:
     def Delete(self):
         self.items.clear()
 
+    @property
+    def Count(self):
+        return len(self.items)
+
 
 class FakeRange:
     def __init__(self, ws, areas):
@@ -190,17 +194,37 @@ class FakeRange:
         last = max(filled) if filled else 1
         return FakeRange(self.ws, [(last, c1, last, c1)])
 
+    def _copy_to(self, dest, cut=False):
+        r1, c1, r2, c2 = self.areas[0]
+        dr, dc = dest.areas[0][0], dest.areas[0][1]
+        vals = {(r, c): self.ws.values.get((r, c)) for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)}
+        if cut:
+            for k in vals:
+                self.ws.values.pop(k, None)
+        for (r, c), v in vals.items():
+            if v is not None:
+                dest.ws.set(dr + r - r1, dc + c - c1, v)
+
     def Cut(self, Destination=None):
         self.ws.log.append(("Cut", self.Address, Destination.Address))
+        self._copy_to(Destination, cut=True)
 
     def Copy(self, Destination=None):
         self.ws.log.append(("Copy", self.Address, Destination.Address if Destination else None))
+        if Destination is not None:
+            self._copy_to(Destination)
 
     def Merge(self):
         self.ws.log.append(("Merge", self.Address, self.ws.app.DisplayAlerts))
+        self.ws.merged.add(self.Address)
 
     def UnMerge(self):
         self.ws.log.append(("UnMerge", self.Address))
+        self.ws.merged.discard(self.Address)
+
+    @property
+    def MergeCells(self):
+        return self.Address in self.ws.merged
 
     def ClearFormats(self):
         self.ws.log.append(("ClearFormats", self.Address))
@@ -278,6 +302,7 @@ class FakeWorksheet:
         self.prefixed = set()        # '를 붙여 글자로 쓴 칸
         self.formulas = {}
         self.styles = {}
+        self.merged = set()
         self.fcs = {}
         self.log = []
         self.charts = []
