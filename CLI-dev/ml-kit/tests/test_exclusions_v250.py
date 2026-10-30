@@ -145,5 +145,7 @@ def test_report_shows_terms_and_excluded_rows(tmp_path):
     cells = " ".join(c.text for tb in doc.tables for row in tb.rows for c in row.cells)
     assert "검증 R² (제외 행 미포함)" in cells and "검증 R² (제외 행 포함)" in cells
     assert "학습 제외 3행 (직접 표시 1, 자동 이상치 2)" in text and "excluded_rows.xlsx" in text
-    assert "학습 R² = 모델이 배운 행" in text and "검증 R² = 모델이 배우지 않은 행" in text
+    terms = next(p.text for p in doc.paragraphs if p.text.startswith("판정 기준:")).split("\n")   # one term per line
+    assert terms[1] == "점수 용어" and terms[2].startswith("- 학습 R²: 모델이 배운 행")
+    assert terms[3].startswith("- 검증 R²: 모델이 배우지 않은 행") and terms[5].startswith("- 검증 R² (제외 행 포함)")
     assert "제외 행 포함 전체" not in text + cells and "교차검증 R²는" not in text

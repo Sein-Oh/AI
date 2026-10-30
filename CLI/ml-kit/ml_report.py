@@ -1138,13 +1138,17 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         + [f"권고: {r}" for r in recs[:2]]
         + ([f"참고: 같은 조건에서 더 높은 점수의 버전 {better['version']}({better['mean_val_score']:.4f})이 있습니다."] if better else []))
     R.note("요약 소견", "\n".join([slot("summary", summary_default)] + [str(x) for x in extra]))
-    R.para(f"판정 기준: 검증 {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합 "
-           f"(적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부). "
-           f"점수 용어: 학습 {metric_label} = 모델이 배운 행을 다시 맞혀 본 점수(과적합 확인용), "
-           f"검증 {metric_label} = 모델이 배우지 않은 행을 맞혀 본 점수(5겹 교차검증, 판정 기준)."
-           + (f" 학습 제외 행이 있으면 검증 {metric_label}를 둘로 적습니다: 제외 행 미포함(판정 기준), "
-              f"제외 행 포함(학습 제외 행까지 최종 모델로 예측해 함께 계산, 이상치가 섞인 실제 데이터 기준)." if has_excl else ""),
-           size=8, color=C_MUTED, space_after=2)
+    criteria = [
+        f"판정 기준: 검증 {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합 "
+        f"(적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부)",
+        "점수 용어",
+        f"- 학습 {metric_label}: 모델이 배운 행을 다시 맞혀 본 점수 (과적합 확인용)",
+        f"- 검증 {metric_label}: 모델이 배우지 않은 행을 맞혀 본 점수 (5겹 교차검증, 판정 기준)",
+    ]
+    if has_excl:
+        criteria += [f"- 검증 {metric_label} (제외 행 미포함): 학습 제외 행 없이 계산 (판정 기준)",
+                     f"- 검증 {metric_label} (제외 행 포함): 학습 제외 행까지 최종 모델로 예측해 함께 계산 (이상치가 섞인 실제 데이터 기준)"]
+    R.para("\n".join(criteria), size=8, color=C_MUTED, space_after=2)
 
     # -- 2. 데이터와 피처 -----------------------------------------------------------------
     R.h1("2. 데이터와 피처")
