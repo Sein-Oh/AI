@@ -77,6 +77,7 @@ def test_best_builds_one_version_with_every_target(three_runs):
     for t in (Y1, Y2, Y3):
         assert isinstance(bt[t]["new_score"], float) and bt[t]["task"] == "regression"
     assert "ml_report.py" in best["next_commands"][0]["command"] and " -f " in best["next_commands"][0]["command"]
+    assert "성능예측표" in best["next_commands"][0]["purpose"]                         # 회귀: 보고서와 성능예측표 세트
 
     vdir = best["version_dir"]
     assert meta(vdir, Y1)["features_required"] == ["온도(°C)"]

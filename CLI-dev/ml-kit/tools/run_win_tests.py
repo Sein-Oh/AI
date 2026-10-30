@@ -612,7 +612,7 @@ def main():
     parser.add_argument("--only", help="실행할 항목 (예: M1,M4). M1이 만든 모델을 쓰는 항목은 M1도 함께 지정")
     parser.add_argument("--label", default="PC", help="로그 파일 이름에 붙일 PC 라벨 (예: 집PC, 회사PC)")
     parser.add_argument("--log-dir", default=os.path.join(DEV, "tools", "test_logs"),
-                        help="AI 판독용 로그 폴더 (기본: tools/test_logs, git으로 커밋해 전달 가능)")
+                        help="AI 판독용 로그 폴더 (기본: tools/test_logs, git에 올리지 않고 채팅으로 전달)")
     args = parser.parse_args()
     pythoncom.CoInitialize()
     ctx = Ctx(args)

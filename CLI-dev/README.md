@@ -27,9 +27,19 @@ python run_all_tests.py --only diag            :: 환경 진단만 (1분)
 
 - 단계: `diag`(Python, 라이브러리, 문서 보안(DRM)이 python-docx/pptx 템플릿과 새로 쓴 파일을 바꾸는지) -> `pytest`(도구별 오프라인 테스트)
   -> `ml`(ml-kit 실기) -> `office`(office-cli 실기, Outlook은 `--outlook`일 때만). 끝에 각 도구의 `data\logs\errors.txt`(실제 사용 중 오류)도 붙입니다.
-- 결과: `C:\CLI-dev\test_result_<라벨>_<시각>.txt`. 단계마다 바로 기록하므로 중간에 멈추거나 Ctrl+C로 끊어도 남습니다. 이 파일 하나를 그대로 Claude에게 전달하세요. 저장소에는 `docs/test_logs/`에 올립니다.
+- 결과: `C:\CLI-dev\test_result_<라벨>_<시각>.txt`. 단계마다 바로 기록하므로 중간에 멈추거나 Ctrl+C로 끊어도 남습니다. 이 파일 하나를 그대로 Claude에게 채팅으로 전달하세요. 회사 정보와 PC 경로가 들어 있으므로 저장소(공개)에는 올리지 않습니다.
 - 시작 전에 열린 Office 문서를 모두 저장하고 닫고, 실기 테스트 중에는 Office 창을 만지지 마세요.
 - `run_all_tests.bat`를 더블클릭해도 같습니다(전부 실행, 끝나면 창이 멈춰 요약을 보여 줌). 화면 끝과 결과 파일 끝에 단계별 요약이 나옵니다.
+
+## 베타 기능 점검과 Gemma 종합 테스트
+
+| 파일 | 하는 일 |
+|---|---|
+| `run_beta_check.py` | 정답을 아는 샘플을 새로 만들어 ml-kit 베타 기능(이상치·제외 열, ml_map, 실측 비교값, 모델 반대 찾기, 보고서+성능예측표, 일치도, 엑셀 잠금·숨김·재계산)을 자동 판정. 결과 `beta_check_<라벨>_<시각>.md/.xlsx`. `--agent`면 stdout에 JSON 1줄 (Gemma가 실행할 때) |
+| `agent_scenarios.yaml` | Gemma 종합 테스트 시나리오 (요청 문장과 채점 기준) 단일 원본 |
+| `grade_opencode.py` | OpenCode 대화 내보내기 JSON 채점 (필요한 명령, 도구 결과, 답변 값, 금지 행동). 결과 `grade_<라벨>_<시각>.md/.xlsx`. `--judge`는 사내 OpenAI 호환 API로 참고 점수. `--make-pack`은 yaml로 메시지 팩을 다시 만듦 |
+
+진행 방법과 붙여넣을 메시지: [`docs/opencode/자동테스트/README.md`](../docs/opencode/자동테스트/README.md). 결과 파일은 git에 올리지 않습니다(.gitignore).
 
 ## 새 도구 폴더 구성
 

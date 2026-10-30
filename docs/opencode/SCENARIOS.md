@@ -104,5 +104,5 @@
 | 25 | | |
 
 - 다 끝나면 `python C:\CLI-dev\run_all_tests.py --only diag`를 한 번 실행합니다. 시험 중 도구가 낸 오류(`errors.txt`)가 결과 파일에 붙습니다.
-- 위 표(X인 것만 채워도 됨)와 그 결과 파일을 `docs/test_logs/`에 올려 주시면 AGENTS.md, SKILL.md를 고칩니다.
+- 위 표(X인 것만 채워도 됨)와 그 결과 파일을 채팅으로 전달해 주시면 (저장소에는 올리지 않음) AGENTS.md, SKILL.md를 고칩니다.
 - X가 나온 대화는 `docs/opencode/README.md` 5장의 요청문으로 Gemma에게 고칠 곳을 먼저 제안하게 해도 좋습니다.

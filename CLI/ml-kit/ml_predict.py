@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.9.0"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.9.4"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -711,6 +711,32 @@ def compile_formula(formula: str, columns: List[str]) -> Tuple[str, Dict[str, st
     return transformed, token_to_col, canonical
 
 
+def eval_source_columns(evals: List[str], columns: List[str]) -> List[str]:
+    """Data columns that derived formulas read (in first-use order). Names created by earlier formulas are not
+    sources. Stored formulas use full column names, so this matches exactly what replay needs."""
+    out: List[str] = []
+    known = [str(c) for c in columns]
+    for e in evals:
+        if "=" not in e:
+            continue
+        new_col, formula = (x.strip() for x in e.split("=", 1))
+        _, token_to_col, _ = compile_formula(formula, known)
+        for col in token_to_col.values():
+            if col not in out and col in columns:
+                out.append(col)
+        known.append(new_col)
+    return out
+
+
+def model_raw_inputs(meta: Dict[str, Any]) -> List[str]:
+    """Columns the user must provide to a model: its own non-derived features plus the source columns of its
+    derived features (2.9.1 'input_columns_required'; older models: non-derived features only)."""
+    if meta.get("input_columns_required"):
+        return list(meta["input_columns_required"])
+    derived = {e.split("=", 1)[0].strip() for e in (meta.get("derived_evals") or []) if "=" in e}
+    return [f for f in meta.get("features_required", []) if f not in derived]
+
+
 def apply_eval_expressions(
     df: pd.DataFrame,
     eval_expressions: List[str],
@@ -1364,8 +1390,9 @@ def compare_with_measured(meta: Dict[str, Any], target: str, version_dir: str, d
     """Measured-data comparison values for each input row (NaN where not computable) or a note why not."""
     schema = meta.get("feature_schema") or {}
     derived = {e.split("=", 1)[0].strip() for e in (meta.get("derived_evals") or []) if "=" in e}
-    keys = [c for c in schema.get("numeric", []) if c not in derived]
-    cats = list(schema.get("categorical", {}))
+    raw = model_raw_inputs(meta)
+    cats = [c for c in schema.get("categorical", {}) if c in raw]
+    keys = [c for c in raw if c not in cats and c not in schema.get("datetime", {}) and c not in derived]
     if not schema or not keys:
         return {"note": f"타겟 '{target}': 숫자 입력이 없거나 2.1.0 이전 모델이라 실측 비교값을 계산하지 않았습니다"}
     if len(df_evaled) > MAP_CHECK_MAX_ROWS:
@@ -1551,7 +1578,14 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         derived_names = [e.split("=", 1)[0].strip() for e in derived_evals if "=" in e]
 
         # Accept unit-less input column names, then replay derived features
-        column_aliases.update(align_input_columns(df_input, req_features, derived_names))
+        raw_needed = model_raw_inputs(meta)
+        column_aliases.update(align_input_columns(df_input, list(dict.fromkeys(raw_needed + req_features)), derived_names))
+        missing_raw = [c for c in raw_needed if c not in df_input.columns]
+        if missing_raw and any(c not in req_features for c in missing_raw):
+            available_cols = [str(c) for c in df_input.columns]
+            raise InputError(
+                f"타겟 '{target_name}' 추론에 필요한 입력 '{', '.join(missing_raw)}'이(가) 입력 데이터에 없습니다 "
+                f"(파생변수 계산에 쓰는 원본 입력 포함). [입력 데이터 컬럼 목록]: {available_cols}")
         df_evaled = apply_inference_evals(df_input, derived_evals)
 
         # Check required features
@@ -1867,10 +1901,9 @@ def execute_find(args: argparse.Namespace) -> Dict[str, Any]:
     schema = meta.get("feature_schema")
     if not schema:
         raise InputError("2.1.0 이전에 학습한 모델이라 반대 찾기를 할 수 없습니다. 다시 학습하십시오.")
-    derived = [e.split("=", 1)[0].strip() for e in meta.get("derived_evals", []) if "=" in e]
-    raw_inputs = [f for f in meta.get("features_required", []) if f not in derived]
-    numeric_in = [f for f in raw_inputs if f in schema.get("numeric", [])]
+    raw_inputs = model_raw_inputs(meta)
     stats = meta.get("feature_stats", {})
+    numeric_in = [f for f in raw_inputs if f not in schema.get("categorical", {}) and f not in schema.get("datetime", {})]
 
     vary = resolve_column_names([args.vary.strip()], raw_inputs, "바꿀 입력(--vary)")[0][0]
     if vary not in numeric_in or vary not in stats:

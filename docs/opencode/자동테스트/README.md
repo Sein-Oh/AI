@@ -1,0 +1,44 @@
+# OpenCode 종합 테스트 메시지 팩
+
+agent_scenarios.yaml에서 만든 파일입니다. 직접 고치지 말고 yaml을 고친 뒤 `python grade_opencode.py --make-pack`으로 다시 만듭니다.
+
+## 1. 도구 점검 (정답을 아는 샘플로 도구만 확인, 5~10분)
+
+PowerShell에서 직접 실행하거나 Gemma에게 아래 메시지를 붙여넣습니다. 결과는 `C:\CLI-dev\beta_check_회사PC_<시각>.md`.
+
+```powershell
+python "C:\CLI-dev\run_beta_check.py" --label 회사PC
+```
+
+```text
+python "C:\CLI-dev\run_beta_check.py" --label 회사PC --agent 를 시간 제한 1800000으로 1번만 실행하고, 결과 JSON의 passed, failed, skipped, failed_items, report_file을 그대로 알려줘.
+```
+
+## 2. Gemma 종합 테스트 (요청 처리 확인)
+
+1. 시험 폴더 `C:\ml_beta\agent`가 이미 있으면 탐색기에서 지웁니다 (이전 모델이 남아 있으면 버전 번호가 달라집니다).
+2. OpenCode에서 새 대화를 열고, 아래 묶음 파일의 메시지를 순서대로 붙여넣습니다.
+   - 하나씩: 메시지 1개를 보내고 답을 받은 뒤 다음 메시지를 보냅니다 (권장).
+   - 한 번에: 묶음 전체를 메시지 1개로 보냅니다 (긴 작업을 이어서 처리하는지 볼 때).
+   - 묶음은 S -> A -> M -> P -> R -> X 순서입니다. P와 R은 A에서 만든 모델을 씁니다.
+3. 끝나면 OpenCode에서 대화를 JSON으로 내보냅니다.
+4. `C:\CLI-dev`에서 채점합니다:
+
+```powershell
+python grade_opencode.py --export "<내보낸 대화.json>" --label 회사PC
+```
+
+   여러 대화로 나눠 했으면 `--export a.json b.json`처럼 함께 넣습니다.
+   사내 LLM 참고 점수를 붙이려면 `$env:JUDGE_BASE_URL='http://<서버>/v1'` 설정 후 `--judge` (통과 여부에는 넣지 않음).
+5. 만들어진 `grade_회사PC_<시각>.md`와 `beta_check_회사PC_<시각>.md`를 전달합니다.
+
+Gemma가 질문하면 답해도 됩니다. 표시([ID])가 없는 메시지는 앞 요청에 이어진 대화로 채점합니다.
+
+## 묶음
+
+- [S 준비](S_준비.md): S0
+- [A 학습과 제외 행](A_학습과_제외_행.md): A1, A2, A3
+- [M 표 보간과 반대 찾기 (ml_map)](M_표_보간과_반대_찾기.md): M1, M2, M3
+- [P 예측과 모델 반대 찾기](P_예측과_모델_반대_찾기.md): P1, P2, P3
+- [R 보고서와 성능예측표](R_보고서와_성능예측표.md): R1, R2
+- [X 하면 안 되는 일](X_하면_안_되는_일.md): X1, X2

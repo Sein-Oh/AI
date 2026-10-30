@@ -132,11 +132,14 @@ def test_next_commands_flag_placeholders_and_put_runnable_first(tmp_path):
     assert flagged and all(c["placeholder"] in c["command"] for c in flagged)
     assert cmds.index(flagged[0]) > 0                                   # 자리표시자 명령은 뒤에
     assert "needs_input" in payload["agent_directive"]
+    assert "성능예측표" in cmds[0]["purpose"] and not any("ml_export.py" in c["command"] for c in cmds)   # 보고서와 세트
+    assert "성능예측표" in payload["recommendations"][0]
 
     cls = make_class_sample(str(tmp_path / "cls.csv"))                  # 목표 미달: 재학습 명령은 모두 바로 실행 가능
     payload = run_tool("ml_train.py", "-f", cls, "-x", "반응온도,촉매비율,수분함량", "-y", "품질등급", "--task", "classification")
     if payload["mean_val_score"] < 0.9:
         assert payload["next_commands"] and all(c["needs_input"] is False for c in payload["next_commands"])
+    assert not any("성능예측표" in c["purpose"] for c in payload["next_commands"])   # 분류는 성능예측표 없음
 
 
 def test_positive_class_threshold(tmp_path):

@@ -11,9 +11,9 @@ Turns a trained version into ONE Excel workbook that predicts with plain formula
                        (points per axis = min(41, MAX_ROWS ** (1/k))), with the distance of every grid node to the
                        nearest training row (scaled inputs) for the "no measured data" warning.
   3. workbook        : 계산기 (input cells -> prediction, 90% interval, status), 일괄계산 (many rows), 사용법,
-                       표_<target> (the grid), 정확도 (candidates), 정보. Multilinear interpolation with INDEX/MATCH only
+                       표_<target> (the grid, veryHidden), 정확도 (candidates), 정보. Multilinear interpolation with INDEX/MATCH only
                        (Excel 2016+), linear extension outside the table. Every sheet is protected without a password:
-                       only the yellow input cells can be edited; nothing is hidden.
+                       only the yellow input cells can be edited. Only the grid sheets are hidden.
 The version folder is not changed except for <version>/export/ (the retrained model and the candidate table).
 """
 import sys
@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError, resolve_column_names, coerce_numeric, load_data_file,
     strip_unit, avoid_overwrite, save_with_lock_fallback, apply_inference_evals, prepare_features, quote_arg,
-    VERSION, SNAPSHOT_EXCL_PREFIX, _fmt,
+    VERSION, SNAPSHOT_EXCL_PREFIX, _fmt, model_raw_inputs,
 )
 import ml_train as mt  # noqa: E402  same training competition as ml_train.py
 
@@ -93,8 +93,7 @@ def raw_inputs(meta: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     """(raw numeric inputs, derived feature expressions) of a model; text/date raw inputs are not supported."""
     schema = meta.get("feature_schema") or {}
     evals = list(meta.get("derived_evals") or [])
-    derived = {e.split("=", 1)[0].strip() for e in evals if "=" in e}
-    raw = [f for f in meta.get("features_required", []) if f not in derived]
+    raw = model_raw_inputs(meta)
     bad = [f for f in raw if f in schema.get("categorical", {}) or f in schema.get("datetime", {})]
     if bad or not schema:
         raise InputError(f"글자·날짜 입력 {bad}이(가) 있는 모델은 성능예측표로 만들 수 없습니다 (숫자 입력만 가능).")
@@ -191,7 +190,28 @@ def build_grid(cand: Dict[str, Any], data: pd.DataFrame) -> Dict[str, Any]:
     model = predict_frame(cand, P)
     err = interp - model
     return {"n": n, "axes": axes, "grid": G, "pred": pred, "dist": dist, "lo": lo, "hi": hi,
-            "interp_rmse": float(np.sqrt(np.mean(err ** 2))), "interp_max": float(np.max(np.abs(err)))}
+            "interp_rmse": float(np.sqrt(np.mean(err ** 2))), "interp_max": float(np.max(np.abs(err))),
+            "agreement": agreement(interp, model, cand.get("interval"))}
+
+
+def agreement(table: np.ndarray, model: np.ndarray, interval: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """How closely the table follows the model over the operating range (random points), in words people use:
+    'matches the model by 99.7% on average, within 0.9% in 95% of conditions'. Relative to the model value;
+    relative to the output range instead when the output passes near zero (a % of a tiny value means nothing)."""
+    d = np.abs(table - model)
+    span = float(np.ptp(model)) or 1.0
+    near_zero = bool(np.min(np.abs(model)) < 0.05 * span)
+    rel = d / span * 100 if near_zero else d / np.abs(model) * 100
+    half = (float(interval["residual_upper"]) - float(interval["residual_lower"])) / 2 if interval else None
+    return {"agreement_pct": round(100 - float(rel.mean()), 2), "p95_diff_pct": round(float(np.quantile(rel, 0.95)), 2),
+            "max_diff_pct": round(float(rel.max()), 2), "basis": "출력 범위 대비" if near_zero else "예측값 대비",
+            "within_interval_pct": round(float(np.mean(d <= half)) * 100, 1) if half is not None else None,
+            "points": int(len(d))}
+
+
+def agreement_text(a: Dict[str, Any]) -> str:
+    return (f"모델 예측과 평균 {a['agreement_pct']:.1f}% 일치, 95% 조건에서 차이 {a['p95_diff_pct']:.1f}% 이내"
+            + (f" ({a['basis']})" if a["basis"] != "예측값 대비" else ""))
 
 
 def predict_frame(cand: Dict[str, Any], df: pd.DataFrame) -> np.ndarray:
@@ -299,6 +319,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
     for p in plans:
         p["sheet"] = _sheet_name("표_", p["target"], used)
         p["ws"] = wb.create_sheet(p["sheet"])
+        p["ws"].sheet_state = "veryHidden"   # 2.9.3: the grid is not shown (not even in "unhide"); formulas still read it
     acc = wb.create_sheet("정확도")
     info = wb.create_sheet("정보")
 
@@ -437,12 +458,15 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
             calc.column_dimensions[_col(c)].width = 9
             calc.cell(row=row, column=c).font = Font(name=FONT, size=8, color="9CA3AF")
     note_row = r2 + len(plans) + 2
-    calc.merge_cells(f"B{note_row}:F{note_row + 2}")
+    agree_lines = [f"- {_label(p['target'])[0]}: {agreement_text(p['table']['agreement'])}" for p in plans]
+    calc.merge_cells(f"B{note_row}:F{note_row + 3 + len(plans)}")
     style(calc[f"B{note_row}"], size=9, color="374151", border=False)
     calc[f"B{note_row}"].alignment = Alignment(wrap_text=True, vertical="top")
     calc[f"B{note_row}"].value = ("90% 범위: 실제 값이 이 범위에 들 가능성이 약 90%입니다. "
                                   "학습 범위 밖이거나 실측 데이터가 없는 영역의 값은 참고용입니다. "
-                                  "자세한 내용은 '사용법' 시트를 보세요.")
+                                  "자세한 내용은 '사용법' 시트를 보세요.\n"
+                                  "이 계산기와 원래 모델 예측의 일치도 (학습 범위 안 무작위 조건 2,000개):\n" + "\n".join(agree_lines))
+    note_row += 1 + len(plans)
     calc.print_area = f"B2:F{note_row + 2}"
     calc.sheet_properties.pageSetUpPr.fitToPage = True
     calc.page_setup.fitToWidth = 1
@@ -508,7 +532,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
         ("3. 노란 칸 말고는 수정할 수 없습니다 (계산이 깨지지 않도록 잠겨 있습니다).", False),
         ("", False),
         ("결과 읽는 법", True),
-        ("- 예측값: 모델로 미리 계산해 둔 표('표_' 시트)에서 입력값 주변 값을 비율로 섞어 구한 값입니다.", False),
+        ("- 예측값: 모델로 미리 계산해 파일 안에 넣어 둔 표에서, 입력값 주변 값을 비율로 섞어 구한 값입니다.", False),
         ("- 90% 범위: 실제 값이 이 범위 안에 들 가능성이 약 90%입니다. 좁을수록 정밀합니다.", False),
         ("- 판단 '참고용 (학습 범위 밖)': 입력이 모델이 배운 범위를 벗어났습니다. 값이 부정확할 수 있습니다.", False),
         ("- 판단 '참고용 (실측 없는 영역)': 각 입력은 범위 안이지만, 이런 조합의 실제 데이터가 근처에 없었습니다.", False),
@@ -538,6 +562,16 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
                     c["model"], c.get("rows"), c.get("interp_rmse"), c.get("total_rmse"), "선택" if c is p["cand"] else "")
             for j, v in enumerate(vals, 2):
                 style(acc.cell(row=row, column=j, value=v), align="left" if j == 3 else "right")
+        a = p["table"]["agreement"]
+        row += 2
+        style(acc.cell(row=row, column=2, value="선택한 안의 모델 대비 일치도 (학습 범위 안 무작위 조건 2,000개, 성능예측표 값 vs 모델 예측값)"),
+              bold=True, border=False)
+        for label, v in (("평균 일치도", f"{a['agreement_pct']:.2f}%"), ("95% 조건의 차이", f"{a['p95_diff_pct']:.2f}% 이내"),
+                         ("최대 차이", f"{a['max_diff_pct']:.2f}%"), ("기준", a["basis"]),
+                         ("차이가 모델 90% 범위 안인 조건", "-" if a["within_interval_pct"] is None else f"{a['within_interval_pct']:.1f}%")):
+            row += 1
+            style(acc.cell(row=row, column=2, value=label), border=False)
+            style(acc.cell(row=row, column=3, value=v), border=False)
         row += 3
     for col, w in zip("BCDEFGHIJ", (8, 46, 10, 10, 22, 11, 18, 15, 7)):
         acc.column_dimensions[col].width = w
@@ -555,6 +589,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
                  ("뺀 입력 (학습 범위)", ", ".join(f"{x} ({_fmt(rng_all(vinfo, x)[0])}~{_fmt(rng_all(vinfo, x)[1])})" for x in dropped) or "없음"),
                  ("파생변수 (자동 계산)", ", ".join(c["evals"]) or "없음"),
                  ("표", f"축마다 {p['table']['n']}점, {len(p['table']['grid']):,}행, 보간 오차 RMSE {round(p['table']['interp_rmse'], 4)}"),
+                 ("모델 대비 일치도", agreement_text(p["table"]["agreement"])),
                  ("90% 범위 (예측값 기준)", f"{(c['interval'] or {}).get('residual_lower')} ~ +{(c['interval'] or {}).get('residual_upper')}")]
     for i, (a, b) in enumerate(rows, 2):
         style(info.cell(row=i, column=2, value=a), bold=True, border=False)
@@ -733,11 +768,13 @@ def execute_export(args) -> Dict[str, Any]:
     if len(title) > TITLE_MAX:
         warnings.append(f"제목이 {len(title)}자로 길어 {TITLE_MAX}자로 줄였습니다")
         title = title[:TITLE_MAX - 3].rstrip() + "..."
-    stem = re.sub(r"_ml_data$", "", os.path.basename(os.path.dirname(vinfo["dir"]))) or "모델"
-    default = os.path.join(os.path.dirname(os.path.dirname(vinfo["dir"])), f"{stem}_성능예측표_{os.path.basename(vinfo['dir'])}.xlsx")
+    # same folder as the report and history.jsonl (<data>_ml_data), name paired with ML결과보고서_<data>_<version>.docx
+    data_root = os.path.dirname(vinfo["dir"])
+    stem = re.sub(r"_ml_data$", "", os.path.basename(data_root)) or "모델"
+    default = os.path.join(data_root, f"성능예측표_{stem}_{os.path.basename(vinfo['dir'])}.xlsx")
     path = args.save if args.save else default
     if args.save and not os.path.isabs(path):
-        path = os.path.join(os.path.dirname(os.path.dirname(vinfo["dir"])), path)
+        path = os.path.join(data_root, path)
     if not path.lower().endswith(".xlsx"):
         path += ".xlsx"
     path = avoid_overwrite(os.path.abspath(path), what="성능예측표")
@@ -764,6 +801,7 @@ def execute_export(args) -> Dict[str, Any]:
             "inputs": c["inputs"], "dropped": [x for x in p["all_inputs"] if x not in c["inputs"]], "keep": p["keep"],
             "val_r2": round(c["val_r2"], 4), "rmse": round(c["rmse"], 4), "model": c["model"], "reason": p["reason"],
             "table_rows": c["rows"], "points_per_axis": c["table"]["n"], "interp_rmse": c["interp_rmse"], "total_rmse": c["total_rmse"],
+            "agreement": c["table"]["agreement"],
             "candidates": [{"count": len(x["inputs"]), "inputs": x["inputs"], "val_r2": round(x["val_r2"], 4), "rmse": round(x["rmse"], 4),
                             "table_rows": x["rows"], "interp_rmse": x["interp_rmse"], "total_rmse": x["total_rmse"]} for x in p["cands"]],
         }
@@ -777,7 +815,8 @@ def execute_export(args) -> Dict[str, Any]:
                    f"--inputs {quote_arg(','.join(x['inputs']))} --title {quote_arg(title)}")
             next_commands.append({"purpose": f"'{p['target']}' 입력 {len(x['inputs'])}개 안으로 다시 만들기 (검증 R² {round(x['val_r2'], 4)})",
                                   "command": cmd, "needs_input": False})
-    brief = "; ".join(f"{t}: 입력 {len(v['inputs'])}개 ({', '.join(strip_unit(i) for i in v['inputs'])}), 검증 R² {v['val_r2']}, 표 {v['table_rows']:,}행"
+    brief = "; ".join(f"{t}: 입력 {len(v['inputs'])}개 ({', '.join(strip_unit(i) for i in v['inputs'])}), 검증 R² {v['val_r2']}, "
+                      f"표 {v['table_rows']:,}행, 모델과 평균 {v['agreement']['agreement_pct']:.1f}% 일치"
                       for t, v in out_targets.items())
     res = {"status": "ok", "output_file": real, "title": title, "targets": out_targets, "export_model_dir": exp_dir,
            "verified": not unverified, "preview": f"성능예측표 생성: {brief}", "next_commands": next_commands[:8]}
@@ -787,7 +826,7 @@ def execute_export(args) -> Dict[str, Any]:
         res["unverified"] = unverified
     res["agent_directive"] = (
         ("VERIFIED: " if not unverified else "UNVERIFIED: " + "; ".join(unverified) + ". 재시도하지 말고 그대로 알리세요. ")
-        + "output_file 경로, 타겟별 입력(inputs)과 뺀 입력(dropped), 검증 R², 표 크기를 알리세요. "
+        + "output_file 경로, 타겟별 입력(inputs)과 뺀 입력(dropped), 검증 R², 모델 대비 일치도(agreement.agreement_pct, p95_diff_pct)를 알리세요. "
         + "다른 입력 조합을 원하면 targets.<타겟>.candidates를 보여 주고, 사용자가 고른 안의 next_commands를 그대로 실행하세요."
         + (" warnings도 알리세요." if warnings else ""))
     return res
@@ -801,7 +840,7 @@ def main():
     parser.add_argument("--keep", help="입력을 줄일 때 꼭 포함할 입력 (쉼표 구분)")
     parser.add_argument("--inputs", help="최적화 없이 이 입력 조합으로 바로 만들기 (쉼표 구분)")
     parser.add_argument("--title", help="계산기 제목 (데이터 설명을 짧게 정리한 글, 40자 이내)")
-    parser.add_argument("--save", help="저장 경로 (.xlsx, 생략 시 데이터 폴더에 <데이터>_성능예측표_<버전>.xlsx)")
+    parser.add_argument("--save", help="저장 경로 (.xlsx, 생략 시 보고서와 같은 <데이터>_ml_data 폴더에 성능예측표_<데이터>_<버전>.xlsx)")
     args = parser.parse_args()
     run_cli(lambda: execute_export(args), hint="Check the version folder and input names in SKILL.md.")
 

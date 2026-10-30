@@ -23,7 +23,7 @@ from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, emit_json_response, dumps_json, run_cli, JsonArgumentParser,
     InputError, sanitize_filename, normalize_version, warn_long_path,
     read_text_file, load_json_file, resolve_column_names, coerce_numeric,
-    load_data_file as _load_table, apply_eval_expressions,
+    load_data_file as _load_table, apply_eval_expressions, eval_source_columns,
     parse_datetime, normalize_category, prepare_features, date_part_column, input_column_owner, DATE_PARTS,
     strip_unit,
     retry_fs, remove_tree, atomic_write_text, write_csv_excel_compatible,
@@ -1163,7 +1163,7 @@ def build_next_commands(
 
     if mean_score >= 0.90:  # caller passes the weakest target's score
         cmds.append({
-            "purpose": "ML 결과 보고서(Word) 생성 (이 데이터의 모든 타겟을 1개 문서로)",
+            "purpose": REPORT_PURPOSE[task],
             "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -f {_q(raw_file)}",
             "needs_input": False,
         })
@@ -1388,7 +1388,15 @@ def _prepare_group(df_raw: pd.DataFrame, group: Dict[str, Any], task: str) -> Di
         )
     for col in feature_schema["numeric"]:
         df_clean[col] = X_all[col]
+    # Columns the user must provide at prediction time: own raw features + sources of derived features (2.9.1)
+    sources = eval_source_columns(applied_evals, [str(c) for c in df_raw.columns])
+    raw_required = [f for f in feature_names if f not in created_features]
+    raw_required += [c for c in sources if c not in raw_required and c not in target_names]
+    for c in raw_required:
+        if c not in df_clean.columns and c in df_raw.columns:
+            df_clean[c] = df_raw[c]
     return {"df": df_clean, "features": feature_names, "targets": target_names, "aliases": column_aliases,
+            "raw_required": raw_required,
             "evals": applied_evals, "created": created_features, "schema": feature_schema, "X": X_all,
             "dtypes": dtypes, "positive_class": group.get("positive_class")}
 
@@ -1637,7 +1645,9 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
 
         recommendations = []
         if min_score >= 0.90:
-            recommendations.append(f"모든 타겟이 목표 성능({metric_label} >= 0.90)을 달성했습니다. 예측 배포와 보고서 작성이 가능합니다.")
+            recommendations.append(
+                f"모든 타겟이 목표 성능({metric_label} >= 0.90)을 달성했습니다. 예측 배포와 보고서 작성이 가능합니다."
+                + (" 보고서를 만들면 엑셀만으로 예측하는 성능예측표(엑셀 계산기)도 함께 만들어집니다." if task == TASK_REGRESSION else ""))
         else:
             if len(target_names) > 1:
                 recommendations.append(f"목표({metric_label} >= 0.90) 미달 타겟: {below}. 아래 권고는 가장 낮은 '{primary_target}' 기준입니다.")
@@ -1714,8 +1724,10 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
             used_rows = ~exclusions[target_name]["mask"]   # training range = rows the model learned from
-            for fname in g["schema"]["numeric"]:
-                s = g["df"][fname][used_rows].dropna()
+            source_numeric = [c for c in g["raw_required"] if c not in g["schema"]["numeric"]
+                              and c not in g["schema"].get("categorical", {}) and c not in g["schema"].get("datetime", {})]
+            for fname in list(g["schema"]["numeric"]) + source_numeric:
+                s = coerce_numeric(g["df"][fname])[used_rows].dropna()
                 if not s.empty:
                     feat_stats[fname] = {
                         "mean": round(float(s.mean()), 4),
@@ -1759,6 +1771,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                 meta_json["excluded"] = excl
             meta_json.update({
                 "features_required": g["features"],
+                "input_columns_required": g["raw_required"],
                 "feature_count": len(g["features"]),
                 "feature_stats": feat_stats,
                 "datetime_stats": _datetime_stats(g, used_rows),
@@ -1774,7 +1787,8 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                 f.write(dumps_json(meta_json, indent=2))
 
         # 3. Clean Dataset Snapshot (model_dataset.csv)
-        dataset_snapshot_cols = [c for c in feature_names + target_names if c in df_clean.columns]
+        raw_extra = [c for g in prepared for c in g["raw_required"] if c not in feature_names]
+        dataset_snapshot_cols = list(dict.fromkeys(c for c in feature_names + raw_extra + target_names if c in df_clean.columns))
         snapshot_df = df_clean[dataset_snapshot_cols].copy()
         # 2.7.0: Excel row numbers and per-target training exclusions, so ml_predict.py can compare its predictions
         # with the measured rows the model learned from (evidence rows are shown as Excel row numbers)
@@ -1876,7 +1890,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                     "positive_class": target_group[t]["positive_class"]}
                 for t in target_names
             }
-            next_commands = build_best_next_commands(raw_file, guard.final_dir)
+            next_commands = build_best_next_commands(raw_file, guard.final_dir, task)
         else:
             next_commands = build_next_commands(
                 args=args, raw_file=raw_file, task=task, positive_class=g0["positive_class"],
@@ -1975,10 +1989,16 @@ BEST_TAG = "best"
 TASK_ORDER = [TASK_REGRESSION, TASK_CLASSIFICATION]
 
 
-def build_best_next_commands(raw_file: str, final_dir: str) -> List[Dict[str, Any]]:
+REPORT_PURPOSE = {  # 2.9.2: a regression report also makes the performance calculator (ml_export.py)
+    TASK_REGRESSION: "ML 결과 보고서(Word)와 성능예측표(엑셀 계산기) 생성 (모든 타겟, 입력을 줄이며 다시 학습해 몇 분 걸림, SKILL.md 5단계대로 --title)",
+    TASK_CLASSIFICATION: "ML 결과 보고서(Word) 생성 (이 데이터의 모든 타겟을 1개 문서로)",
+}
+
+
+def build_best_next_commands(raw_file: str, final_dir: str, task: str = TASK_REGRESSION) -> List[Dict[str, Any]]:
     here = os.path.dirname(os.path.abspath(__file__))
     return [
-        {"purpose": "ML 결과 보고서(Word) 생성 (모든 타겟 1개 문서)",
+        {"purpose": REPORT_PURPOSE.get(task, REPORT_PURPOSE[TASK_CLASSIFICATION]),
          "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -f {_q(raw_file)}",
          "needs_input": False},
         {"purpose": "새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
