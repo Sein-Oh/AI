@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError,
     sanitize_filename, load_json_file, save_with_lock_fallback, warn_long_path, avoid_overwrite,
-    normalize_version, strip_unit, note_recovered, VERSION,
+    normalize_version, strip_unit, note_recovered, read_text_file, VERSION,
 )
 
 setup_console()
@@ -871,14 +871,12 @@ def load_version(version_dir: str, target_filter: Optional[List[str]] = None) ->
         names = list(dict.fromkeys(wanted))
 
     excluded_all = None
-    for fname in ("excluded_rows.xlsx", "excluded_rows.csv"):
-        p_ex = os.path.join(vdir, fname)
-        if os.path.isfile(p_ex):
-            try:
-                excluded_all = (pd.read_excel(p_ex) if fname.endswith(".xlsx") else pd.read_csv(p_ex, encoding="utf-8-sig"))
-            except Exception as e:  # the report still works without the excluded-row markers
-                sys.stderr.write(f"[WARN] 학습 제외 행 파일을 읽지 못해 그림에 표시하지 않습니다: {e}\n")
-            break
+    p_ex = os.path.join(vdir, "excluded_rows.csv")
+    if os.path.isfile(p_ex):
+        try:
+            excluded_all = pd.read_csv(io.StringIO(read_text_file(p_ex)))
+        except Exception as e:  # the report still works without the excluded-row markers
+            sys.stderr.write(f"[WARN] 학습 제외 행 파일을 읽지 못해 그림에 표시하지 않습니다: {e}\n")
 
     targets = []
     for t in names:
@@ -1170,7 +1168,7 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     if excl_lines:
         R.para("학습 제외 행: 데이터의 '제외' 열에 글자가 있는 행(직접 표시)과, 값이 중앙값에서 크게 벗어난 행"
                "(중앙값·절대편차 기준 3.5배 초과, 자동 이상치)은 학습에서 뺐습니다. '제외' 열에 '포함'이라고 쓴 행은 자동으로 빼지 않습니다. "
-               "뺀 행 목록은 버전 폴더의 excluded_rows.xlsx에 있습니다.\n" + "\n".join(excl_lines),
+               "뺀 행 목록은 버전 폴더의 excluded_rows.csv에 있습니다.\n" + "\n".join(excl_lines),
                size=9, space_after=4)
     schema, stats, dstats, required_inputs = merged_feature_info(targets)
     miss = prof.get("feature_missing", {})

@@ -1803,13 +1803,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         # 3-B. Rows left out of training (user marks + automatic outliers), for the user to review in Excel
         excluded_rows_file = None
         if excluded_rows_out:
-            ex_df = pd.DataFrame(excluded_rows_out)
-            try:
-                ex_path = os.path.join(staging_dir, "excluded_rows.xlsx")
-                ex_df.to_excel(ex_path, index=False, sheet_name="제외 행")
-            except ImportError:
-                ex_path = os.path.join(staging_dir, "excluded_rows.csv")
-                write_csv_excel_compatible(ex_df, ex_path)
+            ex_path = write_csv_excel_compatible(pd.DataFrame(excluded_rows_out), os.path.join(staging_dir, "excluded_rows.csv"))
             excluded_rows_file = os.path.join(guard.final_dir, os.path.basename(ex_path))
         exclusion_summary = {t: {k: v for k, v in e.items() if k != "mask"} for t, e in exclusions.items()
                              if e["manual"] or e["auto"] or e["forced_include"] or e["auto_note"]}

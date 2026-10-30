@@ -318,7 +318,7 @@ python ml_train.py -f sample.xlsx --best --task classification
   | - (제외 행 포함) | 위 교차검증 예측 + 학습 제외 행을 최종 모델로 예측한 값 (`all_rows_score`) | 이상치가 섞인 실제 데이터에서의 성능 참고 |
 
 - 학습 범위(`feature_stats`, 예측 시 외삽 경고 기준)와 타겟 통계는 학습에 쓴 행으로만 계산합니다.
-- 산출물: `vX/excluded_rows.xlsx` (열: 타겟, 원본 행, 구분(직접 표시/자동 이상치), 이유, 실제값, 예측값). 원본 행은 엑셀 행 번호(CSV는 빈 줄을 뺀 줄 번호).
+- 산출물: `vX/excluded_rows.csv` (열: 타겟, 원본 행, 구분(직접 표시/자동 이상치), 이유, 실제값, 예측값). 원본 행은 엑셀 행 번호(CSV는 빈 줄을 뺀 줄 번호).
 - 결과 JSON: `exclusions` = `{타겟: {column, manual, auto, forced_include, auto_note, all_rows_score}}`, `excluded_rows_file`. 원장에는 `exclusions`, `model_<타겟>.json`에는 `excluded`, `leaderboard.json` 챔피언에는 `all_rows_score`.
   제외한 행이 없고 `포함` 표시도 없으면 이 키들은 생기지 않습니다.
 - 보고서: 요약 표에 "검증 R² (제외 행 포함)" 열, 데이터 장에 제외 규칙과 타겟별 행 수, 타겟 장에 한 줄, 실측 대비 예측 그림에 학습 제외 행을 주황색 X로 표시.
