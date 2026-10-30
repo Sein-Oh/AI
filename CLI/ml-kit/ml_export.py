@@ -73,7 +73,13 @@ def load_version(vdir: str, targets_arg: Optional[str]) -> Dict[str, Any]:
             metas[m.get("target", name[6:-5])] = m
     if not metas:
         raise InputError(f"버전 폴더에 모델 정보(model_*.json)가 없습니다: {vdir}")
-    names = list(metas)
+    # training order (leaderboard.json keeps the -y order); file-name order only as a fallback
+    try:
+        with open(os.path.join(vdir, "leaderboard.json"), encoding="utf-8") as f:
+            order = list(json.load(f).get("targets", {}))
+    except Exception:
+        order = []
+    names = [t for t in order if t in metas] + [t for t in metas if t not in order]
     if targets_arg:
         names, _ = resolve_column_names([t.strip() for t in targets_arg.split(",") if t.strip()], names, "타겟(-y)")
     skipped = [t for t in names if metas[t].get("task", "regression") != "regression"]

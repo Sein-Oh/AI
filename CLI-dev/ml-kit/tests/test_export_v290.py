@@ -135,3 +135,25 @@ def test_derived_features_stay_inside_the_model(tmp_path):
     out = _recalc(res["output_file"], tmp_path)
     x = [out["계산기"]["C6"].value, out["계산기"]["C7"].value]
     assert out["계산기"]["C10"].value == pytest.approx(3 * x[0] * x[1], abs=0.15)
+
+
+def test_several_inputs_and_outputs(tmp_path):
+    """Each output keeps its own inputs (training order kept); the calculator asks for the union of inputs and
+    an output is computed as soon as ITS inputs are filled."""
+    r = np.random.default_rng(31)
+    n = 300
+    df = pd.DataFrame({"온도": r.uniform(0, 1, n), "압력": r.uniform(0, 1, n), "유량": r.uniform(0, 1, n), "분진": r.uniform(0, 1, n)})
+    df["효율"] = 10 * np.sin(3 * df.온도) + r.normal(0, 0.1, n)
+    df["전력"] = 5 * df.압력 * df.유량 + 2 * df.유량 + r.normal(0, 0.05, n)
+    p = tmp_path / "m.csv"
+    df.to_csv(p, index=False)
+    v = run_tool("ml_train.py", "-f", str(p), "-x", "온도,압력,유량,분진", "-y", "효율,전력")["version_dir"]
+    res = run_tool("ml_export.py", "-m", v, "--save", str(tmp_path / "m.xlsx"))
+    assert list(res["targets"]) == ["효율", "전력"]                                       # -y order
+    assert res["targets"]["효율"]["inputs"] == ["온도"] and res["targets"]["전력"]["inputs"] == ["압력", "유량"]
+    wb = openpyxl.load_workbook(res["output_file"])
+    calc = wb["계산기"]
+    assert [calc[f"B{r}"].value for r in (6, 7, 8)] == ["온도", "압력", "유량"]          # union, 분진 dropped everywhere
+    assert [calc[f"B{r}"].value for r in (11, 12)] == ["효율", "전력"]
+    assert "COUNT($C$6)=1" in calc["C11"].value and "COUNT($C$7,$C$8)=2" in calc["C12"].value
+    assert wb.sheetnames[3:5] == ["표_효율", "표_전력"]
