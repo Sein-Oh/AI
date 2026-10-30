@@ -1,6 +1,6 @@
 # Windows 11 폐쇄망 설치 가이드
 
-`CLI/` 아래 모든 도구 공통. 폐쇄망 PC에서는 `pip install`이 인터넷에 접근할 수 없으므로
+`CLI/` 아래 모든 도구 공통 (각 도구의 `requirements.txt`는 `CLI-dev/<tool>/`에 있음). 폐쇄망 PC에서는 `pip install`이 인터넷에 접근할 수 없으므로
 **인터넷 PC에서 wheel 파일을 미리 받아 반입**합니다.
 
 ## 1. 인터넷 PC에서 준비
@@ -9,19 +9,19 @@
 **표준 환경에 없는 패키지만** 반입하면 됩니다. 현재 ml-kit은 추가 반입이 필요 없습니다.
 
 ```bat
-cd CLI\ml-kit
-python -m pip download -r requirements.txt -c ..\..\constraints.txt -d wheels ^
+cd CLI-dev\ml-kit
+python -m pip download -r requirements.txt -d wheels ^
   --only-binary=:all: --platform win_amd64 --python-version 3.13 --implementation cp
 ```
 - 인터넷 PC가 폐쇄망과 **같은 Windows + 같은 Python 버전**이면 `--platform` 이하 옵션은 생략 가능합니다.
-- `-c constraints.txt`로 표준 환경과 같은 버전이 받아지므로, 이미 설치된 패키지는 재설치되지 않습니다.
+- 표준 환경과 같은 버전을 받으려면 `requirements.txt` 대신 필요한 패키지만 `openpyxl==3.1.5`처럼 버전을 붙여 적습니다 (버전: `docs/ENVIRONMENT.md`).
 
 ## 2. 반입 후 폐쇄망 PC에서 설치
 
 PATH에 잡힌 `python`이 WinPython인지 먼저 확인합니다: `python -c "import sys; print(sys.executable)"`
 
 ```bat
-cd CLI\ml-kit
+cd CLI-dev\ml-kit
 python -m pip install --no-index --find-links wheels -r requirements.txt
 ```
 `wheels\` 폴더만 사용합니다(`--no-index`).

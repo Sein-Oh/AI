@@ -121,17 +121,17 @@ def _setup_matplotlib() -> None:
     })
 
 
-def verdict_of(score: Optional[float], overfit_gap: Optional[float]) -> Tuple[str, str]:
+def verdict_of(score: Optional[float], overfit_gap: Optional[float], metric: str = "점수") -> Tuple[str, str]:
     """Rule-based verdict shared by summary, cover and JSON output."""
     if score is None:
         return "부적합", "성능 지표 없음"
     if score >= PASS_SCORE:
         if overfit_gap is not None and overfit_gap > OVERFIT_LIMIT:
-            return "조건부", f"검증 점수는 기준을 충족하나 과적합 간극 {overfit_gap:.3f} > {OVERFIT_LIMIT}"
-        return "적합", f"검증 점수 {score:.3f} >= {PASS_SCORE}"
+            return "조건부", f"검증 {metric}는 기준을 충족하나 학습-검증 간극 {overfit_gap:.3f} > {OVERFIT_LIMIT}"
+        return "적합", f"검증 {metric} {score:.3f} >= {PASS_SCORE}"
     if score >= CONDITIONAL_SCORE:
-        return "조건부", f"검증 점수 {score:.3f} (기준 {PASS_SCORE} 미달, {CONDITIONAL_SCORE} 이상)"
-    return "부적합", f"검증 점수 {score:.3f} < {CONDITIONAL_SCORE}"
+        return "조건부", f"검증 {metric} {score:.3f} (기준 {PASS_SCORE} 미달, {CONDITIONAL_SCORE} 이상)"
+    return "부적합", f"검증 {metric} {score:.3f} < {CONDITIONAL_SCORE}"
 
 
 def worst_verdict(verdicts: List[str]) -> str:
@@ -730,17 +730,27 @@ def _fig(h_cm: float = 6.5, w_cm: float = FIG_WIDTH_CM, ncols: int = 1):
     return plt.subplots(1, ncols, figsize=(w_cm / 2.54, h_cm / 2.54))
 
 
-def _draw_actual_vs_pred(ax, oof: pd.DataFrame, target: str, r2: float) -> None:
+def _draw_actual_vs_pred(ax, oof: pd.DataFrame, target: str, r2: float,
+                         excluded: Optional[pd.DataFrame] = None) -> None:
     a, p = oof["actual"].values, oof["predicted"].values
-    lo, hi = float(min(a.min(), p.min())), float(max(a.max(), p.max()))
+    ea = ep = np.array([])
+    if excluded is not None and len(excluded):
+        ea = pd.to_numeric(excluded["실제값"], errors="coerce").to_numpy(dtype=float)
+        ep = pd.to_numeric(excluded["예측값"], errors="coerce").to_numpy(dtype=float)
+        ok = np.isfinite(ea) & np.isfinite(ep)
+        ea, ep = ea[ok], ep[ok]
+    lo = float(min(a.min(), p.min(), *(ea.tolist() + ep.tolist())))
+    hi = float(max(a.max(), p.max(), *(ea.tolist() + ep.tolist())))
     pad = (hi - lo) * 0.04 or 1.0
     ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=MPL_ORANGE, lw=1, ls="--", label="실측 = 예측")
     ax.scatter(a, p, s=9, color=MPL_NAVY, alpha=0.55, edgecolors="none")
+    if len(ea):
+        ax.scatter(ea, ep, s=26, marker="x", color=MPL_ORANGE, linewidths=1.2, label=f"학습 제외 행 ({len(ea)})")
     ax.set_xlim(lo - pad, hi + pad)
     ax.set_ylim(lo - pad, hi + pad)
     ax.set_xlabel(f"실측 {target}")
     ax.set_ylabel(f"예측 {target}")
-    ax.text(0.03, 0.95, f"R² = {r2:.4f}\nn = {len(a):,}", transform=ax.transAxes, va="top", fontsize=8,
+    ax.text(0.03, 0.95, f"검증 R² = {r2:.4f}\nn = {len(a):,}", transform=ax.transAxes, va="top", fontsize=8,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=MPL_LIGHT))
     ax.legend(loc="lower right", fontsize=7, frameon=False)
     ax.set_title("실측 대비 예측 (교차검증)", loc="left")
@@ -786,7 +796,7 @@ def chart_target_overview(t: Dict[str, Any], derived: List[str]):
     n = min(8, len(c["feature_importances"]))
     fig, (ax1, ax2) = _fig(h_cm=max(6.5, 1.6 + 0.62 * n), ncols=2)
     if t["task"] == "regression":
-        _draw_actual_vs_pred(ax1, t["oof"], t["name"], c["val_r2"])
+        _draw_actual_vs_pred(ax1, t["oof"], t["name"], c["val_r2"], t.get("excluded_rows"))
     else:
         _draw_confusion(ax1, c["confusion_matrix"])
     _draw_importance(ax2, c["feature_importances"], derived, top_n=n)
@@ -860,6 +870,16 @@ def load_version(version_dir: str, target_filter: Optional[List[str]] = None) ->
             raise InputError(f"버전 '{version}'에 타겟 {unknown}이(가) 없습니다. [추천] {names}")
         names = list(dict.fromkeys(wanted))
 
+    excluded_all = None
+    for fname in ("excluded_rows.xlsx", "excluded_rows.csv"):
+        p_ex = os.path.join(vdir, fname)
+        if os.path.isfile(p_ex):
+            try:
+                excluded_all = (pd.read_excel(p_ex) if fname.endswith(".xlsx") else pd.read_csv(p_ex, encoding="utf-8-sig"))
+            except Exception as e:  # the report still works without the excluded-row markers
+                sys.stderr.write(f"[WARN] 학습 제외 행 파일을 읽지 못해 그림에 표시하지 않습니다: {e}\n")
+            break
+
     targets = []
     for t in names:
         safe = sanitize_filename(t)
@@ -873,6 +893,9 @@ def load_version(version_dir: str, target_filter: Optional[List[str]] = None) ->
             "bench": bench, "champ": bench["champion"], "board": bench["leaderboard"],
             "oof": pd.read_csv(oof_path, encoding="utf-8-sig"),
             "classes": bench["champion"].get("classes"),
+            "excluded": meta.get("excluded") or {},
+            "excluded_rows": (excluded_all[excluded_all["타겟"].astype(str) == t]
+                              if excluded_all is not None and "타겟" in excluded_all.columns else None),
         })
 
     corr = None
@@ -930,12 +953,28 @@ def _metric_info(task: str) -> Tuple[str, str]:
     return ("val_r2", "R²") if task == "regression" else ("val_f1_macro", "Macro-F1")
 
 
+def exclusion_line(t: Dict[str, Any], metric: str) -> str:
+    """'학습 제외 3행 (직접 1, 자동 이상치 2) | 검증 R²(제외 행 포함) 0.81' or '' when nothing was left out."""
+    e = t.get("excluded") or {}
+    n = int(e.get("manual", 0)) + int(e.get("auto", 0))
+    parts = []
+    if n:
+        parts.append(f"학습 제외 {n}행 (직접 표시 {e.get('manual', 0)}, 자동 이상치 {e.get('auto', 0)})")
+        if isinstance(e.get("all_rows_score"), (int, float)):
+            parts.append(f"검증 {metric}(제외 행 포함) {e['all_rows_score']:.4f}")
+    if e.get("forced_include"):
+        parts.append(f"'포함' 표시 {e['forced_include']}행은 자동 제외하지 않음")
+    if e.get("auto_note"):
+        parts.append(str(e["auto_note"]))
+    return " | ".join(parts)
+
+
 def text_performance(t: Dict[str, Any]) -> str:
     c = t["champ"]
     if t["task"] == "regression":
         std = float(t["oof"]["actual"].std()) or 1.0
         lines = [
-            f"챔피언 {c['champion_model']}의 교차검증 R²는 {c['val_r2']:.4f}, MAE는 {c['mae']:.4f}로 "
+            f"챔피언 {c['champion_model']}의 검증 R²는 {c['val_r2']:.4f}, MAE는 {c['mae']:.4f}로 "
             f"타겟 표준편차({std:.4f})의 {c['mae'] / std:.0%} 수준입니다.",
         ]
         gap = c.get("overfit_gap", 0.0)
@@ -948,7 +987,7 @@ def text_performance(t: Dict[str, Any]) -> str:
     pc = c["per_class"]
     worst = min(pc, key=lambda k: pc[k]["recall"])
     lines = [
-        f"챔피언 {c['champion_model']}의 교차검증 Macro-F1은 {c['val_f1_macro']:.4f}, 정확도 {c['accuracy']:.4f}, "
+        f"챔피언 {c['champion_model']}의 검증 Macro-F1은 {c['val_f1_macro']:.4f}, 정확도 {c['accuracy']:.4f}, "
         f"균형 정확도 {c['balanced_accuracy']:.4f}입니다" + (f" (ROC-AUC {c['roc_auc']:.4f})." if c.get("roc_auc") is not None else "."),
         f"재현율이 가장 낮은 클래스는 '{worst}'({pc[worst]['recall']:.3f})이며, 이 클래스를 놓치는 오분류에 유의해야 합니다.",
     ]
@@ -1036,15 +1075,15 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
 
     verdicts = {}
     for t in targets:
-        verdicts[t["name"]] = verdict_of(t["champ"].get("val_score"), t["champ"].get("overfit_gap"))
+        verdicts[t["name"]] = verdict_of(t["champ"].get("val_score"), t["champ"].get("overfit_gap"), metric_label)
     overall = worst_verdict([v[0] for v in verdicts.values()])
     best_src = (rec.get("best_source") or {}) if rec.get("best") else {}
 
     def source_line(t: Dict[str, Any]) -> str:
         src = best_src.get(t["name"]) or {}
         old = src.get("score")
-        return (f"학습 조건 출처: {src.get('version', '-')} (당시 점수 {old:.4f}), 이번 점수 {t['champ']['val_score']:.4f}"
-                if isinstance(old, (int, float)) else f"학습 조건 출처: {src.get('version', '-')}, 이번 점수 {t['champ']['val_score']:.4f}")
+        return (f"학습 조건 출처: {src.get('version', '-')} (당시 검증 {metric_label} {old:.4f}), 이번 검증 {metric_label} {t['champ']['val_score']:.4f}"
+                if isinstance(old, (int, float)) else f"학습 조건 출처: {src.get('version', '-')}, 이번 검증 {metric_label} {t['champ']['val_score']:.4f}")
     better = max((r for r in ctx["lineage"] if (r.get("mean_val_score") or -1) > rec["mean_val_score"] + 1e-9),
                  key=lambda r: r["mean_val_score"], default=None)
 
@@ -1067,20 +1106,28 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     R.h1("1. 요약")
     best = max(targets, key=lambda t: t["champ"].get("val_score") or -1)
     R.metric_cards([
-        ("종합 판정", overall, f"기준 {metric_label} {PASS_SCORE} 이상"),
-        (f"평균 {metric_label}", f"{rec['mean_val_score']:.4f}", f"타겟 {len(targets)}개 평균"),
+        ("종합 판정", overall, f"기준 검증 {metric_label} {PASS_SCORE} 이상"),
+        (f"평균 검증 {metric_label}", f"{rec['mean_val_score']:.4f}", f"타겟 {len(targets)}개 평균"),
         ("학습 데이터", f"{prof.get('rows_loaded', 0):,}행", f"피처 {len(rec.get('features_used', []))}개"
                                                            + (f" (파생 {len(derived_rows)}개)" if derived_rows else "")),
         ("최고 성능 모델", best["champ"]["champion_model"], best["name"]),
     ])
+    has_excl = any(isinstance((t.get("excluded") or {}).get("all_rows_score"), (int, float)) for t in targets)
     rows = []
     for t in targets:
         c = t["champ"]
         err = (f"MAE {c['mae']:.4f}" if task == "regression" else f"정확도 {c['accuracy']:.4f}")
-        rows.append([t["name"], c["champion_model"], c.get("val_score"), err, verdicts[t["name"]][0],
-                     ", ".join(r["feature"] for r in c.get("top_features", [])[:2]) or "-"])
-    R.table(["타겟", "챔피언 모델", metric_label, "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
-            widths=[3.0, 3.6, 1.8, 2.4, 1.5, 4.7], align=["left", "left", "right", "right", "center", "left"], verdict_col=4)
+        row = [t["name"], c["champion_model"], c.get("val_score")]
+        if has_excl:
+            row.append((t.get("excluded") or {}).get("all_rows_score", c.get("val_score")))
+        rows.append(row + [err, verdicts[t["name"]][0], ", ".join(r["feature"] for r in c.get("top_features", [])[:2]) or "-"])
+    if has_excl:
+        R.table(["타겟", "챔피언 모델", f"검증 {metric_label} (제외 행 미포함)", f"검증 {metric_label} (제외 행 포함)", "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
+                widths=[2.4, 2.8, 2.2, 2.2, 2.2, 1.4, 3.8], align=["left", "left", "right", "right", "right", "center", "left"],
+                verdict_col=5)
+    else:
+        R.table(["타겟", "챔피언 모델", f"검증 {metric_label}", "보조 지표", "판정", "주요 피처"], rows, caption="타겟별 결과 요약",
+                widths=[3.0, 3.6, 1.8, 2.4, 1.5, 4.7], align=["left", "left", "right", "right", "center", "left"], verdict_col=4)
     recs = rec.get("recommendations") or []
     extra = [slots[k] for k in ("lineage", "operation") if slots.get(k)]          # 없앤 장의 소견은 요약에 붙임
     for k in ("lineage", "operation"):
@@ -1091,8 +1138,13 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         + [f"권고: {r}" for r in recs[:2]]
         + ([f"참고: 같은 조건에서 더 높은 점수의 버전 {better['version']}({better['mean_val_score']:.4f})이 있습니다."] if better else []))
     R.note("요약 소견", "\n".join([slot("summary", summary_default)] + [str(x) for x in extra]))
-    R.para(f"판정 기준: {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합 "
-           f"(적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부).", size=8, color=C_MUTED, space_after=2)
+    R.para(f"판정 기준: 검증 {metric_label} >= {PASS_SCORE} 적합, {CONDITIONAL_SCORE} 이상 조건부, 그 미만 부적합 "
+           f"(적합이라도 학습-검증 간극이 {OVERFIT_LIMIT}를 넘으면 조건부). "
+           f"점수 용어: 학습 {metric_label} = 모델이 배운 행을 다시 맞혀 본 점수(과적합 확인용), "
+           f"검증 {metric_label} = 모델이 배우지 않은 행을 맞혀 본 점수(5겹 교차검증, 판정 기준)."
+           + (f" 학습 제외 행이 있으면 검증 {metric_label}를 둘로 적습니다: 제외 행 미포함(판정 기준), "
+              f"제외 행 포함(학습 제외 행까지 최종 모델로 예측해 함께 계산, 이상치가 섞인 실제 데이터 기준)." if has_excl else ""),
+           size=8, color=C_MUTED, space_after=2)
 
     # -- 2. 데이터와 피처 -----------------------------------------------------------------
     R.h1("2. 데이터와 피처")
@@ -1102,6 +1154,12 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     data_default = (f"{data_name}: {prof.get('rows_loaded', 0):,}행 x {prof.get('columns_loaded', 0)}열 (표 구조: {layout_txt}). "
                     f"학습 사용 {used}. 피처 결측 {prof.get('missing_imputed_cells', 0):,}칸은 학습 데이터 기준값으로 대치.")
     R.para(slot("data", data_default), size=9, space_after=4)
+    excl_lines = [f"{t['name']}: {exclusion_line(t, metric_label)}" for t in targets if exclusion_line(t, metric_label)]
+    if excl_lines:
+        R.para("학습 제외 행: 데이터의 '제외' 열에 글자가 있는 행(직접 표시)과, 값이 중앙값에서 크게 벗어난 행"
+               "(중앙값·절대편차 기준 3.5배 초과, 자동 이상치)은 학습에서 뺐습니다. '제외' 열에 '포함'이라고 쓴 행은 자동으로 빼지 않습니다. "
+               "뺀 행 목록은 버전 폴더의 excluded_rows.xlsx에 있습니다.\n" + "\n".join(excl_lines),
+               size=9, space_after=4)
     schema, stats, dstats, required_inputs = merged_feature_info(targets)
     miss = prof.get("feature_missing", {})
     frows = []
@@ -1158,10 +1216,10 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     R.h1("3. 분석 방법")
     if task == "regression":
         method = ("후보 5종(HistGradientBoosting, RandomForest, ExtraTrees, Ridge, ElasticNet)을 5겹 교차검증으로 비교해 "
-                  "교차검증 예측의 R²가 가장 높은 모델을 챔피언으로 고르고, 전체 데이터로 다시 학습했습니다.")
+                  "검증 R²가 가장 높은 모델을 챔피언으로 고르고, 학습 행 전체로 다시 학습했습니다.")
     else:
         method = ("후보 5종(HistGradientBoosting, RandomForest, ExtraTrees, LogisticRegression, KNeighbors)을 클래스 비율을 유지한 "
-                  "5겹 교차검증으로 비교해 Macro-F1이 가장 높은 모델을 챔피언으로 고르고, 전체 데이터로 다시 학습했습니다.")
+                  "5겹 교차검증으로 비교해 검증 Macro-F1이 가장 높은 모델을 챔피언으로 고르고, 학습 행 전체로 다시 학습했습니다.")
     R.para(method + " 전처리(수치 중앙값 대치·표준화, 범주 원-핫, 날짜 분해)는 각 겹의 학습 데이터로만 맞춰 누수를 막았고, "
            "피처 기여도는 순열 중요도입니다.", size=9)
 
@@ -1175,6 +1233,8 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
                space_after=1).paragraph_format.keep_with_next = True
         if best_src:
             R.para(source_line(t), size=9, color=C_INK, space_after=1).paragraph_format.keep_with_next = True
+        if exclusion_line(t, metric_label):
+            R.para(exclusion_line(t, metric_label), size=9, color=C_INK, space_after=1).paragraph_format.keep_with_next = True
         if task == "regression":
             iv = c.get("prediction_interval") or {}
             half = (iv["residual_upper"] - iv["residual_lower"]) / 2 if iv else None
@@ -1184,10 +1244,10 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
             hdr = ["순위", "모델", "검증 R²", "학습 R²", "간극", "MAE"]
             body = [[e["rank"], e["model_name"], e["val_r2"], e["train_r2"], e["overfit_gap"], e["mae"]] for e in board[:3]]
         else:
-            cards = [("Macro-F1", f"{c['val_f1_macro']:.4f}", c["champion_model"]), ("정확도", f"{c['accuracy']:.4f}", "전체 정답 비율"),
+            cards = [("검증 Macro-F1", f"{c['val_f1_macro']:.4f}", c["champion_model"]), ("정확도", f"{c['accuracy']:.4f}", "전체 정답 비율"),
                      ("균형 정확도", f"{c['balanced_accuracy']:.4f}", "클래스별 재현율 평균"),
                      ("ROC-AUC", fmt(c.get("roc_auc")), "확률 순위 성능")]
-            hdr = ["순위", "모델", "Macro-F1", "학습 F1", "간극", "정확도"]
+            hdr = ["순위", "모델", "검증 Macro-F1", "학습 Macro-F1", "간극", "정확도"]
             body = [[e["rank"], e["model_name"], e["val_f1_macro"], e["train_f1_macro"], e["overfit_gap"], e["accuracy"]]
                     for e in board[:3]]
         R.metric_cards(cards)

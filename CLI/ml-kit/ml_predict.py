@@ -29,6 +29,7 @@ import difflib
 import argparse
 import warnings
 from datetime import datetime
+from itertools import product
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
 import numpy as np
@@ -46,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.4.1"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.9.0"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -225,6 +226,16 @@ def run_cli(execute: Callable[[], Dict[str, Any]], hint: str = "") -> None:
 
 class JsonArgumentParser(argparse.ArgumentParser):
     """argparse that reports usage errors as Agent CLI Protocol JSON instead of bare text."""
+
+    def print_help(self, file=None) -> None:  # type: ignore[override]
+        """R7: help text goes to stderr, stdout gets exactly 1 JSON line (argparse then exits 0)."""
+        super().print_help(sys.stderr)
+        skill = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] or __file__)), "SKILL.md")
+        emit_json_response({
+            "status": "ok", "tool": "ml-kit", "command": "help", "verified": True, "skill_file": skill,
+            "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 그대로 사용하세요. "
+                               "도구 코드(.py)는 읽지 마세요. 방법을 모르겠으면 사용자에게 물어보세요.",
+        })
 
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
@@ -455,7 +466,7 @@ def load_data_file(
         try:
             df_raw = pd.read_excel(file_path, header=None)
         except ImportError:
-            raise InputError("openpyxl 패키지가 설치되어 있지 않아 .xlsx를 읽을 수 없습니다. requirements.txt를 설치하십시오.")
+            raise InputError("openpyxl 패키지가 설치되어 있지 않아 .xlsx를 읽을 수 없습니다. `python -m pip install openpyxl`로 설치하십시오.")
         except PermissionError:
             raise PermissionError(f"파일이 다른 프로그램(Excel 등)에서 잠겨 있습니다. 파일을 닫고 다시 실행하십시오: {file_path}")
     elif ext == ".xls":
@@ -525,10 +536,13 @@ def load_data_file(
 
     df_data = df_raw.iloc[start_idx:].copy()
     df_data.columns = headers
-    df_data = df_data.reset_index(drop=True)
 
     # Clean rows/cols that are entirely NaN
     df_data = df_data.dropna(how="all", axis=0).dropna(how="all", axis=1)
+    # 1-based row number in the source file for each data row (exact for .xlsx; CSV blank lines are skipped by the reader)
+    source_rows = [int(i) + 1 for i in df_data.index]
+    df_data = df_data.reset_index(drop=True)
+    df_data.attrs["source_rows"] = source_rows
     return df_data
 
 
@@ -876,6 +890,228 @@ def write_csv_excel_compatible(df: pd.DataFrame, path: str, encoding: Optional[s
     return save_with_lock_fallback(path, _write, what="CSV 파일")
 
 
+# ==============================================================================
+# C8. Table Interpolation (ml_map.py, and the measured-data comparison of ml_predict.py, 2.6.0+)
+# ==============================================================================
+#
+# grid      : every combination of the key values exists (one key: evenly spaced) -> classic multilinear
+#             interpolation, end segments extended linearly outside the table.
+# scattered : 1 key -> the two neighbouring rows; 2-3 keys -> the enclosing simplex (Delaunay, keys scaled to 0-1);
+#             outside the measured area a least-squares trend line (never the two end points).
+# Rows need a '__row' column (Excel row number shown as evidence).
+
+EXCLUDE_COL = "제외"
+INCLUDE_MARK = "포함"
+NEAREST_N = 5
+MAX_KEYS = 3              # interpolation up to 3 numeric keys; more keys -> nearest rows only
+NUMERIC_SHARE = 0.9       # a column is numeric when this share of its non-empty cells parse as numbers
+
+
+def _is_numeric_col(s: pd.Series) -> bool:
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return False
+    filled = s.notna() & (s.astype(str).str.strip() != "")
+    if filled.sum() == 0:
+        return False
+    return coerce_numeric(s)[filled].notna().mean() >= NUMERIC_SHARE
+
+
+def _cell(v: Any) -> Any:
+    """JSON / Excel friendly cell value."""
+    if isinstance(v, (pd.Timestamp, datetime)):
+        return v.isoformat(sep=" ", timespec="minutes")
+    if isinstance(v, (np.floating, float)):
+        return None if not np.isfinite(v) else round(float(v), 6)
+    if isinstance(v, np.integer):
+        return int(v)
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return None
+    return v
+
+
+def _fmt(v: float) -> str:
+    return f"{v:.6g}"
+
+
+class Table:
+    """Rows filtered by categorical keys, numeric keys (n x k) and value columns (n x m)."""
+
+    def __init__(self, df: pd.DataFrame, keys: List[str], values: List[str], warnings: List[str]):
+        self.keys, self.values = keys, values
+        K = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in keys])
+        V = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in values])
+        ok = np.isfinite(K).all(axis=1) & np.isfinite(V).all(axis=1)
+        if (~ok).sum():
+            warnings.append(f"기준 열이나 구할 열에 빈칸·글자가 있는 {int((~ok).sum())}행은 쓰지 않았습니다")
+        self.df = df[ok].reset_index(drop=True)
+        self.K, self.V = K[ok], V[ok]
+        self.rows = self.df["__row"].to_numpy()
+        n, k = self.K.shape
+        if n < max(2, k + 1):
+            raise InputError(f"계산에 쓸 수 있는 행이 {n}개뿐입니다 (기준 열 {k}개에는 {max(2, k + 1)}행 이상 필요).")
+        self.lo, self.hi = self.K.min(axis=0), self.K.max(axis=0)
+        span = self.hi - self.lo
+        self.span = np.where(span > 0, span, 1.0)
+        self._merge(warnings)
+        self.mode = "grid" if self._is_grid() else "scattered"
+        self._tri = None
+        self._trend = None
+
+    def _merge(self, warnings: List[str]) -> None:
+        """One point per key combination: identical duplicates are merged, differing ones averaged (warned)."""
+        frame = pd.DataFrame(self.K, columns=self.keys)
+        groups = frame.groupby(self.keys, sort=True).indices
+        pk, pv, pr, conflicts = [], [], [], 0
+        for _, idx in groups.items():
+            idx = np.asarray(idx)
+            vals = self.V[idx]
+            if len(idx) > 1 and not np.allclose(vals, vals[0], equal_nan=True):
+                conflicts += 1
+            pk.append(self.K[idx[0]])
+            pv.append(vals.mean(axis=0))
+            pr.append([int(r) for r in self.rows[idx]])
+        self.conflicts = conflicts
+        if conflicts:
+            warnings.append(f"같은 기준 값에 서로 다른 값이 있는 조합 {conflicts}개는 평균으로 계산했습니다")
+        self.PK, self.PV, self.PR = np.array(pk), np.array(pv), pr
+
+    def _is_grid(self) -> bool:
+        if self.conflicts:
+            return False
+        self.axes = [np.unique(self.PK[:, j]) for j in range(self.PK.shape[1])]
+        if any(len(a) < 2 for a in self.axes):
+            return False
+        if len(self.axes) == 1:
+            # One key: every table is a "full grid", so only an evenly spaced key (0, 5, 10, ...) counts as a map table.
+            # Uneven keys (process records) are interpolated the same way inside, but extrapolated by the trend line.
+            d = np.diff(self.axes[0])
+            return bool(np.allclose(d, d[0], rtol=1e-6, atol=1e-9 * max(1.0, abs(d[0]))))
+        return int(np.prod([len(a) for a in self.axes])) == len(self.PK)
+
+    # -- forward ---------------------------------------------------------------
+    def out_of_range(self, x: np.ndarray) -> Dict[str, str]:
+        def share(d: float, span: float) -> str:
+            r = d / span
+            return f"데이터 폭의 {r:.1f}배" if r >= 1 else f"데이터 폭의 {r:.0%}" if r >= 0.01 else "데이터 폭의 1% 미만"
+        out = {}
+        for j, key in enumerate(self.keys):
+            lo, hi, span = self.lo[j], self.hi[j], self.span[j]
+            if x[j] < lo:
+                out[key] = f"범위 {_fmt(lo)}~{_fmt(hi)}보다 {_fmt(lo - x[j])} 낮음 ({share(lo - x[j], span)})"
+            elif x[j] > hi:
+                out[key] = f"범위 {_fmt(lo)}~{_fmt(hi)}보다 {_fmt(x[j] - hi)} 높음 ({share(x[j] - hi, span)})"
+        return out
+
+    def _basis(self, idx: List[int], w: List[float]) -> List[Dict[str, Any]]:
+        out = []
+        for i, wi in zip(idx, w):
+            if abs(wi) > 1e-12:
+                out.append({"row": self.PR[i][0] if len(self.PR[i]) == 1 else self.PR[i], "weight": round(float(wi), 6)})
+        return out
+
+    def _grid(self, x: np.ndarray) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+        seg, frac = [], []
+        for j, a in enumerate(self.axes):
+            i = int(np.clip(np.searchsorted(a, x[j], side="right") - 1, 0, len(a) - 2))
+            seg.append(i)
+            frac.append((x[j] - a[i]) / (a[i + 1] - a[i]))   # <0 or >1 outside the table: linear extension
+        index = {tuple(p): n for n, p in enumerate(self.PK)}
+        val = np.zeros(self.PV.shape[1])
+        idx, wts = [], []
+        for corner in product((0, 1), repeat=len(self.axes)):
+            w = 1.0
+            key = []
+            for j, c in enumerate(corner):
+                w *= frac[j] if c else 1.0 - frac[j]
+                key.append(self.axes[j][seg[j] + c])
+            n = index[tuple(key)]
+            val += w * self.PV[n]
+            idx.append(n)
+            wts.append(w)
+        return val, self._basis(idx, wts)
+
+    def _trend_value(self, x: np.ndarray) -> np.ndarray:
+        if self._trend is None:
+            A = np.column_stack([np.ones(len(self.PK)), (self.PK - self.lo) / self.span])
+            self._trend = np.linalg.lstsq(A, self.PV, rcond=None)[0]
+        return np.concatenate([[1.0], (x - self.lo) / self.span]) @ self._trend
+
+    def _scattered(self, x: np.ndarray) -> Tuple[Optional[np.ndarray], List[Dict[str, Any]]]:
+        if self.PK.shape[1] == 1:
+            a = self.PK[:, 0]
+            if not (a[0] <= x[0] <= a[-1]):
+                return None, []
+            i = int(np.clip(np.searchsorted(a, x[0], side="right") - 1, 0, len(a) - 2))
+            t = (x[0] - a[i]) / (a[i + 1] - a[i])
+            return (1 - t) * self.PV[i] + t * self.PV[i + 1], self._basis([i, i + 1], [1 - t, t])
+        if self._tri is None:
+            try:
+                from scipy.spatial import Delaunay
+            except ImportError:
+                raise InputError("scipy 패키지가 없어 기준 2~3개 보간을 할 수 없습니다. `python -m pip install scipy`로 설치하십시오.")
+            try:
+                self._tri = Delaunay((self.PK - self.lo) / self.span)
+            except Exception as e:  # degenerate layout (all points on a line, too few points)
+                raise InputError(f"실측 점이 한 줄로 놓여 있거나 너무 적어 둘러싼 점을 찾을 수 없습니다: {e}")
+        q = (x - self.lo) / self.span
+        s = int(self._tri.find_simplex(q))
+        if s < 0:
+            return None, []
+        T = self._tri.transform[s]
+        b = T[:-1] @ (q - T[-1])
+        w = np.append(b, 1 - b.sum())
+        verts = self._tri.simplices[s]
+        return w @ self.PV[verts], self._basis(list(verts), list(w))
+
+    def at(self, x: np.ndarray) -> Dict[str, Any]:
+        oor = self.out_of_range(x)
+        if self.mode == "grid":
+            val, basis = self._grid(x)
+            method = "격자 보간" + (" (끝 구간 직선 연장)" if oor else "")
+            extrap = bool(oor)
+        else:
+            val, basis = self._scattered(x)
+            if val is None:
+                val, basis = self._trend_value(x), []
+                method, extrap = "전체 추세선 외삽 (실측이 둘러싼 범위 밖)", True
+            else:
+                method = "위아래 실측 2점 보간" if self.PK.shape[1] == 1 else f"둘러싼 실측 {len(basis)}점 보간"
+                extrap = False
+        return {"values": {c: round(float(v), 6) for c, v in zip(self.values, val)}, "method": method,
+                "basis": basis, "extrapolated": extrap, "out_of_range": oor}
+
+
+def nearest_rows(df: pd.DataFrame, cols: List[str], target: np.ndarray, span: np.ndarray,
+                 show: List[str], n: int = NEAREST_N) -> List[Dict[str, Any]]:
+    X = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in cols])
+    d = np.sqrt(np.nansum(((X - target) / span) ** 2, axis=1))
+    d[~np.isfinite(X).all(axis=1)] = np.inf
+    out = []
+    for i in np.argsort(d, kind="stable")[:n]:
+        if not np.isfinite(d[i]):
+            break
+        rec = {"row": int(df["__row"].iloc[i]), "distance": round(float(d[i]), 4)}
+        rec.update({c: _cell(df[c].iloc[i]) for c in show})
+        out.append(rec)
+    return out
+
+
+def _crossings(xs: np.ndarray, ys: np.ndarray, y0: float) -> List[float]:
+    """x where the piecewise linear curve (xs, ys) crosses y0 (segments with NaN are skipped)."""
+    out: List[float] = []
+    for i in range(len(xs) - 1):
+        a, b = ys[i], ys[i + 1]
+        if not (np.isfinite(a) and np.isfinite(b)):
+            continue
+        if a == y0:
+            out.append(float(xs[i]))
+        elif (a - y0) * (b - y0) < 0:
+            out.append(float(xs[i] + (y0 - a) * (xs[i + 1] - xs[i]) / (b - a)))
+    if len(ys) and np.isfinite(ys[-1]) and ys[-1] == y0:
+        out.append(float(xs[-1]))
+    return sorted(set(round(v, 10) for v in out))
+
+
 # ##############################################################################
 # PART P. INFERENCE ENGINE
 # ##############################################################################
@@ -1080,6 +1316,125 @@ def parse_inline_input(input_str: str) -> pd.DataFrame:
     return pd.DataFrame([row_dict])
 
 
+# ==============================================================================
+# 4-B. Measured-data comparison (map check, 2.7.0)
+# ==============================================================================
+#
+# Every regression prediction is compared with the training rows themselves (vX/model_dataset.csv, which travels
+# with the version folder): <= 3 numeric inputs -> the same table interpolation as ml_map.py; more inputs ->
+# inverse-distance weighted mean of the 5 nearest measured rows (inputs scaled to 0-1). Categorical inputs keep
+# only rows of the same category. Rows left out of training ('학습제외_<target>' = 1) are not used.
+# The comparison never fails the prediction: problems become map_check_notes.
+
+MAP_CHECK_MAX_ROWS = 20000
+MAP_WARN_NEAR = 0.1       # IDW comparison only warns when the nearest measured row is this close (inputs scaled to 0-1)
+SNAPSHOT_ROW_COL = "원본행"
+SNAPSHOT_EXCL_PREFIX = "학습제외_"
+
+
+def _load_snapshot(version_dir: str, cache: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    if version_dir not in cache:
+        path = os.path.join(version_dir, "model_dataset.csv")
+        cache[version_dir] = load_data_file(path) if os.path.isfile(path) else None
+    return cache[version_dir]
+
+
+def _idw(sub: pd.DataFrame, keys: List[str], target: str, x: np.ndarray) -> Dict[str, Any]:
+    K = np.column_stack([coerce_numeric(sub[c]).to_numpy(dtype=float) for c in keys])
+    y = coerce_numeric(sub[target]).to_numpy(dtype=float)
+    ok = np.isfinite(K).all(axis=1) & np.isfinite(y)
+    K, y, rows = K[ok], y[ok], sub["__row"].to_numpy()[ok]
+    lo, hi = K.min(axis=0), K.max(axis=0)
+    span = np.where(hi - lo > 0, hi - lo, 1.0)
+    d = np.sqrt((((K - x) / span) ** 2).sum(axis=1))
+    near = np.argsort(d, kind="stable")[:NEAREST_N]
+    if d[near[0]] == 0:
+        near = near[d[near] == 0]
+        w = np.full(len(near), 1.0 / len(near))
+    else:
+        w = 1.0 / d[near]
+        w = w / w.sum()
+    return {"value": float(w @ y[near]), "method": f"가까운 실측 {len(near)}행 거리 가중평균",
+            "basis": [{"row": int(rows[i]), "weight": round(float(wi), 6)} for i, wi in zip(near, w)],
+            "extrapolated": bool(((x < lo) | (x > hi)).any()), "nearest_distance": float(d[near[0]])}
+
+
+def compare_with_measured(meta: Dict[str, Any], target: str, version_dir: str, df_evaled: pd.DataFrame,
+                          cache: Dict[str, Any]) -> Dict[str, Any]:
+    """Measured-data comparison values for each input row (NaN where not computable) or a note why not."""
+    schema = meta.get("feature_schema") or {}
+    derived = {e.split("=", 1)[0].strip() for e in (meta.get("derived_evals") or []) if "=" in e}
+    keys = [c for c in schema.get("numeric", []) if c not in derived]
+    cats = list(schema.get("categorical", {}))
+    if not schema or not keys:
+        return {"note": f"타겟 '{target}': 숫자 입력이 없거나 2.1.0 이전 모델이라 실측 비교값을 계산하지 않았습니다"}
+    if len(df_evaled) > MAP_CHECK_MAX_ROWS:
+        return {"note": f"입력이 {len(df_evaled):,}행으로 많아 실측 비교값을 계산하지 않았습니다 (최대 {MAP_CHECK_MAX_ROWS:,}행)"}
+    data = _load_snapshot(version_dir, cache)
+    if data is None or target not in data.columns or any(c not in data.columns for c in keys + cats):
+        return {"note": f"타겟 '{target}': 버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없거나 열이 달라 실측 비교값을 계산하지 않았습니다"}
+    data = data.copy()
+    notes: List[str] = []
+    if SNAPSHOT_ROW_COL in data.columns:
+        data["__row"] = coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int)
+    else:
+        data["__row"] = np.arange(2, len(data) + 2)
+        notes.append("2.7.0 이전에 학습한 버전이라 근거 행 번호는 학습 데이터 사본(model_dataset.csv)의 줄 번호입니다")
+    excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
+    if excl in data.columns:
+        data = data[coerce_numeric(data[excl]).fillna(0) != 1]
+    data = data[coerce_numeric(data[target]).notna()]
+    for c in cats:
+        data[c] = normalize_category(data[c])
+
+    X = np.column_stack([coerce_numeric(df_evaled[c]).to_numpy(dtype=float) if c in df_evaled.columns
+                         else np.full(len(df_evaled), np.nan) for c in keys])
+    C = pd.DataFrame({c: normalize_category(df_evaled[c]) if c in df_evaled.columns else None for c in cats},
+                     index=df_evaled.index) if cats else None
+    out = {"values": np.full(len(df_evaled), np.nan), "method": [""] * len(df_evaled),
+           "basis": [[] for _ in range(len(df_evaled))], "extrapolated": [False] * len(df_evaled),
+           "warnable": [False] * len(df_evaled)}
+    tables: Dict[Tuple, Any] = {}
+    for i in range(len(df_evaled)):
+        if not np.isfinite(X[i]).all():
+            out["method"][i] = "계산 불가 (입력 빈칸)"
+            continue
+        cat_key = tuple(C.iloc[i].tolist()) if C is not None else ()
+        if cat_key not in tables:
+            sub = data
+            for c, v in zip(cats, cat_key):
+                if (sub[c] == v).any():
+                    sub = sub[sub[c] == v]
+                else:
+                    notes.append(f"'{c}={v}'은(는) 학습 데이터에 없어 모든 행으로 비교했습니다")
+            tab = None
+            if len(keys) <= MAX_KEYS:
+                try:
+                    tab = Table(sub, keys, [target], [])
+                except InputError:
+                    tab = None
+            tables[cat_key] = (sub, tab)
+        sub, tab = tables[cat_key]
+        try:
+            if tab is not None:
+                r = tab.at(X[i])
+                out["values"][i] = r["values"][target]
+                out["method"][i], out["basis"][i], out["extrapolated"][i] = r["method"], r["basis"], r["extrapolated"]
+                out["warnable"][i] = not r["extrapolated"]
+            else:
+                r = _idw(sub, keys, target, X[i])
+                out["values"][i] = r["value"]
+                out["method"][i], out["basis"][i], out["extrapolated"][i] = r["method"], r["basis"], r["extrapolated"]
+                # with many inputs the nearest rows can be far apart: only a close neighbourhood is worth a warning
+                out["warnable"][i] = (not r["extrapolated"]) and r["nearest_distance"] <= MAP_WARN_NEAR
+        except Exception as e:  # e.g. too few rows of that category
+            out["method"][i] = f"계산 불가 ({str(e)[:60]})"
+    out["keys"] = keys
+    if notes:
+        out["note"] = "; ".join(dict.fromkeys(notes))
+    return out
+
+
 LOW_CONFIDENCE_THRESHOLD = 0.6
 
 
@@ -1175,6 +1530,9 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     category_warnings: List[str] = []
     missing_counts: Dict[str, int] = {}
     column_aliases: Dict[str, str] = {}
+    map_warnings: List[str] = []
+    map_notes: List[str] = []
+    snapshot_cache: Dict[str, Any] = {}
 
     # 3. Perform Inference per Target
     for item in model_items:
@@ -1320,6 +1678,34 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                     [round(float(l), 4), round(float(h), 4)] for l, h in zip(lo, hi)
                 ]
 
+        # Measured-data comparison (map check): same conditions looked up in the training rows
+        try:
+            mc = compare_with_measured(meta, target_name, os.path.dirname(item["joblib_path"]), df_evaled, snapshot_cache)
+        except Exception as e:  # the comparison must never break the prediction
+            mc = {"note": f"타겟 '{target_name}': 실측 비교값 계산 실패 ({type(e).__name__}: {str(e)[:80]})"}
+        if mc.get("note"):
+            map_notes.append(mc["note"])
+        if "values" in mc:
+            vals = mc["values"]
+            diff = preds - vals
+            outside = ((vals < lo) | (vals > hi)) if lo is not None else np.zeros(len(vals), dtype=bool)
+            outside = outside & np.isfinite(vals) & np.array(mc["warnable"], dtype=bool)
+            df_result[f"map_{target_name}"] = np.round(vals, 4)
+            df_result[f"map_diff_{target_name}"] = np.round(diff, 4)
+            df_result[f"map_방식_{target_name}"] = [m + (" [외삽]" if e else "") for m, e in zip(mc["method"], mc["extrapolated"])]
+            predictions_summary[target_name]["map_check_keys"] = mc["keys"]
+            predictions_summary[target_name]["map_check_outside_interval"] = int(outside.sum())
+            if is_inline and len(preds) <= 5:
+                predictions_summary[target_name]["map_check"] = [
+                    {"value": round(float(v), 4) if np.isfinite(v) else None,
+                     "diff": round(float(d), 4) if np.isfinite(d) else None,
+                     "method": m, "basis": b, "extrapolated": e, "outside_interval": bool(o)}
+                    for v, d, m, b, e, o in zip(vals, diff, mc["method"], mc["basis"], mc["extrapolated"], outside)]
+            if outside.any():
+                map_warnings.append(
+                    f"타겟 '{target_name}': 실측 비교값이 90% 예측 범위 밖인 건 {int(outside.sum())}건 "
+                    f"(모델 예측과 실측 데이터가 많이 다름, 해당 조건의 가까운 실측 행 확인 필요)")
+
     # 4. Save Output if Requested or File-based
     out_path = args.out
     saved_file = None
@@ -1362,6 +1748,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
     ]
     for w in missing_warnings:
         sys.stderr.write(f"[WARN] Missing input: {w}\n")
+    for w in map_warnings:
+        sys.stderr.write(f"[WARN] Map check: {w}\n")
 
     def _brief(t: str) -> str:
         ps = predictions_summary[t]
@@ -1377,6 +1765,7 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         + (f" | 저확신 경고 {len(low_conf_warnings)}건" if low_conf_warnings else "")
         + (f" | 결측 대치 {sum(missing_counts.values())}건" if missing_counts else "")
         + (f" | 미학습 범주 경고 {len(category_warnings)}건" if category_warnings else "")
+        + (f" | 실측 비교 경고 {len(map_warnings)}건" if map_warnings else "")
     )
     agent_directive = (
         f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
@@ -1384,7 +1773,10 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         + (" with low-confidence warning (class probability < 0.6 for some rows)" if low_conf_warnings else "")
         + (" with missing-input warning (empty or non-numeric inputs were imputed)" if missing_counts else "")
         + (" with unseen-category warning" if category_warnings else "")
+        + (" with map-check warning (measured-data comparison outside the prediction interval)" if map_warnings else "")
         + ". "
+        + ("Report each prediction together with its measured-data comparison (map_check: value, diff, method) in Korean as "
+           "'실측 비교값'. " if any("map_check_keys" in p for p in predictions_summary.values()) else "")
         + (f"Output saved to {os.path.basename(saved_file)}. " if saved_file else "Inline predictions returned. ")
         + "Next step: report inference results to user."
     )
@@ -1407,12 +1799,229 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         "missing_input_warnings": missing_warnings,
         "unseen_category_warning": bool(category_warnings),
         "unseen_category_warnings": category_warnings,
+        "map_check_warning": bool(map_warnings),
+        "map_check_warnings": map_warnings,
         "preview": preview,
         "agent_directive": agent_directive
     }
+    if map_notes:
+        result["map_check_notes"] = list(dict.fromkeys(map_notes))
     if column_aliases:
         result["column_aliases"] = column_aliases
     return result
+
+
+# ==============================================================================
+# 5-B. Model-based reverse lookup (--find / --vary, 2.8.0)
+# ==============================================================================
+#
+# "Which value of <vary> makes the model predict <target> = y0, the other inputs fixed?"
+#   - <vary> is scanned over its training range in FIND_STEPS steps in one batch prediction.
+#   - Crossings closer than FIND_MERGE x range are one answer (tree models predict in steps and add
+#     near-duplicate crossings); a merged answer is reported as a span. Windows narrower than that and without an
+#     answer are step noise and dropped.
+#   - Operating windows: <vary> ranges where y0 lies inside the 90% prediction interval, i.e.
+#     prediction in [y0 - residual_upper, y0 - residual_lower].
+#   - Inputs the user did not fix: numeric -> training median (reported), categorical/date -> STOP_RETRY [후보].
+#   - Measured cross-check: the same lookup on the training rows (model_dataset.csv) when the model has
+#     <= 3 numeric inputs (table interpolation), plus the 5 nearest measured rows.
+#   - No extrapolation: tree models are flat outside the training range.
+
+FIND_STEPS = 2000
+FIND_MERGE = 0.03     # answers / windows closer than 3% of the scanned range are merged (tree models step)
+
+
+def _spans(xs: np.ndarray, ok: np.ndarray, gap: float) -> List[List[float]]:
+    """Contiguous runs of ok=True as [from, to]; runs separated by less than gap are joined."""
+    out: List[List[float]] = []
+    for x, flag in zip(xs, ok):
+        if not flag:
+            continue
+        if out and x - out[-1][1] <= gap:
+            out[-1][1] = float(x)
+        else:
+            out.append([float(x), float(x)])
+    return out
+
+
+def _model_curve(pipe: Any, meta: Dict[str, Any], base: Dict[str, Any], vary: str, xs: np.ndarray) -> np.ndarray:
+    df = pd.DataFrame({**{k: [v] * len(xs) for k, v in base.items()}, vary: xs})
+    df = apply_inference_evals(df, meta.get("derived_evals", []))
+    return np.asarray(pipe.predict(prepare_features(df, meta["feature_schema"])), dtype=float)
+
+
+def execute_find(args: argparse.Namespace) -> Dict[str, Any]:
+    goal = parse_inline_input(args.find).iloc[0].to_dict()
+    if len(goal) != 1:
+        raise InputError("--find에는 목표 하나만 주십시오 (예: --find \"생산효율=50\").")
+    (goal_name, goal_val), = goal.items()
+    try:
+        y0 = float(goal_val)
+    except (TypeError, ValueError):
+        raise InputError(f"목표 값 '{goal_val}'이(가) 숫자가 아닙니다.")
+    items = resolve_target_models(target_path=args.model, meta_path=args.meta, filter_targets=[str(goal_name)])
+    item = items[0]
+    meta, pipe, target = item["meta"], item["pipeline"], item["target"]
+    if meta.get("task", "regression") != "regression":
+        raise InputError(f"타겟 '{target}'은(는) 분류 모델입니다. 모델 반대 찾기는 숫자 타겟(회귀)만 됩니다.")
+    schema = meta.get("feature_schema")
+    if not schema:
+        raise InputError("2.1.0 이전에 학습한 모델이라 반대 찾기를 할 수 없습니다. 다시 학습하십시오.")
+    derived = [e.split("=", 1)[0].strip() for e in meta.get("derived_evals", []) if "=" in e]
+    raw_inputs = [f for f in meta.get("features_required", []) if f not in derived]
+    numeric_in = [f for f in raw_inputs if f in schema.get("numeric", [])]
+    stats = meta.get("feature_stats", {})
+
+    vary = resolve_column_names([args.vary.strip()], raw_inputs, "바꿀 입력(--vary)")[0][0]
+    if vary not in numeric_in or vary not in stats:
+        raise InputError(f"'{vary}'은(는) 숫자 입력이 아니라 반대 찾기로 바꿀 수 없습니다. [후보] {', '.join(numeric_in)}")
+    given = parse_inline_input(args.input).iloc[0].to_dict() if args.input else {}
+    names, _ = resolve_column_names([str(k) for k in given], raw_inputs, "고정 입력(-i)") if given else ([], {})
+    fixed = {n: given[k] for k, n in zip(given, names)}
+    if vary in fixed:
+        raise InputError(f"'{vary}'는 --vary로 찾는 입력이라 -i에 함께 줄 수 없습니다.")
+
+    filled: Dict[str, float] = {}
+    for f in raw_inputs:
+        if f == vary or f in fixed:
+            continue
+        if f in numeric_in and f in stats:
+            filled[f] = float(stats[f]["median"])
+        elif f in schema.get("categorical", {}):
+            raise InputError(f"모델 입력 '{f}' 값이 필요합니다. -i에 '{f}=<값>'을 넣어 주십시오. "
+                             f"[후보] {', '.join(map(str, schema['categorical'][f][:20]))}")
+        else:
+            raise InputError(f"모델 입력 '{f}' 값이 필요합니다. -i에 '{f}=<값>'을 넣어 주십시오.")
+    base = {**fixed, **filled}
+    warnings: List[str] = []
+    for f, v in fixed.items():
+        st = stats.get(f)
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if st and (fv < st["min"] or fv > st["max"]):
+            warnings.append(f"고정 입력 '{f}'={_fmt(fv)}이(가) 학습 범위({_fmt(st['min'])}~{_fmt(st['max'])}) 밖이라 답을 믿기 어렵습니다")
+
+    lo, hi = float(stats[vary]["min"]), float(stats[vary]["max"])
+    xs = np.linspace(lo, hi, FIND_STEPS + 1)
+    ys = _model_curve(pipe, meta, base, vary, xs)
+    merge = FIND_MERGE * (hi - lo)
+
+    # answers: crossings, near-duplicates merged into a span
+    answers = []
+    cross = np.array(_crossings(xs, ys, y0))
+    for span in _spans(cross, np.ones(len(cross), dtype=bool), merge):
+        mid = (span[0] + span[1]) / 2
+        answers.append({vary: round(mid, 6), **({"from": round(span[0], 6), "to": round(span[1], 6)} if span[1] > span[0] else {})})
+    # verification: the curve must bracket the target right around every answer
+    step = (hi - lo) / FIND_STEPS
+    unverified = []
+    for a in answers:
+        a_lo, a_hi = a.get("from", a[vary]) - step, a.get("to", a[vary]) + step
+        chk = _model_curve(pipe, meta, base, vary, np.linspace(max(lo, a_lo), min(hi, a_hi), 50))
+        chk = np.array([chk.min(), chk.max()])
+        if not (chk[0] <= y0 <= chk[1]):
+            unverified.append(f"{vary}={_fmt(a[vary])} 근처에서 목표값을 지나지 않음")
+        a["check"] = [round(float(c), 4) for c in chk]
+
+    # operating windows: target inside the 90% prediction interval
+    iv = meta.get("prediction_interval")
+    windows: List[Dict[str, float]] = []
+    if iv:
+        band = (y0 - float(iv["residual_upper"]), y0 - float(iv["residual_lower"]))
+        for a, b in _spans(xs, (ys >= band[0]) & (ys <= band[1]), merge):
+            if b - a < merge and not any(a <= ans[vary] <= b for ans in answers):
+                continue   # a sliver touching the band without crossing the target: step noise
+            windows.append({"from": round(a, 6), "to": round(b, 6)})
+    else:
+        warnings.append("예측 오차 정보가 없는 모델이라 운전 구간을 계산하지 않았습니다")
+
+    # measured cross-check on the training rows
+    measured: Dict[str, Any] = {}
+    data = _load_snapshot(os.path.dirname(item["joblib_path"]), {})
+    near: List[Dict[str, Any]] = []
+    if data is not None and target in data.columns and all(c in data.columns for c in raw_inputs if c in numeric_in):
+        data = data.copy()
+        data["__row"] = (coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int) if SNAPSHOT_ROW_COL in data.columns
+                         else np.arange(2, len(data) + 2))
+        excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
+        if excl in data.columns:
+            data = data[coerce_numeric(data[excl]).fillna(0) != 1]
+        for c in schema.get("categorical", {}):
+            if c in data.columns and c in base:
+                hit = normalize_category(data[c]) == normalize_category(pd.Series([base[c]])).iloc[0]
+                data = data[hit] if hit.any() else data
+        data = data[coerce_numeric(data[target]).notna()]
+        mkeys = [vary] + [f for f in numeric_in if f != vary]
+        fixed_num = np.array([float(base[f]) for f in mkeys[1:]])
+        if len(mkeys) <= MAX_KEYS:
+            try:
+                tab = Table(data, mkeys, [target], [])
+                def _measured(x: float) -> float:
+                    q = np.concatenate([[x], fixed_num])
+                    if tab.mode == "grid":
+                        return float(tab.at(q)["values"][target])
+                    v, _ = tab._scattered(q)            # inside the measured area only (no trend line)
+                    return float(v[0]) if v is not None else np.nan
+                mys = np.array([_measured(x) for x in xs])
+                m_cross = np.array(_crossings(xs, mys, y0))
+                m_ans = _spans(m_cross, np.ones(len(m_cross), dtype=bool), merge)
+                measured = {"method": "학습 데이터 표 보간 (ml_map 방식)", "count": len(m_ans),
+                            "solutions": [round((a + b) / 2, 6) for a, b in m_ans],
+                            "reachable": {"min": round(float(np.nanmin(mys)), 6), "max": round(float(np.nanmax(mys)), 6)}}
+                if tab.mode == "scattered" and len(m_ans) > 3:
+                    warnings.append(f"실측 기준 답이 {len(m_ans)}개로 많습니다 (측정 잡음). 모델 답을 기준으로 보십시오")
+            except InputError as e:
+                measured = {"note": f"실측 기준 반대 찾기를 하지 못했습니다: {e}"}
+        else:
+            measured = {"note": f"모델 숫자 입력이 {len(numeric_in)}개라 실측 기준 반대 찾기는 생략하고 가까운 실측 행만 보여 줍니다"}
+        span_y = max(float(np.ptp(coerce_numeric(data[target]))), 1e-12)
+        spans = [span_y] + [max(float(stats[f]["max"]) - float(stats[f]["min"]), 1e-12) for f in mkeys[1:]]
+        near = nearest_rows(data, [target] + mkeys[1:], np.concatenate([[y0], fixed_num]), np.array(spans),
+                            list(dict.fromkeys(mkeys + [target])))
+        if measured.get("solutions") and answers:
+            far = [a[vary] for a in answers if min(abs(a[vary] - m) for m in measured["solutions"]) > 0.05 * (hi - lo)]
+            if far:
+                warnings.append(f"모델 답 {[_fmt(v) for v in far]}이(가) 실측 기준 답 {[_fmt(v) for v in measured['solutions']]}과(와) "
+                                f"많이 다릅니다. 실제 시험으로 확인하십시오")
+    else:
+        measured = {"note": "버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없어 실측 기준 확인을 하지 못했습니다"}
+
+    reach = (float(np.min(ys)), float(np.max(ys)))
+    res: Dict[str, Any] = {
+        "status": "ok", "command": "find", "target": target, "find": {target: y0}, "vary": vary,
+        "fixed": {k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in fixed.items()},
+        "filled_defaults": {k: round(v, 6) for k, v in filled.items()},
+        "model": meta.get("champion_model"), "training_range": {vary: [round(lo, 6), round(hi, 6)]},
+        "count": len(answers), "solutions": answers, "operating_windows": windows,
+        "reachable": {"min": round(reach[0], 6), "max": round(reach[1], 6), "within": f"{vary} {_fmt(lo)}~{_fmt(hi)}"},
+        "measured": measured, "nearest_rows": near, "verified": not unverified,
+    }
+    if filled:
+        warnings.insert(0, "주지 않은 입력은 학습 데이터 중앙값으로 고정했습니다: "
+                        + ", ".join(f"{k}={_fmt(v)}" for k, v in filled.items()))
+    if warnings:
+        res["warnings"] = warnings
+    if unverified:
+        res["unverified"] = unverified
+    win_txt = ", ".join(f"{_fmt(w['from'])}~{_fmt(w['to'])}" for w in windows) or "없음"
+    if answers:
+        ans_txt = ", ".join(_fmt(a[vary]) + (f"({_fmt(a['from'])}~{_fmt(a['to'])})" if "from" in a else "") for a in answers)
+        res["preview"] = f"모델 기준 {target}={_fmt(y0)}이 되는 {vary}: {ans_txt} | 운전 구간(90% 오차 안): {win_txt}"
+    else:
+        res["preview"] = (f"모델 기준 {target}={_fmt(y0)}이 되는 {vary}: 찾은 값 없음 "
+                          f"({vary} {_fmt(lo)}~{_fmt(hi)}에서 예측 {_fmt(reach[0])}~{_fmt(reach[1])}) | 운전 구간: {win_txt}")
+    if measured.get("solutions") is not None:
+        res["preview"] += " | 실측 기준: " + (", ".join(_fmt(v) for v in measured["solutions"]) or "없음")
+    res["agent_directive"] = (
+        ("VERIFIED: 찾은 답 근처를 다시 예측해 목표값을 지나는지 확인했습니다. " if not unverified else
+         f"UNVERIFIED: 확인하지 못한 답이 있습니다 ({'; '.join(unverified)}). 재시도하지 말고 그대로 알리세요. ")
+        + ("답을 모두 알리세요(하나만 고르지 않음). " if answers else "찾은 값 없음(count 0): reachable(가능한 예측 범위)을 알리세요. ")
+        + "operating_windows(목표가 90% 예측 오차 안에 드는 운전 구간), measured(학습 데이터 기준 답), "
+        + "nearest_rows(가까운 실측 5행)를 함께 알리세요. 모델이 예측한 조건이지 보장된 조건이 아니라는 점을 덧붙이세요."
+        + (" warnings도 반드시 알리세요." if warnings else ""))
+    return res
 
 
 # ==============================================================================
@@ -1454,9 +2063,18 @@ def main():
     parser.add_argument("--encoding", help="결과 CSV 저장 인코딩 (기본값: Windows Excel 최적화 cp949)")
     parser.add_argument("--overwrite", action="store_true",
                         help="--out 파일이 이미 있으면 덮어쓰기 (생략 시 시각을 붙인 새 이름으로 저장)")
+    parser.add_argument("--find", help="모델 반대 찾기 목표 ('생산효율=50', 숫자 타겟). --vary와 함께")
+    parser.add_argument("--vary", help="반대 찾기에서 값을 찾을 숫자 입력 (예: 반응온도). 나머지 입력은 -i로 고정, 생략하면 학습 중앙값")
 
     args = parser.parse_args()
 
+    if args.find or args.vary:
+        if not (args.find and args.vary):
+            parser.error("모델 반대 찾기는 --find와 --vary를 함께 주어야 합니다.")
+        if args.file or args.targets or args.out:
+            parser.error("반대 찾기(--find)에는 -f, -y, -o를 쓰지 않습니다.")
+        run_cli(lambda: execute_find(args), hint="Check the target name and the input names in SKILL.md.")
+        return
     if not args.file and not args.input:
         parser.error("추론을 수행하려면 --file (배치 파일) 또는 --input (인라인 데이터) 중 하나를 지정해야 합니다.")
 

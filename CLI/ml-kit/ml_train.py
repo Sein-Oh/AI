@@ -71,7 +71,7 @@ from sklearn.neighbors import KNeighborsClassifier
 TASK_REGRESSION = "regression"
 TASK_CLASSIFICATION = "classification"
 PRIMARY_METRIC = {TASK_REGRESSION: "val_r2", TASK_CLASSIFICATION: "val_f1_macro"}
-METRIC_LABEL = {TASK_REGRESSION: "Val R2", TASK_CLASSIFICATION: "Val Macro-F1"}
+METRIC_LABEL = {TASK_REGRESSION: "검증 R2", TASK_CLASSIFICATION: "검증 Macro-F1"}   # 점수 용어: 학습 / 검증 (제외 행 포함/미포함) (2.5.0)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -1221,6 +1221,121 @@ def data_fingerprint(path: str) -> Dict[str, Any]:
             "sha256": h.hexdigest()}
 
 
+# ==============================================================================
+# 7-B. Row Exclusion: '제외' column + automatic outlier detection (2.5.0)
+# ==============================================================================
+#
+# The data file is never modified. A column named '제외' (fixed name, unit suffix ignored) is read per row:
+#   blank   -> the automatic outlier check may exclude the row
+#   '포함'  -> always used (the automatic check never excludes it)
+#   other   -> excluded by the user; the text is the reason
+# Excluded rows are left out of training and of the primary (cross-validated) score. They are scored
+# separately by the final model, which never saw them, so the run also reports an all-rows score.
+
+EXCLUDE_COL = "제외"
+INCLUDE_MARK = "포함"
+SNAPSHOT_ROW_COL = "원본행"              # model_dataset.csv: Excel row number of each row (2.7.0)
+SNAPSHOT_EXCL_PREFIX = "학습제외_"       # model_dataset.csv: 1 = left out of training for that target (2.7.0)
+OUTLIER_Z = 3.5               # robust z-score (median / MAD) above which a value is an outlier
+OUTLIER_MAX_FRACTION = 0.10   # more candidates than this is a skewed distribution, not outliers: exclude none
+MIN_TRAIN_ROWS = 10
+
+
+def find_exclude_column(columns: List[Any]) -> Optional[str]:
+    for c in columns:
+        if strip_unit(str(c)) == EXCLUDE_COL:
+            return str(c)
+    return None
+
+
+def _outlier_flags(values: pd.Series) -> Tuple[np.ndarray, Optional[float]]:
+    """Robust outlier flags: |0.6745 (x - median) / MAD| > 3.5; IQR fences (3 x IQR) when MAD is 0."""
+    x = pd.to_numeric(values, errors="coerce").astype(float)
+    ok = x.notna()
+    if ok.sum() < MIN_TRAIN_ROWS:
+        return np.zeros(len(x), dtype=bool), None
+    med = float(x[ok].median())
+    mad = float((x[ok] - med).abs().median())
+    if mad > 0:
+        flag = ok & ((0.6745 * (x - med) / mad).abs() > OUTLIER_Z)
+    else:
+        q1, q3 = float(x[ok].quantile(0.25)), float(x[ok].quantile(0.75))
+        iqr = q3 - q1
+        if iqr <= 0:
+            return np.zeros(len(x), dtype=bool), med
+        flag = ok & ((x < q1 - 3 * iqr) | (x > q3 + 3 * iqr))
+    return flag.to_numpy(dtype=bool), med
+
+
+def plan_exclusions(marks: Optional[pd.Series], y: pd.Series, X: pd.DataFrame, schema: Dict[str, Any],
+                    created: List[str], task: str, target_name: str) -> Dict[str, Any]:
+    """Rows to leave out of training for one target: the user's '제외' marks plus automatic outliers."""
+    n = len(y)
+    valid = y.notna().to_numpy()
+    text = (marks.map(lambda v: "" if pd.isna(v) else str(v).strip()).to_numpy()
+            if marks is not None else np.array([""] * n, dtype=object))
+    forced = text == INCLUDE_MARK
+    manual = (text != "") & ~forced & valid
+    candidate = valid & ~manual & ~forced
+
+    check_cols = ([target_name] if task == TASK_REGRESSION else []) + \
+        [c for c in schema["numeric"] if c not in created and c in X.columns]
+    auto = np.zeros(n, dtype=bool)
+    reasons = [""] * n
+    for col in check_cols:
+        series = y if col == target_name else X[col]
+        flags, med = _outlier_flags(series.where(candidate))
+        for i in np.flatnonzero(flags):
+            auto[i] = True
+            val = pd.to_numeric(pd.Series([series.iloc[i]]), errors="coerce").iloc[0]
+            reasons[i] += ("; " if reasons[i] else "") + f"{strip_unit(col)} {val:.6g} (중앙값 {med:.6g})"
+
+    note = None
+    if auto.any():
+        if auto.sum() > OUTLIER_MAX_FRACTION * max(candidate.sum(), 1):
+            note = (f"이상치 후보가 {int(auto.sum())}행({auto.sum() / max(candidate.sum(), 1):.0%})으로 많아 자동 제외하지 않았습니다 "
+                    f"(값이 넓게 퍼진 데이터일 수 있음)")
+            auto[:] = False
+        elif (valid & ~manual & ~auto).sum() < MIN_TRAIN_ROWS:
+            note = f"자동 제외하면 학습 행이 {MIN_TRAIN_ROWS}개 미만이 되어 자동 제외하지 않았습니다"
+            auto[:] = False
+    if task == TASK_CLASSIFICATION and auto.any():
+        y_arr = y.to_numpy()
+        for cls in pd.unique(y[valid]):
+            in_cls = valid & (y_arr == cls)
+            if (in_cls & ~manual & ~auto).sum() < 2:
+                auto[in_cls] = False   # never remove a class from training
+    return {"manual": manual, "auto": auto, "forced": forced, "mask": manual | auto,
+            "text": text, "reasons": reasons, "note": note, "checked_columns": check_cols}
+
+
+def score_with_excluded(task: str, pipe: Any, info: Dict[str, Any], oof_df: pd.DataFrame,
+                        X: pd.DataFrame, y: pd.Series, mask: np.ndarray) -> Tuple[Optional[float], np.ndarray]:
+    """All-rows score: OOF predictions of the training rows + final-model predictions of the excluded rows."""
+    idx = np.flatnonzero(mask)
+    if len(idx) == 0:
+        return None, np.array([])
+    Xe = X.iloc[idx]
+    if task == TASK_REGRESSION:
+        pred = pipe.predict(Xe)
+        actual = np.concatenate([oof_df["actual"].to_numpy(dtype=float), y.iloc[idx].to_numpy(dtype=float)])
+        score = float(r2_score(actual, np.concatenate([oof_df["predicted"].to_numpy(dtype=float), pred])))
+    else:
+        thr = info.get("decision_threshold")
+        if thr:
+            classes = list(pipe.classes_)
+            pos = thr["positive_class"]
+            neg = [c for c in classes if c != pos][0]
+            pred = np.where(pipe.predict_proba(Xe)[:, classes.index(pos)] >= thr["threshold"], pos, neg)
+        else:
+            pred = pipe.predict(Xe)
+        pred = np.asarray(pred).astype(str)
+        actual = np.concatenate([oof_df["actual"].astype(str).to_numpy(), y.iloc[idx].astype(str).to_numpy()])
+        score = float(f1_score(actual, np.concatenate([oof_df["predicted"].astype(str).to_numpy(), pred]),
+                               labels=info["classes"], average="macro", zero_division=0))
+    return round(score, 4), pred
+
+
 def _prepare_group(df_raw: pd.DataFrame, group: Dict[str, Any], task: str) -> Dict[str, Any]:
     """
     One feature recipe (features, --eval formulas, --dtypes, positive class) applied to the loaded data.
@@ -1239,6 +1354,14 @@ def _prepare_group(df_raw: pd.DataFrame, group: Dict[str, Any], task: str) -> Di
     log_progress(10, "컬럼 유효성 검증 및 타입 정제 중...")
     df_clean, feature_names, target_names, column_aliases = validate_and_sanitize_data(
         df=df_raw, feature_names=feature_names, target_names=target_names, dtypes_arg=dtypes, task=task)
+    excl_col = find_exclude_column(list(df_raw.columns))
+    if excl_col and excl_col in target_names:
+        raise InputError(f"'{excl_col}' 열은 학습에서 뺄 행을 표시하는 열이라 타겟(-y)으로 쓸 수 없습니다.")
+    if excl_col and excl_col in feature_names:
+        feature_names = [f for f in feature_names if f != excl_col]
+        sys.stderr.write(f"[WARN] '{excl_col}' 열은 뺄 행 표시용이라 피처에서 제외했습니다.\n")
+        if not feature_names:
+            raise InputError(f"'{excl_col}' 열을 빼면 학습할 피처(-x)가 없습니다.")
 
     # Feature Engineering (--eval): a string from the CLI or the canonical list stored in the ledger
     applied_evals: List[str] = []
@@ -1356,6 +1479,10 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         )
 
         prepared = [_prepare_group(df_raw, g, task) for g in groups]
+        excl_col = find_exclude_column(list(df_raw.columns))
+        source_rows = df_raw.attrs.get("source_rows") or list(range(1, len(df_raw) + 1))
+        exclusions: Dict[str, Dict[str, Any]] = {}
+        excluded_rows_out: List[Dict[str, Any]] = []
         g0 = prepared[0]
         column_aliases: Dict[str, str] = {}
         target_group: Dict[str, Dict[str, Any]] = {}
@@ -1403,9 +1530,17 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             log_progress(t_offset, f"타겟 [{t_idx+1}/{total_targets}] '{target_name}' 5대 모델 경쟁 학습 ({task})...")
 
             extra = {"positive_class": g["positive_class"]} if task == TASK_CLASSIFICATION else {}
+            y_full = g["df"][target_name]
+            plan = plan_exclusions(g["df"][excl_col] if excl_col else None, y_full, g["X"], g["schema"],
+                                   g["created"], task, target_name)
+            if plan["mask"].any():
+                sys.stderr.write(f"[INFO] 타겟 '{target_name}': 학습에서 뺀 행 {int(plan['mask'].sum())}개 "
+                                 f"(직접 표시 {int(plan['manual'].sum())}, 자동 이상치 {int(plan['auto'].sum())})\n")
+            if plan["note"]:
+                sys.stderr.write(f"[WARN] 타겟 '{target_name}': {plan['note']}\n")
             t_bench, champion_pipe, champion_info, oof_df = benchmark_fn(
                 X=g["X"],
-                y_series=g["df"][target_name],
+                y_series=y_full.mask(plan["mask"]),
                 target_name=target_name,
                 schema=g["schema"],
                 seed=args.seed,
@@ -1413,6 +1548,31 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                 log_weight=t_weight,
                 **extra
             )
+
+            all_score, excl_pred = score_with_excluded(task, champion_pipe, champion_info, oof_df,
+                                                       g["X"], y_full, plan["mask"])
+            excl_info: Dict[str, Any] = {
+                "column": excl_col,
+                "manual": int(plan["manual"].sum()),
+                "auto": int(plan["auto"].sum()),
+                "forced_include": int(plan["forced"].sum()),
+                "auto_note": plan["note"],
+                "all_rows_score": all_score,
+            }
+            champion_info["excluded"] = excl_info
+            if all_score is not None:
+                champion_info["all_rows_score"] = all_score
+            exclusions[target_name] = {**excl_info, "mask": plan["mask"]}
+            for k, i in enumerate(np.flatnonzero(plan["mask"])):
+                actual = y_full.iloc[i]
+                excluded_rows_out.append({
+                    "타겟": target_name,
+                    "원본 행": source_rows[i] if i < len(source_rows) else i + 1,
+                    "구분": "직접 표시" if plan["manual"][i] else "자동 이상치",
+                    "이유": plan["text"][i] if plan["manual"][i] else plan["reasons"][i],
+                    "실제값": actual if task == TASK_CLASSIFICATION else round(float(actual), 6),
+                    "예측값": (str(excl_pred[k]) if task == TASK_CLASSIFICATION else round(float(excl_pred[k]), 6)),
+                })
 
             target_benchmarks[target_name] = t_bench
             target_champions[target_name] = {
@@ -1423,7 +1583,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             all_champion_scores.append(champion_info["val_score"])
 
             # Target statistics
-            y_valid = g["df"][target_name].dropna()
+            y_valid = y_full[~plan["mask"]].dropna()
             if task == TASK_REGRESSION:
                 target_summaries[target_name] = {
                     "mean": round(float(y_valid.mean()), 4),
@@ -1520,10 +1680,10 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         with open(os.path.join(staging_dir, "leaderboard.json"), "w", encoding="utf-8") as f:
             f.write(dumps_json(leaderboard_data, indent=2))
 
-        def _datetime_stats(g: Dict[str, Any]) -> Dict[str, Any]:
+        def _datetime_stats(g: Dict[str, Any], rows: np.ndarray) -> Dict[str, Any]:
             out = {}
             for col in g["schema"]["datetime"]:
-                dt = parse_datetime(g["df"][col]).dropna()
+                dt = parse_datetime(g["df"][col][rows]).dropna()
                 if not dt.empty:
                     out[col] = {"min": dt.min().isoformat(), "max": dt.max().isoformat()}
             return out
@@ -1553,8 +1713,9 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
 
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
+            used_rows = ~exclusions[target_name]["mask"]   # training range = rows the model learned from
             for fname in g["schema"]["numeric"]:
-                s = g["df"][fname].dropna()
+                s = g["df"][fname][used_rows].dropna()
                 if not s.empty:
                     feat_stats[fname] = {
                         "mean": round(float(s.mean()), 4),
@@ -1593,11 +1754,14 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                     "class_counts": info["class_counts"],
                     "decision_threshold": info.get("decision_threshold"),
                 })
+            excl = {k: v for k, v in exclusions[target_name].items() if k != "mask"}
+            if excl["manual"] or excl["auto"] or excl["forced_include"] or excl["auto_note"]:
+                meta_json["excluded"] = excl
             meta_json.update({
                 "features_required": g["features"],
                 "feature_count": len(g["features"]),
                 "feature_stats": feat_stats,
-                "datetime_stats": _datetime_stats(g),
+                "datetime_stats": _datetime_stats(g, used_rows),
                 "feature_schema": g["schema"],
                 "derived_evals": g["evals"],
                 "target_summary": target_summaries.get(target_name, {}),
@@ -1611,11 +1775,30 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
 
         # 3. Clean Dataset Snapshot (model_dataset.csv)
         dataset_snapshot_cols = [c for c in feature_names + target_names if c in df_clean.columns]
-        snapshot_df = df_clean[dataset_snapshot_cols]
+        snapshot_df = df_clean[dataset_snapshot_cols].copy()
+        # 2.7.0: Excel row numbers and per-target training exclusions, so ml_predict.py can compare its predictions
+        # with the measured rows the model learned from (evidence rows are shown as Excel row numbers)
+        snapshot_df[SNAPSHOT_ROW_COL] = [source_rows[i] if i < len(source_rows) else i + 1 for i in range(len(snapshot_df))]
+        for t in target_names:
+            snapshot_df[f"{SNAPSHOT_EXCL_PREFIX}{t}"] = np.where(exclusions[t]["mask"], 1, 0)
         snapshot_path = os.path.join(staging_dir, "model_dataset.csv")
 
         # Windows 한국어 Excel 호환: cp949 기본, 표현 불가 문자 포함 시 utf-8-sig 자동 폴백
         write_csv_excel_compatible(snapshot_df, snapshot_path, encoding=getattr(args, "encoding", None))
+
+        # 3-B. Rows left out of training (user marks + automatic outliers), for the user to review in Excel
+        excluded_rows_file = None
+        if excluded_rows_out:
+            ex_df = pd.DataFrame(excluded_rows_out)
+            try:
+                ex_path = os.path.join(staging_dir, "excluded_rows.xlsx")
+                ex_df.to_excel(ex_path, index=False, sheet_name="제외 행")
+            except ImportError:
+                ex_path = os.path.join(staging_dir, "excluded_rows.csv")
+                write_csv_excel_compatible(ex_df, ex_path)
+            excluded_rows_file = os.path.join(guard.final_dir, os.path.basename(ex_path))
+        exclusion_summary = {t: {k: v for k, v in e.items() if k != "mask"} for t, e in exclusions.items()
+                             if e["manual"] or e["auto"] or e["forced_include"] or e["auto_note"]}
 
         # 4. Append Record to history.jsonl (SSOT)
         duration_sec = round(time.time() - start_time, 2)
@@ -1671,6 +1854,8 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             "correlation_truncated": corr_truncated,
             "target_correlations": target_correlations
         }
+        if exclusion_summary:
+            history_record["exclusions"] = exclusion_summary
         # Recipe inputs that ml_train --best needs to replay a run (added in 2.4.0)
         if len(prepared) == 1:
             if g0["dtypes"]:
@@ -1711,11 +1896,16 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         log_progress(100, f"학습 및 산출물 패키징 완료: {current_version} ({os.path.basename(final_version_dir)}) [소요: {duration_sec}초]")
 
         # LLM Directive
-        short = "R2" if task == TASK_REGRESSION else "F1"
-        target_brief = ", ".join([f"{t}({target_champions[t]['info']['champion_model']}: {short}={target_champions[t]['info']['val_score']:.4f})" for t in target_names])
+        short = "R2" if task == TASK_REGRESSION else "Macro-F1"
+        target_brief = ", ".join([f"{t}({target_champions[t]['info']['champion_model']}: 검증 {short}={target_champions[t]['info']['val_score']:.4f})" for t in target_names])
         delta_txt = delta_score if delta_score == "base" else f"{delta_score:+.4f}"
+        excl_brief = "; ".join(
+            f"{t}: 학습 제외 {e['manual'] + e['auto']}행(직접 {e['manual']}, 자동 {e['auto']}), "
+            f"검증 {short}(제외 행 포함)={e['all_rows_score'] if e['all_rows_score'] is not None else '-'}"
+            for t, e in exclusion_summary.items() if e["manual"] or e["auto"])
         preview = (
             f"[{current_version} 완료 / {task}] 타겟: [{target_brief}] | "
+            + (f"{excl_brief} | " if excl_brief else "") +
             f"평균 {metric_label}={mean_val_score:.4f} (Delta: {delta_txt}) | "
             f"소요시간: {duration_sec}s | "
             f"산출물 저장: {final_version_dir}"
@@ -1726,6 +1916,8 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             + f"{current_version} competitive training completed. "
             f"Champion models and leaderboard packaged into '{os.path.basename(final_version_dir)}'. "
             f"Task={task}, Mean {metric_label}={mean_val_score:.4f}. "
+            + ("Some rows were left out of training ('제외' column or automatic outliers): tell the user the counts and "
+               "the score with excluded rows (검증 ... 제외 행 포함) from preview, and the excluded_rows_file path so they can review it. " if excl_brief else "") +
             f"Next step: run next_commands[0] if the user wants to continue, or proceed to inference. "
             f"A command with needs_input=true has a placeholder: replace it with a path the user gave, or ask the user first."
         )
@@ -1755,6 +1947,10 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                     "new_score": target_champions[t]["info"]["val_score"]}
                 for t, src in best_info["best_source"].items()
             }
+        if exclusion_summary:
+            result["exclusions"] = exclusion_summary
+            if excluded_rows_file:
+                result["excluded_rows_file"] = excluded_rows_file
         if column_aliases:
             result["column_aliases"] = column_aliases
         if unverified:

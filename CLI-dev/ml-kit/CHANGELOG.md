@@ -1,0 +1,403 @@
+# CHANGELOG – ml-kit
+
+이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
+
+## [2.9.0] - 2026-10-29
+
+사용자 요청: 성능 예측 프로그램을 모델+ml_predict 대신 엑셀만으로 배포. 모델로 운용 영역의 표를 만들고 엑셀 기능으로 맵핑.
+입력 수(표 크기)는 입력 조합 최적화로 줄이고, 꼭 포함할 입력은 지정. 일반 사용자용 화면, 데이터는 수정 불가(암호·숨김 없음).
+
+### 기능 (추가)
+- 새 진입점 `ml_export.py -m <버전> [--keep] [--inputs] [--title] [-y] [--save]`: 원본 숫자 입력을 다시 학습하며 하나씩 줄여
+  추천 조합(최고 검증 R² - 0.005 이내에서 입력 최소)을 고르고, 격자 표(최대 20만 행)와 엑셀 계산기를 만듦.
+- 엑셀: 계산기(노란 입력 칸, 예측값, 90% 범위, 학습 범위 밖·실측 없는 영역 표시), 일괄계산 500행, 사용법, 표, 정확도, 정보.
+  수식은 INDEX/MATCH만(엑셀 2016+), 매크로 없음. 모든 시트 보호(암호 없음)와 구조 잠금, 노란 칸만 입력 가능.
+- 확인: 파일 다시 읽기(시트, 잠금, 입력 칸, 표), 수식 계산을 파이썬으로 재현해 비교, Windows+엑셀이면 엑셀로 계산해 비교.
+- 출력이 여러 개면 출력마다 따로 입력을 최적화하고(학습 -y 순서 유지), 계산기는 모든 출력의 입력을 합쳐 받으며, 출력은 자기 입력이 다 차면 계산.
+- 실험 근거 (CLI-dev 기록): 직선형 모델은 표 보간 오차 0, 비선형 입력 2개는 표가 오히려 정확(트리 계단 완화),
+  입력 4개는 축 16점(6.5만 행)이면 모델과 같은 수준. 입력 6개 -> 4개로 줄여도 검증 R² 0.980 -> 0.980.
+
+## [2.8.0] - 2026-10-29
+
+사용자 요청: 모델 기준 반대 찾기 1단계 (회귀 타겟, 입력 1개), 운전 구간도 함께.
+
+### 기능 (추가)
+- `ml_predict.py --find "<타겟>=<값>" --vary <입력> [-i 고정 입력]`: 학습 범위를 2,000단계로 훑어 목표값을 지나는 답을 모두 찾음.
+  가까운 답(범위의 3%)은 구간으로 묶음, 운전 구간(목표가 90% 예측 오차 안), 도달 가능한 범위, 학습 데이터 기준 답(숫자 입력 3개 이하),
+  가까운 실측 5행. 고정하지 않은 숫자 입력은 학습 중앙값, 글자 입력은 [후보]로 묻기. 답 주변을 다시 예측해 확인.
+- `_crossings`를 공통 부분으로 옮겨 `ml_map.py`와 함께 씀.
+
+## [2.7.0] - 2026-10-29
+
+사용자 요청: ml_map 보간값이 예측할 때 비교용으로 같이 나오면 좋겠다 (도구를 따로 부르지 않고).
+
+### 구조
+- 표 보간 계산(`Table`, `nearest_rows`)을 `ml_predict.py` 공통 부분(C8)으로 옮기고 `ml_map.py`가 가져다 씀 (동작 불변, 별도 커밋). 단독 배포 유지.
+
+### 기능 (추가)
+- 회귀 예측마다 실측 비교값(`map_check`): 버전 폴더 `model_dataset.csv`로 같은 조건을 보간 (숫자 입력 3개 이하: 표 보간,
+  4개 이상: 가까운 실측 5행 거리 가중평균). 파일 예측은 `map_<타겟>`, `map_diff_<타겟>`, `map_방식_<타겟>` 열.
+- `map_check_warning`: 비교값이 90% 예측 범위 밖 (외삽값, 먼 이웃 가중평균은 제외). `map_check_notes`: 비교값을 못 낸 이유.
+- 학습: `model_dataset.csv`에 `원본행`, `학습제외_<타겟>` 열 추가 (비교 근거의 엑셀 행 번호, 학습 제외 행 빼기).
+
+## [2.6.0] - 2026-10-29
+
+사용자 요청: 예측 결과를 검증하려고 전통적인 맵핑(위아래 가까운 값의 비율로 사잇값)이 필요하다. 반대 찾기도 필요.
+엑셀 수식(office-cli)은 흩어진 기록에서 끝 두 점 외삽이 터지고 COM 때문에 느려, 파일을 직접 읽는 ml-kit 도구로 결정.
+
+### 기능 (추가)
+- 새 진입점 `ml_map.py`: 사잇값(`-i`), 반대 찾기(`--find`, `--vary`), 여러 점(`--points`), 결과 엑셀(`--save`).
+  격자는 기준마다 위아래 비율 보간과 끝 구간 연장, 흩어진 기록은 위아래 2점(기준 1개) 또는 둘러싼 실측 3~4점(기준 2~3개) 보간과
+  전체 추세선 외삽. 답마다 쓴 원본 행과 비율(`basis`), 가까운 실측 5행, 범위 밖 정도(데이터 폭 대비), 외삽 경고.
+- 반대 찾기는 답을 모두 돌려주고 보간식에 다시 넣어 확인. 0건이면 도달 가능한 범위.
+- '제외' 열 표시 행은 쓰지 않음. 데이터 파일은 고치지 않음.
+- `requirements.txt`에 scipy (표준 환경 1.18.1, scikit-learn 의존성으로 이미 설치).
+- SKILL.md 6단계, README 6-B, 사용 가이드 장 추가.
+
+## [2.5.0] - 2026-10-29
+
+사용자 요청: 엑셀에서 이상치를 눈으로 보고 지운 뒤 학습하다 보니 보고되는 R²가 실제보다 좋게 보인다. 이상치를 자동으로 찾고,
+이상치를 포함한 성능도 볼 수 있어야 한다. 열 이름은 `제외`로 고정, 인자는 늘리지 않는다, 분류도 포함.
+
+### 기능 (추가, 옵션 없음)
+- 학습 제외 행: 데이터의 `제외` 열(빈칸: 자동 검사, `포함`: 자동 제외 안 함, 그 밖의 글자: 직접 제외)과 자동 이상치
+  (로버스트 z > 3.5, 회귀는 타겟+수치 피처, 분류는 수치 피처)를 학습에서 뺌. 데이터 파일은 고치지 않음.
+  후보가 10% 초과, 학습 행 10개 미만, 분류 클래스가 2행 미만이 되는 경우는 자동 제외하지 않음.
+- 제외 행 포함 검증 점수: 학습 제외 행을 최종 모델로 예측해 교차검증 예측과 합친 점수(`all_rows_score`). 판정은 그대로 제외 행 미포함 검증 점수 기준.
+- `vX/excluded_rows.xlsx`: 뺀 행 목록(원본 엑셀 행 번호, 구분, 이유, 실제값, 예측값).
+- 결과 JSON `exclusions`, `excluded_rows_file`, 원장 `exclusions`, 모델 json `excluded`. 공통 로더가 원본 행 번호(`attrs["source_rows"]`)를 기록.
+- 보고서: 요약 표 "검증 R² (제외 행 포함)" 열, 데이터 장 제외 규칙, 타겟 장 한 줄, 그림에 제외 행 주황색 X.
+
+### 수정
+- 점수 용어 통일: 학습 R²(배운 행을 다시 맞힌 점수, 과적합 확인용) / 검증 R²(배우지 않은 행을 맞힌 점수, 판정 기준).
+  학습 제외 행이 있으면 검증 R²를 "제외 행 미포함"(판정)과 "제외 행 포함"으로 나눠 적음. 분류는 Macro-F1.
+  보고서의 "교차검증 R²", "검증 점수", "Macro-F1", "학습 F1", "R² =" 표기와 학습 결과 preview의 "Val R2"를 이 용어로 바꿈.
+- 학습 범위(외삽 경고 기준)와 타겟 통계를 학습에 쓴 행으로만 계산 (이상치가 학습 범위를 넓히지 않게).
+
+### 호환
+- CLI 인자 변경 없음. JSON 키는 추가만. `제외` 열이 없는 데이터도 자동 이상치 검사는 동작하므로, 이상치가 있던 데이터는
+  같은 조건으로 다시 학습하면 검증 점수가 달라질 수 있음 (제외 행 포함 검증 점수로 이전과 비교 가능).
+
+## [2.4.2] - 2026-10-29
+
+### 구조
+- 폴더 정리: `CLI/ml-kit/`에는 실행에 필요한 파일과 `SKILL.md`만 남김 (`ml_train.py`, `ml_predict.py`, `ml_report.py`).
+  `README.md`, `CHANGELOG.md`, `requirements.txt`, `tests/`, `tools/`는 `CLI-dev/ml-kit/`로 옮김.
+  공통 계약 `CLI/README.md`와 `run_all_tests.py/.bat`도 `CLI-dev/`로.
+- 테스트와 실기 러너는 옆 폴더 `../CLI/ml-kit`의 도구를 시험. 사내 PC에서는 실기 테스트 때만 `CLI-dev`를 `C:\CLI-dev`로 `C:\CLI`와 나란히 둠.
+- CLI 인자, JSON 키, 도구 동작은 그대로.
+
+### 수정
+- `-h/--help`: 도움말 텍스트는 stderr, stdout은 JSON 1줄(`command: "help"`, `skill_file`, SKILL.md를 쓰라는 안내). 이전에는 도움말이 stdout으로 나가 마지막 줄 JSON이 없었음 (남은 할 일에서 이동).
+- SKILL.md 규칙 9: 도구 코드(.py)를 읽지 않고, 방법을 못 찾으면 사용자에게 알리고 멈춤 (BEAM 에이전트가 `-h` 후 코드를 읽은 사례).
+- openpyxl 미설치 안내 문구: `requirements.txt를 설치` -> `python -m pip install openpyxl`로 설치 (requirements.txt가 도구 폴더에 없음).
+
+## [2.4.1] - 2026-10-29
+
+사용자 요청: 보고서 내용이 너무 많고 빈 공백이 많다. 핵심만 간결하게, 파생변수 수식은 눈에 잘 들어오게.
+
+### 기능 (보고서 구성 변경, CLI 인자·JSON 키는 그대로)
+- `ml_report.py` 문서를 간결하게 다시 구성 (샘플 기준 회귀 4쪽, 분류 3쪽).
+  - 표지·목차·쪽 나눔 없앰. 제목 블록 아래 바로 1. 요약.
+  - 5. 버전 이력, 6. 운영 가이드, 부록 B(산출물·실행 환경) 없앰. 부록 A 상관관계는 2.2로 옮김.
+  - 2.1. 파생변수: `--eval` 계산식을 원래 컬럼 이름으로 `압력비 = 압축압력(bar) ÷ 촉매비율(wt%)`처럼
+    ×, ÷, ², ³, √ 기호로 강조 표시하고 사용 타겟별 기여도·순위를 함께 표시. 피처 표에서도 유형 "파생"을 강조.
+  - 4. 타겟별 결과: 타겟마다 판정 한 줄, 지표 카드, 성능 그림과 피처 기여도를 나란히 놓은 그림 1장(파생변수는 주황색),
+    상위 3개 모델 표, 소견 1개. 잔차 진단·타겟 분포·ROC 그림과 예측 구간 문장은 뺌.
+  - 표 캡션과 짧은 표(15행 이하)가 쪽 경계에서 갈라지지 않게 함.
+- `--slots`: 모든 키를 그대로 받음. 없어진 장의 `lineage`/`operation`은 요약 소견 끝에 붙임.
+
+### 문서
+- SKILL.md 보고 규칙: 파일 경로를 `file:///` 링크로 바꾸지 않고 결과 JSON 값을 그대로 1번만 쓰게 함.
+  긴 대화에서 26B 모델이 한글 경로를 링크로 변환하다가 같은 조각(`l'al l'al ...`)을 끝없이 반복한 사례 대응.
+
+## [2.4.0] - 2026-10-28
+
+실제 사용(회사 PC, OpenCode + 26B Gemma)에서 입력 3개·회귀 타겟 6개 데이터를 LLM이 타겟 하나씩, 조건을 바꿔 가며 학습해
+v1~v7이 타겟별로 흩어졌고 보고서도 버전마다 따로 나왔습니다. 사용자는 항상 모든 타겟이 들어간 보고서 1개를 원하고,
+LLM이 타겟·버전을 고르기를 원하지 않습니다. 사용자와 정한 설계("make_best"):
+타겟마다 검증 점수가 가장 좋았던 기록의 학습 조건을 가져와 **현재 데이터 파일**로 모든 타겟을 함께 다시 학습하고,
+평범한 새 버전 1개(태그 `best`)에 담은 뒤 그 버전으로 보고서를 만듭니다.
+
+### 기능 (추가만)
+- `ml_train.py -f <데이터> --best [--task regression|classification]`: 최고 버전 만들기.
+  - 타겟별 선택: 회귀 `val_r2`, 분류 `val_f1_macro`가 가장 높은 기록, 같은 점수면 나중 기록. 버전 폴더가 없거나 불완전한 기록은 제외.
+    `--overwrite`로 같은 버전 기록이 2개면 마지막 기록만 봄.
+  - 학습 조건(피처, `--eval` 수식, `--dtypes`, 양성 클래스)은 타겟마다 다를 수 있고, 모델 종류는 평소처럼 5개 모델 경쟁으로 다시 고름.
+  - 작업 유형마다 버전 1개 (회귀와 분류가 섞이면 2개, 결과에 명시). `--task`로 하나만.
+  - 헤더/단위/데이터 행은 주지 않으면 그 유형의 마지막 기록 값. 이력이 없으면 `STOP_RETRY`(먼저 학습).
+  - 점수 하락 경고는 하지 않고, 타겟별 원래 점수(출처 버전)와 이번 점수를 결과 JSON과 보고서 표에 함께 적음.
+- `ml_report.py -f <데이터> [--task ...] [--header-row ...]`: 작업 유형마다 최고 버전으로 보고서 1개.
+  최고 버전이 최신이면(그 뒤에 같은 유형의 학습 기록 없음, 폴더 온전, 데이터 파일 SHA-256 동일) 그대로 쓰고, 아니면 같은 프로세스에서 먼저 만듦.
+  `-m`, `-d` 동작은 그대로.
+- 결과 JSON 새 키: `made_best`, `best_version_dir`, `best_versions`, `best_targets`(`{타겟: {task, source_version, source_score, new_score}}`),
+  보고서 `-f`는 `report_count`, `best_reports`도. 기존 키(`report_file`, `version`, `best_version` 등)는 첫 번째 보고서 기준으로 뜻이 같음.
+  (`reports`는 2.2.0에서 없앤 옛 키라 다른 뜻으로 다시 쓰지 않고 `best_reports`로 이름 지음.)
+- 원장 새 키: 모든 학습 `data_fingerprint`(`size`, `mtime`, `sha256`), 지정 시 `dtypes`, `positive_class`.
+  최고 버전 기록은 `best: true`, `best_source`(`{타겟: {version, score[, selected_version]}}`), `target_recipes`.
+  이전 최고 버전의 조건이 다시 뽑히면 `best_source`는 원래(최고 버전이 아닌) 버전을 가리켜 출처를 끝까지 추적.
+  `model_<타겟>.json`에도 `best_source`. `--history`의 `records`에 `best: true`.
+- 보고서(최고 버전): 표지 "학습 방식", 요약 "타겟별 학습 조건 출처" 표, 타겟마다 "학습 조건 출처: vK (당시 점수 x.xxxx), 이번 점수 y.yyyy"와 입력 피처,
+  버전 이력에 "버전별 타겟 점수" 표와 타겟별 추이 그림. 입력 피처 구성과 예측 필수 입력은 모든 타겟의 합집합 (일반 버전은 이전과 같음).
+- 학습 목표 달성 시 `next_commands`의 보고서 명령을 `ml_report.py -m <vN>`에서 `ml_report.py -f <데이터>`로 바꿈.
+
+### 구조
+- `ml_train.py`의 학습 본체를 `train_version(args, task, groups, best_info)`로 분리. 그룹 = 학습 조건 1개(피처, 수식, dtypes, 양성 클래스)와 그 타겟들.
+  일반 학습은 그룹 1개라 산출물이 이전과 같고, `--best`는 조건마다 그룹을 만들어 한 스테이징 폴더(한 `TransactionGuard`)에 모든 타겟을 학습.
+  `correlation.csv`, `model_dataset.csv`, 원장 `features_used`·`feature_types`는 그룹들의 합집합(같은 이름 컬럼은 첫 그룹 값).
+- `ml_report.py -f`는 `ml_train`을 그때만 import (보고서 `-m`/`-d`는 scikit-learn을 불러오지 않음).
+
+### 스킬
+- 5단계 보고서를 `ml_report.py -f "<데이터파일>"` 한 줄로. LLM은 타겟·버전을 고르지 않음. `-m` 안내 제거 (도구에서는 계속 동작).
+- 4단계 예측은 보고서를 만들었으면 `best_version_dir`, 아니면 마지막 학습의 `version_dir`.
+- 2단계: 여러 타겟을 `-y`에 함께 넣는 것은 권장으로 두고, 따로 학습해도 보고서가 합친다고 안내. `split_targets_detected` 안내 삭제(기능 없음).
+
+### 테스트
+- `tests/test_best_v240.py`: 단일 타겟 학습 4회(한 타겟은 최고 점수가 최신 기록이 아님) -> `--best`가 타겟 3개 버전 1개, 타겟별 피처·수식, `best_source`, 새 점수;
+  합친 피처로 `ml_predict -i` 예측; `--history`; `ml_report -f` 재사용(`made_best: false`) -> 새 학습 후 재생성 -> 데이터 변경 후 재생성;
+  회귀+분류 혼합 시 버전·보고서 2개와 `--task`; 이력 없음 `STOP_RETRY`; `-m` 결과에 새 키 없음.
+
+### 호환
+- 기존 CLI 인자·JSON 키 삭제나 뜻 변경 없음. `ml_train.py --task` 기본값을 `None`으로 바꿨지만 학습에서는 그대로 `regression`.
+- 산출물 레이아웃(`<stem>_ml_data/history.jsonl`, `vX/`)은 그대로. 2.4.0 이전 기록도 `--best` 후보 (`dtypes`가 기록되지 않아 자동 판별로 다시 학습).
+
+## [2.3.2] - 2026-10-28
+
+회사 PC 2차 실기(2.3.1, 실기 M1~M14 모두 통과) 결과 반영. 오프라인 테스트 3건 실패 수정.
+
+### 스킬
+- 도구 위치를 `C:\CLI\ml-kit`으로 고정: SKILL.md 명령 경로를 `<SKILL_DIR>` 대신 실제 경로로 적음 (스킬 폴더에는 연결 또는 SKILL.md만).
+- SKILL.md를 PowerShell 기준으로 정리: 전역 지침의 인코딩 줄 사용, 시간 제한 600000, 실행 전에 물어볼 값(파일, 타겟, 피처), 컬럼 이름 확인 방법, `version_dir`을 모를 때 `--history`로 찾기, 파일은 파일 쓰기 도구로 UTF-8 저장.
+
+### 수정
+- 회사 PC의 python-docx 템플릿 폴더(`templates/default-docx-template`)에서 `docProps/thumbnail.jpeg`가 빠져 있어
+  python-docx가 폴더를 열지 못했습니다(FileNotFoundError). 보고서는 그때 `default.docx`로 넘어가 성공했지만, 폴더 템플릿을 쓰는 테스트가 실패했습니다.
+  이제 폴더를 메모리 속 .docx로 묶으면서 빠진 파일을 가리키는 관계를 빼고 엽니다 (`docx_from_template_dir`).
+  빠진 파일이 있으면 `recovered`에 "Word 내장 템플릿 폴더에 빠진 파일(...) -> 제외하고 사용"을 남깁니다.
+- 참고(회사 PC 진단): `default.docx`는 스타일 4개짜리 2716바이트 문서, `pptx/templates/default.pptx`는 파일 없음.
+
+### 테스트
+- 폴더 템플릿에서 thumbnail.jpeg를 지운 상황 재현 테스트 추가. 템플릿 손상 테스트는 폴더 템플릿 상태와 상관없이 동작.
+
+## [2.3.1] - 2026-10-28
+
+회사 PC(Windows 11, WinPython 3.13.13, 보안 프로그램 DRM) 실기에서 `ml_report.py`가 모든 보고서에서
+`no style with name 'Caption'`(STOP_RETRY, exit 1)으로 실패한 문제 수정, 오류 로그(R6) 추가.
+
+### 수정
+- 보고서 Word 템플릿을 DRM에 안전하게 엽니다. 원인 추정: DRM이 Office 확장자 파일을 암호화·대체해
+  python-docx의 `templates/default.docx`가 표준 스타일이 없는 대체 문서가 됨 (같은 PC의 python-pptx `default.pptx`는 zip이 아니었음).
+  - python-docx가 함께 설치하는 압축 해제 템플릿 폴더 `templates/default-docx-template`(XML 파일, DRM 대상 아님)를 먼저 쓰고,
+    없거나 열리지 않으면 `default.docx`를 씁니다.
+  - 보고서가 쓰는 스타일(`Normal`, `Heading 1~3`, `Caption`, `List Bullet`)이 없으면 `Normal` 기반으로 만들고,
+    템플릿에 본문(대체 문서의 안내 문구 등)이 있으면 지운 뒤 작성합니다. 대체 템플릿의 머리글·바닥글도 새로 만듭니다.
+  - 위 복구는 stderr `[WARN]`과 결과 JSON `recovered`에 적습니다. 두 템플릿 모두 열 수 없으면 `STOP_RETRY`와
+    `python -m pip install --force-reinstall python-docx` 안내.
+
+### 기능 (추가만)
+- 오류 로그: 실패한 실행(exit 1, 인자 오류 exit 2)을 `<도구 폴더>\data\logs\errors.txt`에 자동으로 덧붙입니다
+  (`CLI-dev/README.md` R6, doc-classifier `write_error_log` 복사). 데이터 폴더는 환경변수 `ML_KIT_DATA_DIR`로 바꿀 수 있습니다.
+  - 항목: `===== <시각> | ml-kit <버전> | Python <버전> | <OS>`, `명령:`(스크립트와 인자), `결과: <error_type> | <message>`,
+    자동 복구가 한도를 넘긴 경우 `복구 시도:`, 내부 오류(`ERROR:`)일 때만 `traceback:`.
+  - 성공, 사용자 중단(exit 130)은 기록하지 않습니다. 2MB를 넘으면 `errors.old.txt`로 넘깁니다 (1세대).
+    회전 실패와 기록 실패는 따로 삼켜 결과 JSON 1줄 계약을 깨지 않습니다. 로그 경로는 결과 JSON에 넣지 않습니다.
+  - `retry_fs`가 재시도 한도를 넘기면 `record_recovery_attempt()`로 `복구 시도:` 줄에 남깁니다 (R4).
+- 공통 런타임(`ml_predict.py` PART C)에 `VERSION = "2.3.1"`. SKILL.md `metadata.version`, 보고서 표지의 ml-kit 버전과 같음을 테스트로 확인합니다.
+
+### 테스트
+- `tests/test_report_template.py`: 템플릿 폴더 정상 사용, 손상된 `default.docx`(스타일 없음 + 안내 문구) + 템플릿 폴더 없음에서
+  보고서 성공·캡션 존재·안내 문구 없음, 두 템플릿 모두 손상 시 `STOP_RETRY`.
+- `tests/test_error_log_v231.py`: exit 1(traceback 없음)/내부 오류(traceback)/exit 2 기록, 성공·130 미기록, 회전, 회전 실패,
+  기록 실패 시 JSON 유지, `VERSION` == SKILL.md.
+- `tests/conftest.py`: 테스트 중 오류 로그가 실제 도구 폴더 `data\`에 쌓이지 않게 `ML_KIT_DATA_DIR`을 임시 폴더로 지정
+  (하위 프로세스도 상속).
+
+### 호환
+- CLI 인자와 JSON 키 변경 없음. 실패 시 `data\logs\errors.txt` 파일이 새로 생깁니다 (`CLI/*/data/`는 git 제외).
+
+## [2.3.0] - 2026-10-28
+
+저장소 지침(AGENTS.md "JIT 자가복구" 3번: 덮어쓰기·삭제는 사용자 확인 필요) 반영 1차. 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md` 2절.
+구현은 `CLI-dev/README.md` "공통 런타임 구현 규칙" R1(사후 확인), R3(`recovered`), R4(덮어쓰기 방지).
+
+### 수정 (사용자 확인 없이 지우거나 덮어쓰던 동작)
+- 학습 시작 시 `leaderboard.json`/`model_dataset.csv`가 없는 `vN` 폴더를 **통째로 지우던** 동작을 없앴습니다.
+  이제 지우지 않고 `[WARN]`과 결과 JSON `incomplete_versions`로 알리며, 자동 버전 번호는 그 번호를 건너뜁니다.
+  도구가 만든 임시 폴더 `.tmp_*`만 계속 자동 청소합니다.
+- `--version`에 이미 있는 버전을 주면 **아무 말 없이 교체하던** 동작을 막았습니다.
+  `STOP_RETRY` + `[추천] --version v<다음>`을 내고, 교체는 새 인자 `--overwrite`가 있을 때만 합니다.
+  교체 중에는 기존 폴더를 `.bak_vX`로 보관했다가 새 버전이 원장에 기록된 뒤에 지우며, 실패·중단 시 되돌립니다
+  (프로세스가 죽어 남은 `.bak_vX`는 다음 학습 때 `vX`가 없으면 복원).
+- 원장(`history.jsonl`) 기록을 버전 폴더 커밋 **뒤로** 옮겼습니다. 커밋이 실패하면 원장에 없는 버전이 남지 않고,
+  원장 기록이 실패하면 방금 만든 버전 폴더를 롤백합니다.
+  `history.jsonl`에 한 줄이 기록되는 즉시 그 버전을 확정하므로, 이후 `history.json` 동기화 중에 중단돼도 폴더를 지우거나 되돌리지 않습니다
+  (원장과 폴더가 항상 일치).
+- `--overwrite` 교체 시 이전 덮어쓰기의 백업 `.bak_vX`가 남아 있으면 지우지 않고 `STOP_RETRY`로 멈춥니다 (유일한 정상본일 수 있음).
+- `ml_predict.py --out`의 파일이 이미 있으면 덮어쓰던 동작, `ml_report.py`가 같은 이름(`ML결과보고서_<데이터>_<버전>.docx`)의
+  기존 보고서를 덮어쓰던 동작을 막았습니다. 시각을 붙인 새 이름으로 저장하고 `recovered`에 적습니다. 덮어쓰기는 새 인자 `--overwrite`.
+- 실기 러너 `tools/run_win_tests.py`가 `--dir` 폴더를 확인 없이 `rmtree` 하던 동작을 막았습니다.
+  러너가 만든 폴더(표식 파일 `.created_by_ml-kit-tests`)나 빈 폴더만 비우고, 다른 폴더면 지우지 않고 준비 단계 오류로 멈춥니다.
+- 잠금 때문에 새 이름으로 저장할 때 이름에 시각이 두 번 붙던 문제 (`_pred_<시각>_<시각>.csv`): 기존 시각을 바꿔 붙입니다.
+  같은 초에 같은 이름이 있으면 `_2`를 붙여 기존 파일을 덮지 않습니다.
+
+### 기능 (추가만)
+- 학습 결과 JSON `verified`: 커밋 후 버전 폴더를 다시 읽어 확인(leaderboard, 데이터 스냅샷, 모델 다시 load, 메타, 원장 마지막 기록).
+  확인 실패 시 `verified: false`, `unverified` 사유 목록, `agent_directive`는 `UNVERIFIED:`.
+- 모든 도구 결과 JSON `recovered` (있을 때만): 결과가 달라진 자동 복구 문구 목록. 공통 런타임 `note_recovered()`가 stderr `[WARN]`과 함께 모읍니다.
+  이번 버전에서 기록하는 것: 기존 파일 덮어쓰기 회피, 잠긴 파일 새 이름 저장.
+- 새 인자 `--overwrite`: `ml_train.py`(기존 버전 교체), `ml_predict.py`(`--out` 덮어쓰기), `ml_report.py`(같은 이름 보고서 덮어쓰기).
+- SKILL.md: `UNVERIFIED:` 행동, `recovered` 전달, `--overwrite`는 사용자가 허락했을 때만 붙이는 규칙.
+
+### 실기 테스트 러너
+- M5/M7은 `--overwrite`를 주고 잠긴 파일을 덮어쓰려 할 때 새 이름 저장 + `recovered`의 '잠김'을 확인합니다
+  (덮어쓰기 방지 때문에 잠금 경로가 검사되지 않는 것을 막음).
+- 이전 러너가 만든 `C:\ml_test\ml 테스트`에는 표식 파일이 없으므로, 처음 한 번은 그 폴더를 직접 지우거나 다른 `--dir`을 주세요.
+
+### 호환
+- 기존 CLI 인자와 JSON 키는 그대로입니다. 다만 위 세 경우(이미 있는 `--version`, 이미 있는 `--out` 파일, 같은 이름 보고서)는
+  기존처럼 교체·덮어쓰기하려면 `--overwrite`를 붙여야 합니다 (지침의 "덮어쓰기는 `--overwrite`가 있을 때만", R4).
+
+## [2.2.0] - 2026-10-27
+
+### 기능
+- **ML 결과 보고서** (`ml_report.py` 새로 작성): 버전 폴더 하나의 **모든 타겟을 Word 문서 1개**로 만듭니다. 회귀·분류 모두 지원.
+  - 구성: 표지, 목차, 요약(타겟별 판정), 데이터, 분석 방법, 타겟별 결과(모델 비교, 성능 검증, 피처 영향), 버전 이력, 운영 가이드, 부록.
+  - 그림: 모델 비교, 실측 대비 예측, 잔차 진단, 피처 기여도 / 분류는 혼동행렬, 클래스별 지표, ROC·판정 기준별 F1(이진), 버전 추이, 상관 히트맵.
+  - 판정: 0.90 이상 적합, 0.70 이상 조건부, 미만 부적합 (과적합 간극 0.15 초과 시 조건부). 종합 판정은 가장 낮은 타겟 기준.
+  - 사용법: `-m <version_dir>` 추가. 기존 `-d <data_root> [-v vN]`, `-t`, `--slots`, `-o` 유지
+    (`-v` 없으면 최근 학습과 같은 task·타겟 조합 중 최고 버전). 예전 슬롯 이름(`slot1_residual` 등)도 받음.
+  - 결과 JSON: `report_file`, `best_version` 유지 + `version`, `task`, `targets`, `overall_verdict`, `verdicts`,
+    `figure_count`, `table_count`, `slots_used` 추가.
+- 학습: 챔피언 교차검증 예측값 `vX/oof_<타겟>.csv`, 원장 `data_profile`(불러온/사용 행, 타겟 결측 행, 피처별 결측) 저장.
+- 학습 결과 JSON에 `goal_met`(모든 타겟 0.90 이상) 추가. `next_commands`의 보고서 명령은 `ml_report.py -m <이번 버전>`이며 분류에도 제공.
+
+### 변경
+- 목표 달성 판단과 권고를 평균 점수가 아니라 **가장 낮은 타겟** 기준으로 합니다 (보고서 판정과 일치).
+  다중 타겟에서 "목표 달성" 문구와 타겟별 판정이 어긋나던 문제 해결.
+- 다중 타겟 학습의 "저기여 피처 제외" 권고·명령은 **모든 타겟에서 기여도가 낮은 피처**만 대상으로 합니다
+  (한 타겟에서만 약한 피처를 빼서 다른 타겟 성능을 떨어뜨리던 문제 해결).
+
+### 실기 테스트 러너 (`tools/run_win_tests.py`)
+- AI 판독용 상세 로그 `tools/test_logs/testlog_<라벨>_<시각>.txt`를 **항상** 만듭니다 (준비 단계 실패, 중단 시에도).
+  판정 표, 실행 환경(OS, Python, 패키지·Office 버전, 코드 git 버전, 인코딩), 항목별 통과 기준,
+  실패 항목의 호출별 명령·종료 코드·소요 시간·전체 JSON·stderr 끝부분·traceback·관련 폴더 상태, 출력 계약 위반, 전체 호출 기록.
+  `--label 집PC`로 파일 이름에 PC 라벨을 붙이고, 파일을 그대로 전달하거나 커밋하면 AI가 원인을 판단할 수 있습니다.
+
+### 스킬
+- `SKILL.md`를 26B~30B 경량 모델용으로 다시 작성: 요청별 단계 선택 표, 그대로 채우는 명령 템플릿,
+  JSON 값별로 사용자에게 알릴 내용, `agent_directive` 첫 단어별 행동 표.
+
+### 호환
+- 보고서의 2.1 타겟별 키 `target`, `metrics`, `slots_filled`, `reports`, `target_count`는 문서 통합으로 제거 (사용자 승인).
+- 2.2.0 이전에 학습한 버전(`oof_*.csv` 없음)은 보고서 생성 시 `STOP_RETRY`로 재학습을 안내합니다. 예측은 그대로 가능합니다.
+
+## [2.1.2] - 2026-10-27
+
+### 수정
+- 같은 데이터로 다른 타겟을 학습하면 `delta_score`/`is_best`가 **다른 타겟의 이전 기록**과 비교되던 문제.
+  이제 같은 task + 같은 타겟 조합의 기록끼리만 비교합니다 (새 타겟 조합의 첫 학습은 `delta_score: "base"`).
+- `--history`의 `best_version`/`best_mean_val_score`도 가장 최근 학습과 같은 task + 타겟 조합 중 최고 버전을 가리킵니다.
+  (`best_by_task`는 기존대로 task별 최고)
+
+## [2.1.1] - 2026-10-27
+
+### 기능 (추가만, 기존 키 유지)
+- `next_commands`의 각 명령에 `needs_input`(bool)을 붙입니다. 자리표시자(`<새데이터.xlsx>`)가 있는 명령은 `needs_input: true`와 `placeholder`를 갖고, 바로 실행 가능한 명령 뒤에 둡니다.
+  목표 성능 달성(회귀) 시 `next_commands[0]`은 이제 보고서 명령입니다. 실기 테스트에서 SKILL대로 `next_commands[0]`을 그대로 실행하면 자리표시자 때문에 실패하던 문제를 막습니다.
+- `agent_directive`와 SKILL.md에 `needs_input` 처리 규칙(사용자가 준 경로로 바꾸거나 먼저 묻기)을 넣었습니다.
+
+## [2.1.0] - 2026-10-27
+
+train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추가만).
+
+### 기능
+- **범주형 피처**: 문자 컬럼(라인, 설비코드 등)을 자동 감지해 파이프라인 안에서 원-핫 인코딩.
+  예측 시 학습 때 없던 범주는 `unseen_category_warning`. 종류가 너무 많은 ID형 컬럼은 `STOP_RETRY`.
+- **날짜 피처**: Excel 날짜·`YYYY-MM-DD[ HH:MM]` 문자열을 연/월/일/요일/시 피처로 자동 분해.
+  예측 시 학습 기간 밖 날짜는 외삽 경고.
+- 피처 유형 판별 결과는 `feature_types`(결과 JSON·원장)와 `feature_schema`(모델 메타)에 기록. `--dtypes`로 강제 지정 가능.
+- **선형 모델 자동 튜닝**: RidgeCV, ElasticNetCV, LogisticRegressionCV. 선택된 값은 리더보드 `params`.
+- **회귀 예측 범위**: 챔피언 OOF 잔차 분위수 기반 90% 범위. 예측 컬럼 `pred_lo_<타겟>`, `pred_hi_<타겟>`, JSON `intervals`.
+- **이진 분류 판정 기준**: `--positive-class <라벨>` 지정 시 양성 F1이 최대가 되는 확률 기준을 OOF로 찾아 저장·적용.
+- **예측 입력 결측 경고**: 빈 값/숫자 아닌 값이 대치되면 `missing_input_warning`, `missing_input_counts`.
+- **다음 명령 제공**: 결과 JSON `next_commands` (피처 제외 재학습, 교차항 추가, 목표 달성 시 예측·보고서 명령).
+  피처가 15개를 넘으면 목록을 `vX/next_features_*.txt`로 저장해 경로로 전달.
+- **동시 실행 잠금**: 같은 데이터에 학습이 겹치면 `STOP_RETRY` (OS 파일 잠금, 비정상 종료 시 자동 해제).
+
+### 성능
+- CSV: 구분자 자동 감지(`,` `;` 탭 `|`) 후 고속 C 파서 사용.
+- 순열 중요도는 최대 5,000행 표본으로 계산. 1만 행 초과 시 RF/ET 트리마다 1만 행 표본, 5만 행 초과 시 KNN 제외.
+- 측정 (이 개발 환경 4코어): 2만 행 × 20피처 80초 -> 46초(정확도 동일), 300행 × 150피처 39초 -> 11초.
+
+### 원장 크기
+- 피처가 30개를 넘으면 원장의 상관행렬은 중요도 상위 30개 + 타겟만 저장(`correlation_truncated: true`),
+  전체 행렬은 `vX/correlation.csv`, 피처-타겟 상관은 `target_correlations`. (150피처 기준 기록 1건 370KB -> 31KB)
+
+### 호환
+- 2.1.0 이전 모델(`feature_schema` 없음)은 기존 수치 배열 방식으로 예측. 새 모델도 `ml_predict.py` 단독 실행 유지.
+
+## [2.0.0] - 2026-10-27
+
+### 구조
+- `ml_common.py`를 `ml_predict.py`에 병합 (PART C: 공통 런타임). `.py` 파일 3개 구성.
+- `ml_predict.py`는 다른 ml-kit 파일 없이 단독 실행됩니다. **배포 = `ml_predict.py` + `vX\` 폴더 복사.**
+  `ml_train.py`, `ml_report.py`는 `ml_predict.py`에서 공통 기능을 import합니다.
+
+### 기능
+- **분류 학습** `ml_train.py --task classification` (기본값 `regression`, 사용자 지정).
+  - 5개 모델: HistGradientBoosting, RandomForest, ExtraTrees, LogisticRegression, KNeighbors
+  - Stratified K-Fold, 챔피언 = OOF Macro-F1 최고
+  - 지표: Macro-F1, Accuracy, Balanced Accuracy, ROC-AUC, 혼동행렬, 클래스별 Precision/Recall/F1
+  - 최소 클래스 비율 20% 미만이면 `class_weight='balanced'` 자동 적용 (`[WARN]`)
+  - 라벨은 문자열로 정규화 (`1`, `1.0`, `"1"` -> `"1"`), 클래스별 최소 2개 미만이면 `STOP_RETRY`
+- **분류 예측** `ml_predict.py`: 메타데이터의 `task`로 자동 분기.
+  - 출력 컬럼 `pred_<타겟>`, `proba_<타겟>_<클래스>`, `conf_<타겟>`
+  - JSON `predictions`, `probabilities`, `predicted_class_counts`, `low_confidence_warning`(확신도 0.6 미만)
+- 결과 JSON/원장/메타/리더보드에 `task`, `primary_metric`, `mean_val_score`, `delta_score` 추가.
+  성능 변화(`delta`)와 `is_best`는 같은 task 기록끼리만 비교.
+- `--history`: Task/Score 표시, `best_by_task` 반환.
+- `ml_report.py`: 분류 기록은 `STOP_RETRY`로 "다음 버전 지원" 안내 (회귀 보고서는 동일).
+
+### 호환
+- 회귀의 기존 키(`mean_val_r2`, `delta_r2`, `val_r2` 등)와 CLI 인자는 그대로 유지.
+- `task` 키가 없는 1.x 모델/원장은 회귀로 처리.
+
+### 스킬
+- OpenCode Agent Skills 형식 적용: 스킬 이름 `ml-kit`, 폴더 이름도 `CLI/ml-kit/`로 변경 (OpenCode는 폴더명 = 스킬명 필수).
+  frontmatter는 `name`, `description`, `license`, `compatibility`, `metadata`만 사용. 설치 방법은 README "OpenCode 스킬 설치".
+
+### 문서
+- 이전 이력 문서(ROADMAP 등)를 정리하고 이 CHANGELOG로 일원화. `requirements-dev.txt`, `install_offline.bat` 삭제.
+
+## 남은 할 일
+- [ ] 집 PC(Office 2007)에서 `tools/run_win_tests.py` M6/M7(보고서 열기·잠금)을 새 보고서로 재확인
+- [ ] `-x` 생략 시 피처 자동 선택 (ID/일련번호 배제 규칙)
+- [ ] 무거운 import 지연 로딩 (`--history` 응답 속도)
+- [x] Windows 실기 테스트 러너 `tools/run_win_tests.py` (M1~M14). 집 PC(Windows 11, Python 3.13.13, scikit-learn 1.9.0, Office 2007) 14개 모두 통과:
+  Excel이 만든 보고서형 xlsx(제목/단위 행, 날짜 셀, 범주, 한글+공백 경로), Excel 저장 CP949 CSV, 입력 xlsx가 Excel에 열린 상태,
+  결과 CSV를 Excel로 열 때 한글, 결과 CSV/보고서가 열려 잠긴 상태(새 이름 저장), 보고서를 Word로 열기,
+  `next_commands`를 cmd.exe/PowerShell에 그대로 실행, 단독 배포 폴더, 2만 행(학습 10.6초, 예측 3.6초),
+  동시 학습 잠금, 학습 강제 종료 뒤 복구, 오류/출력 계약.
+- [ ] 회사 PC(WinPython, Office 16)에서 `tools/run_win_tests.py` 실행
+- [ ] 260자 넘는 긴 경로
+- [ ] `--best`: 2.4.0 이전 기록은 `--dtypes`가 원장에 없어 자동 판별로 다시 학습함 (필요하면 `feature_types`로 복원)
+- [ ] `--best`: 조건이 다른 타겟들이 같은 이름의 파생변수를 다른 수식으로 만들면 `model_dataset.csv`·`correlation.csv`에는 첫 수식 값만 들어감 (모델은 타겟별로 정확)
+- [ ] 회사 PC에서 6타겟 실제 데이터로 `ml_report.py -f` 소요 시간 확인
+
+### 저장소 지침 반영 (AGENTS.md 2026-10-28, 우선순위 순)
+상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI-dev/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현.
+- [ ] 진입점 최상단 import(numpy/pandas/joblib/sklearn) 실패 시 traceback 대신 STOP_RETRY JSON + `python -m pip install ...` 안내, ImportError를 STOP_RETRY로 분류 (회귀 테스트)
+- [ ] 예측 결과와 보고서 저장 후 다시 읽어 확인(행 수, docx 열기), 실패하면 `VERIFIED:` 대신 사유
+- [ ] `recovered` 나머지: cp949 -> utf-8-sig 폴백, .xls -> .xlsx 저장 (잠금 새 이름 저장과 덮어쓰기 회피는 2.3.0), 폴백에도 `[WARN]`
+- [ ] `--history` 원장 0건을 `status: ok` + `record_count: 0`으로 (ml_train.py:1582, `no_history`는 별도 키로 유지), 빈 행만 있는 입력의 0행 명시 오류(ml_predict.py:444)
+- [ ] 파괴적 작업 미리보기 `--dry-run` (R8): 학습 `--overwrite`, 예측·보고서 `--overwrite` 대상
+- [ ] `--overwrite`로 버전을 교체하면 원장에 같은 version 기록이 2개 생김: `ml_report -d` 최고 버전 선택과 `is_best` 비교가 옛 기록을 볼 수 있음 (교체 표시 또는 마지막 기록 우선)
+- [ ] `--dtypes` 컬럼명을 resolve_column_names로 매칭 + `[추천]`, int 변환의 fillna(0) 제거 또는 경고(ml_train.py:237-242)
+- [ ] 예측 `--targets` 불일치(ml_predict.py:904), 보고서 버전 없음(ml_report.py:772)에 `[추천] <후보>`
+- [ ] JSON 목록 상한 + `truncated`: `--history` records, feature_types/features_used, 오류 메시지 컬럼 목록
+- [x] `-h/--help` 출력을 stderr로 (stdout은 JSON 1줄) (2.4.2)
+- [ ] requirements.txt에 matplotlib 추가, 2행 주석을 `python -m pip install ...`로
+- [ ] 로그 태그 정리: `[PROGRESS  5%] [===]` -> `[PROGRESS] 5% ...`(러너 M14 파서 확인), 이력 표 머리 `[STATUS]`, 러너 `[준비]` -> `[INFO]`
+- [ ] 인자 alias: ml_report `--targets/-y`, 저장 `--save`(`--out` 유지)
+- [ ] 테스트 보강: exit 130 롤백, 성공 경로 `VERIFIED:` 검사 확대, 빈 데이터 (덮어쓰기 차단은 2.3.0)
+- [ ] 이 섹션 위의 완료 `[x]` 항목(Windows 러너 M1~M14)을 2.2.0 항목으로 이동

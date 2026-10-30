@@ -1,9 +1,7 @@
 # 표준 사용자 환경
 
 `CLI/` 아래 모든 도구는 이 환경에서 **추가 설치 없이** 동작하는 것을 기본 목표로 합니다.
-버전 고정 목록: 루트 [`constraints.txt`](../constraints.txt)
-
-이 저장소에서 작업하는 에이전트는 루트 `AGENTS.md`의 "사용자 환경" 요약을 자동으로 읽고, OpenCode는 `opencode.json`의 `instructions` 설정으로 이 문서도 함께 읽습니다.
+버전 기준은 루트 `AGENTS.md`의 "사용자 환경" 표와 아래 표입니다 (둘을 함께 갱신).
 
 | 항목 | 값 |
 |---|---|
@@ -45,6 +43,6 @@
 ## 새 도구를 만들 때 규칙
 
 1. 위 목록에 있는 라이브러리를 우선 사용합니다.
-2. 목록에 없는 패키지가 필요하면 Python 3.13 / win_amd64 wheel이 있는 것만 쓰고, 이 문서와 `constraints.txt`에 버전을 기록합니다.
+2. 목록에 없는 패키지가 필요하면 Python 3.13 / win_amd64 wheel이 있는 것만 쓰고, 이 문서와 `AGENTS.md` 표에 버전을 기록합니다.
    import 실패 시에도 traceback 대신 `STOP_RETRY` JSON으로 안내되게 합니다.
-3. 테스트는 `constraints.txt` 버전으로 실행해 통과해야 합니다.
+3. 테스트는 위 표의 버전으로 실행해 통과해야 합니다.

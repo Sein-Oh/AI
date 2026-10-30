@@ -7,6 +7,14 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 - 소비자는 사람이 아닌 경량 LLM입니다. 출력 형식의 작은 변화도 에이전트를 깨뜨립니다.
 - 설계 원칙: **LLM 개입 최소화** – 판단과 복구는 도구가 하고, LLM은 명령 1회 실행 + JSON 1줄 해석만 한다.
 
+## 폴더 구조
+- `CLI/<tool>/`: 사용자 PC의 `C:\CLI`로 그대로 복사되는 폴더. **실행에 필요한 .py와 `SKILL.md`만** 둔다.
+  런타임이 만드는 `data/`(오류 로그 등, git 제외)만 예외.
+- `CLI-dev/<tool>/`: 그 밖의 모든 것 (`README.md`, `CHANGELOG.md`, `requirements.txt`, `tests/`, `tools/` 실기 러너와 보조 스킬).
+  `CLI-dev/README.md`(공통 계약), `CLI-dev/run_all_tests.py`. 실기 테스트 때만 `C:\CLI-dev`로 가져가며,
+  `CLI-dev`의 테스트·러너는 옆 폴더 `../CLI/<tool>`의 도구를 시험한다.
+- 새 파일을 `CLI/<tool>/`에 넣는 것은 도구 실행에 꼭 필요할 때만.
+
 ## 사용자 환경 (모든 작업의 전제)
 | 항목 | 값 |
 |---|---|
@@ -15,18 +23,18 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 | 실행 명령 | `python`, `python -m pip` 만 사용 (`py`, `python3`, 단독 `pip` 금지). 명령 예시·스킬·배치 파일 포함 |
 | 에이전트 | **OpenCode** + 26B~30B 경량 LLM, 도구는 OpenCode 스킬로 제공 |
 | 주요 라이브러리 | pandas 3.0.5, scikit-learn 1.9.0, scipy 1.18.1, numpy/joblib(의존성), openpyxl 3.1.5, python-docx 1.2.0, python-pptx 1.0.2, matplotlib 3.11.1, seaborn 0.13.2, pymupdf 1.28.2, olefile 0.47, opencv-python 5.0.0.93, PyYAML 6.0.3, python-dateutil 2.9.0.post0, pywin32 312, pytest 9.1.1, pymupdf4llm 1.28.2, fastapi 0.141.1, fastmcp 3.4.7, mcp 1.28.1, langgraph 1.2.11, openai 2.54.0 |
-| 버전 기준 | 루트 `constraints.txt` (전체 목록). 상세 설명: `docs/ENVIRONMENT.md` |
+| 버전 기준 | 이 표. 상세 설명: `docs/ENVIRONMENT.md` |
 
 - 목록 외 패키지도 대부분 설치되어 있고, Python 3.13 / win_amd64 wheel로 추가 설치 가능.
-- 환경이 바뀌면 이 표, `constraints.txt`, `docs/ENVIRONMENT.md` 세 곳을 함께 갱신한다.
+- 환경이 바뀌면 이 표와 `docs/ENVIRONMENT.md` 두 곳을 함께 갱신한다.
 
-## 반드시 지킬 ACI 계약 (상세: CLI/README.md)
+## 반드시 지킬 ACI 계약 (상세: CLI-dev/README.md)
 1. stdout은 정확히 1줄 JSON. 진행 로그·표·경고는 전부 stderr. `-h/--help` 텍스트도 stderr로 보내고 stdout에는 JSON 1줄.
    - 사람용 실기 테스트 러너(`tools/run_win_tests.py`)는 계약 대상이 아니다. 단, 에이전트용 모드(`--agent` 등)는 계약을 지킨다.
 2. exit 0 = ok, 1 = error, 2 = 인자 오류, 130 = 중단.
    - 성공: `"status": "ok"`, `agent_directive`는 `VERIFIED:`(도구가 결과를 확인함) 또는 `UNVERIFIED:`(확인하지 못함, 재시도 없이 보고)로 시작.
    - 실패: `"status": "error"`, `agent_directive`는 `STOP_RETRY:`(입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도, `[후보]`면 사용자에게 선택 요청) 또는 `ERROR:`(내부 오류, 재시도 금지).
-   - 공통 키·문구·함수의 구현 규칙은 `CLI/README.md` "공통 런타임 구현 규칙"(R1~R9)을 따른다.
+   - 공통 키·문구·함수의 구현 규칙은 `CLI-dev/README.md` "공통 런타임 구현 규칙"(R1~R9)을 따른다.
 3. 모든 진입점은 공통 런타임의 `run_cli()` + `JsonArgumentParser`를 사용한다.
 4. 기존 CLI 인자·JSON 키는 삭제/의미 변경 금지 (추가는 OK). 바꿔야 하면 alias 유지.
 5. 문자 규칙(아래)을 지킨다.
@@ -41,7 +49,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 5. **인자 이름 일관성**: 도구 간 같은 개념은 같은 인자 이름을 쓴다 (`--file`, `--sheet`, `--save`, `--dry-run` 등). 새 인자는 기존 도구의 이름을 먼저 찾아본다.
 6. **미리보기와 되돌리기**: 덮어쓰기·삭제·일괄 수정 같은 파괴적 작업은 `--dry-run`(변경 없이 결과 미리보기)을 제공하고,
    가능하면 되돌리기 지점을 남긴다 (예: office-cli `undo`).
-7. **판단 대행**: 이름 자동 매칭, 기본값, 자동 상속, 오타 추천은 도구가 처리한다 (CLI/README.md 공통 계약 4번).
+7. **판단 대행**: 이름 자동 매칭, 기본값, 자동 상속, 오타 추천은 도구가 처리한다 (CLI-dev/README.md 공통 계약 4번).
 
 ## JIT 자가복구 권장
 실패를 LLM에게 넘겨 재시도하게 하지 말고, 실패가 난 그 자리에서(Just-In-Time) 도구가 즉시 복구한다.
@@ -99,10 +107,10 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 ## 폐쇄망 / Windows 제약
 - 런타임 네트워크 접근 금지.
 - 새 기능은 표준 환경 라이브러리를 우선 사용. 없는 패키지는 Python 3.13 / win_amd64 wheel이 있는 것만,
-  도구 `requirements.txt`, `constraints.txt`, `docs/ENVIRONMENT.md`에 기록하고 미설치 시 JSON 오류로 안내.
+  도구 `requirements.txt`(`CLI-dev/<tool>/`), 위 "사용자 환경" 표, `docs/ENVIRONMENT.md`에 기록하고 미설치 시 JSON 오류로 안내.
 - 파일 저장·폴더 조작·텍스트 읽기는 JIT 자가복구 표의 공통 함수를 사용한다.
-- 도구 폴더는 단독 배포된다. 공통 런타임 함수는 도구마다 자기 폴더에 두고, 다른 도구 폴더를 import하지 않는다.
-- 테스트는 `constraints.txt` 버전 기준으로 통과해야 한다.
+- 도구 폴더(`CLI/<tool>/`)는 단독 배포된다. 공통 런타임 함수는 도구마다 자기 폴더에 두고, 다른 도구 폴더를 import하지 않는다.
+- 테스트는 "사용자 환경" 표의 버전 기준으로 통과해야 한다.
 
 ## 도구별 규칙
 ### ml-kit
@@ -119,7 +127,7 @@ OpenCode, Claude Code(CLAUDE.md가 이 파일을 불러옴) 등 이 저장소에
 1. 변경 전 `python -m pytest -q`로 기준선 확인.
 2. 리팩터링(동작 불변)과 기능 변경은 별도 커밋/PR.
 3. 버그 수정에는 회귀 테스트 추가. 동작이 바뀌면 `SKILL.md`, `README.md`, `CHANGELOG.md` 갱신.
-4. 남은 할 일은 각 도구 `CHANGELOG.md` 하단 "남은 할 일"에서 관리 (처리 시 해당 버전 항목으로 이동).
+4. 남은 할 일은 각 도구 `CHANGELOG.md`(`CLI-dev/<tool>/`) 하단 "남은 할 일"에서 관리 (처리 시 해당 버전 항목으로 이동).
 5. `SKILL.md`는 경량 LLM 컨텍스트에 들어가므로 짧게 유지 (상세는 README.md).
 6. 스킬은 OpenCode 형식: 도구 폴더명 = frontmatter `name` (`^[a-z0-9]+(-[a-z0-9]+)*$`), frontmatter는 name/description/license/compatibility/metadata만.
-   도구 폴더 안의 보조 스킬(예: `office-cli/tools/office-cli-test/`)도 같은 규칙을 따른다.
+   보조 스킬(예: `CLI-dev/office-cli/tools/office-cli-test/`)도 같은 규칙을 따른다.
