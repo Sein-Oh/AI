@@ -17,8 +17,7 @@ AI_WORK/
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 │   ├── history/               # 지난 설계·검토 기록 (1.0 설계, 1차 지침 준수 검토)
 │   ├── guide/                 # 사용자(사무직)용 사용 가이드 HTML: office-cli, ml-kit (파일 하나씩, 폐쇄망에서 브라우저로 열림)
-│   ├── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내
-│   └── test_logs/             # 사내 PC 실기 테스트 결과 원본
+│   └── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내
 ├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
 │   └── doc-classifier/        # 폴더 파일 목록화/분류 0.9.2 (다른 개발자 담당으로 보관)
 ├── CLI/                       # 사내 PC C:\CLI로 그대로 복사. 실행 파일과 SKILL.md만
