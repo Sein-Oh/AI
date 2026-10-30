@@ -527,7 +527,7 @@ def _md_sections(text: str) -> List[Dict[str, Any]]:
 
 def _text_lines(text: str) -> List[Tuple[str, str]]:
     lines = []
-    for ln in text.replace("\\n", "\n").splitlines():
+    for ln in rt.unescape_newlines(text).splitlines():
         s = ln.strip()
         if not s:
             continue
@@ -789,7 +789,7 @@ def cmd_notes(args) -> Dict[str, Any]:
     if args.file:
         text = rt.read_text_file(rt.resolve_input_path(args.file, "노트 파일")).strip()
     else:
-        text = args.text.replace("\\n", "\n").strip()
+        text = rt.unescape_newlines(args.text).strip()
     if args.append and not text:
         raise rt.InputError("--append로 덧붙일 노트 내용이 없습니다. --text 또는 --file을 지정하세요.")
     if args.append and args.overwrite:

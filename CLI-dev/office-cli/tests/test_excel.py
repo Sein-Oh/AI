@@ -78,6 +78,30 @@ def test_write_formula_count_mismatch_is_input_error(xl, capsys):
     assert code == 1 and out["error_type"] == "input"
 
 
+def test_write_checks_everything_before_writing_the_header(xl, capsys):
+    # 회사 PC 오류 로그: 헤더를 먼저 쓰고 수식 검사에서 실패해 A1:B1만 남았음. 추천 범위는 머리글 행부터
+    app, wb = xl
+    code, out = run(capsys, "write", "--range", "A1", "--header", "x,sin(x)", "--formula", "=(ROW()-2)*0.1", "=SIN(A2)")
+    assert code == 1 and out["message"].endswith("[추천] --range A1:B101")
+    assert (1, 1) not in ws_of(wb).values and (1, 2) not in ws_of(wb).values
+
+
+def test_write_numbers_given_as_formulas_points_to_values(xl, capsys):
+    code, out = run(capsys, "write", "--range", "C6:C8", "--formula", "73.42", "49.97", "14.7")
+    assert code == 1 and "[추천] --values '[[73.42], [49.97], [14.7]]'" in out["message"]
+
+
+def test_write_over_existing_values_needs_overwrite(xl, capsys):
+    app, wb = xl
+    ws = ws_of(wb)
+    ws.set(2, 2, "keep")
+    code, out = run(capsys, "write", "--range", "A1", "--values", '[["a","b"],["c","new"]]')
+    assert code == 1 and out["error_type"] == "needs_user_decision" and "B2=keep" in out["message"]
+    assert ws.values[(2, 2)] == "keep" and (1, 1) not in ws.values
+    code, out = run(capsys, "write", "--range", "A1", "--values", '[["a","b"],["c","new"]]', "--overwrite")
+    assert code == 0 and ws.values[(2, 2)] == "new"
+
+
 def test_write_csv_new_sheet_and_append_skips_header(xl, capsys, tmp_path):
     app, wb = xl
     f = tmp_path / "d.csv"
@@ -208,6 +232,10 @@ def test_read_closed_xlsx_with_openpyxl(tmp_path, capsys, monkeypatch):
     assert code == 0 and out["values"] == [["지역", "금액"], ["서울", 1200]]
     assert out["target_resolved"]["source"] == "file(openpyxl)"
     assert not any(c[0] == "DispatchEx" for c in calls)          # Excel을 띄우지 않음
+    code, out = run(capsys, "read", "--target", str(p), "--range", "B:B")       # 열 전체 (열린 문서와 같게)
+    assert code == 0 and out["values"] == [["금액"], [1200]]
+    code, out = run(capsys, "read", "--target", str(p), "--range", "2:2")
+    assert code == 0 and out["values"] == [["서울", 1200]]
 
 
 # ---------------------------------------------------------------------------
@@ -491,3 +519,5 @@ def test_read_csv_target_without_excel(capsys, monkeypatch, tmp_path):
     assert out["target_resolved"]["source"] == "file(csv)"
     code, out = run(capsys, "read", "--target", str(p), "--range", "B2:B3")
     assert code == 0 and out["values"] == [[61], [63]] and out["range"] == "B2:B3"
+    code, out = run(capsys, "read", "--target", str(p), "--range", "A:A")
+    assert code == 0 and out["values"] == [["반응온도(°C)"], [200.5], [210]]

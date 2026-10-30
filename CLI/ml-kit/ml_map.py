@@ -377,9 +377,10 @@ def execute_reverse(args) -> Dict[str, Any]:
         res["output_file"] = real
         if not ok:
             unverified.append("결과 파일 다시 읽기")
-        if len(solutions) > MAX_SOLUTIONS_JSON:
-            res["truncated"] = True
+        res["truncated"] = len(solutions) > MAX_SOLUTIONS_JSON
+        if res["truncated"]:
             solutions = solutions[:MAX_SOLUTIONS_JSON]
+            res["shown"] = len(solutions)
     res["solutions"] = solutions
     res["verified"] = not unverified
     if unverified:

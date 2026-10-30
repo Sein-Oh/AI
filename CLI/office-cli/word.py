@@ -565,7 +565,7 @@ def _comment_add(args, t: Any) -> Dict[str, Any]:
         if args.file:
             memo = rt.read_text_file(rt.resolve_input_path(args.file, "메모 파일")).strip()
         else:
-            memo = (args.text or "").replace("\\n", "\n").strip()
+            memo = rt.unescape_newlines(args.text or "").strip()
         if not memo:
             raise rt.InputError("메모 내용이 없습니다. --text \"메모\" 또는 --file \"메모.txt\"를 지정하세요.")
         rows = [(args.anchor, memo, args.occurrence)]
@@ -939,7 +939,7 @@ def cmd_write(args) -> Dict[str, Any]:
     if not any([args.text, args.file, args.image, args.toc, args.page_break]):
         raise rt.InputError("넣을 내용이 없습니다. --text, --file, --image, --toc, --page-break 중 하나 이상을 지정하세요.")
     theme = off.get_theme(args.theme)
-    text = args.text.replace("\\n", "\n") if args.text else None
+    text = rt.unescape_newlines(args.text) if args.text else None
     file_rows = None
     file_text = None
     if args.file:

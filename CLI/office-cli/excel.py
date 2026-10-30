@@ -71,6 +71,19 @@ def parse_cell(ref: str) -> Tuple[int, int]:
     return int(m.group(2)), col_number(m.group(1))
 
 
+def parse_area(cells: str, max_row: Optional[int], max_col: Optional[int]) -> Tuple[int, int, Optional[int], Optional[int]]:
+    """'A1:C5', 'B:B', 'B:D', '5:7', 'A1' -> (r1, c1, r2, c2). 열/행 전체는 데이터 끝까지 (None = 끝까지)."""
+    parts = cells.replace("$", "").strip().split(":")
+    a, b = parts[0], parts[-1]
+    if re.fullmatch(r"[A-Za-z]{1,3}", a) and re.fullmatch(r"[A-Za-z]{1,3}", b):
+        return 1, col_number(a), max_row, col_number(b)
+    if a.isdigit() and b.isdigit():
+        return int(a), 1, int(b), max_col
+    r1, c1 = parse_cell(a)
+    r2, c2 = parse_cell(b)
+    return r1, c1, r2, c2
+
+
 def split_sheet(address: str) -> Tuple[Optional[str], str]:
     """"'My Sheet'!A1:B2" -> ('My Sheet', 'A1:B2'), 'A1' -> (None, 'A1')"""
     if "!" not in address:
@@ -218,10 +231,8 @@ def _read_matrix_csv(path: str, address: Optional[str]) -> Tuple[str, int, int, 
     name = os.path.splitext(os.path.basename(path))[0]
     r1, c1 = 1, 1
     if address:
-        parts = split_sheet(address)[1].replace("$", "").split(":")
-        r1, c1 = parse_cell(parts[0])
-        r2, c2 = parse_cell(parts[-1])
         width = max((len(r) for r in rows), default=0)
+        r1, c1, r2, c2 = parse_area(split_sheet(address)[1], len(rows), width)
         rows = [(r + [None] * (width - len(r)))[c1 - 1:c2] for r in rows[r1 - 1:r2]]
     return name, r1, c1, rows, [name]
 
@@ -273,9 +284,7 @@ def _read_matrix_closed(path: str, sheet: Optional[str], address: Optional[str])
                 if found is None:
                     raise rt.not_found("시트", sh, names)
                 ws = wb[found]
-            parts = cells.replace("$", "").split(":")
-            r1, c1 = parse_cell(parts[0])
-            r2, c2 = parse_cell(parts[-1])
+            r1, c1, r2, c2 = parse_area(cells, ws.max_row, ws.max_column)
         else:
             r1, c1 = 1, 1
             r2, c2 = ws.max_row, ws.max_column
@@ -515,46 +524,67 @@ def cmd_write(args) -> Dict[str, Any]:
                     r2c2 = (r2c2[0] - r1 + last + 1, r2c2[1])
                 r1 = last + 1
 
+        # 1) plan every block and check it BEFORE writing anything (a failed check leaves the sheet untouched)
+        ops: List[Tuple[int, int, int, int, str, Any]] = []      # (r1, c1, r2, c2, kind, payload)
+        top = r1
+        if header:
+            ops.append((r1, c1, r1, c1 + len(header) - 1, "values", (tuple(xl_text(h) for h in header),)))
+            r1 += 1
+        if args.formula:
+            formulas = [f if f.startswith("=") else "=" + f for f in args.formula]
+            if all(_is_number(f[1:]) for f in formulas):
+                nums = [float(f[1:].replace(",", "")) for f in formulas]
+                one_col = r2c2 is not None and r2c2[1] == c1
+                rows = [[x] for x in nums] if one_col else [nums]
+                rec = f"--value {formulas[0][1:]}" if len(nums) == 1 else f"--values '{json.dumps(rows)}'"
+                raise rt.InputError(f"--formula에 숫자만 있습니다. 값은 {rec.split()[0]}로 쓰세요. [추천] {rec}")
+            if r2c2 is None:
+                if len(formulas) != 1:
+                    rec = addr(top, c1, top + 100 if header else top + 99, c1 + len(formulas) - 1)
+                    raise rt.InputError("수식이 여러 개면 --range로 범위를 지정하세요"
+                                        + (f" (머리글이 있으면 머리글 행부터, 수식은 {top + 1}행 기준으로)" if header else "")
+                                        + f". [추천] --range {rec}")
+                r2, c2 = r1, c1
+            else:
+                r2, c2 = r2c2
+            if r2 < r1:
+                raise rt.InputError("--range 범위가 헤더 행만 포함합니다. 데이터 행까지 포함하세요.")
+            ncols = c2 - c1 + 1
+            if len(formulas) == 1:
+                ops.append((r1, c1, r2, c2, "formula", formulas[0]))          # 상대참조 자동 조정
+            elif len(formulas) == ncols:
+                ops += [(r1, c1 + j, r2, c1 + j, "formula", f) for j, f in enumerate(formulas)]
+            else:
+                raise rt.InputError(f"수식 {len(formulas)}개와 범위의 열 수 {ncols}가 다릅니다. 열마다 수식 1개씩 주세요. "
+                                    f"[추천] --range {addr(top, c1, r2, c1 + len(formulas) - 1)}")
+        elif args.value is not None:
+            v = xl_text(coerce(args.value))
+            ops.append((r1, c1, *(r2c2 or (r1, c1)), "value", v))
+        else:
+            data = rect(table)
+            nrows, ncols = len(data), len(data[0])
+            ops.append((r1, c1, r1 + nrows - 1, c1 + ncols - 1, "values", tuple(tuple(xl_text(v) for v in r) for r in data)))
+
+        # 2) never overwrite existing values without the user's consent (--append writes below the data)
+        if not args.overwrite and not args.append:
+            filled = [fc for (a, b, c, d, _, _) in ops for fc in _filled_cells(ws, ws.Range(ws.Cells(a, b), ws.Cells(c, d)))]
+            if filled:
+                raise rt.UserDecisionError(
+                    f"{ws.Name}!{addr(ops[0][0], ops[0][1], ops[-1][2], max(o[3] for o in ops))}에 값이 있는 칸 {len(filled)}개가 덮어써집니다: "
+                    + ", ".join(f"{c}={_short(v)}" for c, v in filled[:5]) + (" ..." if len(filled) > 5 else ""),
+                    "쓰지 않았습니다. 덮어쓸 칸을 사용자에게 보여 주고, 사용자가 덮어써도 된다고 하면 --overwrite를 붙여 다시 실행하세요. "
+                    "아니면 비어 있는 다른 --range를 쓰거나 --append로 아래에 이어 쓰세요.")
+
+        # 3) write
         written: List[str] = []
         with off.excel_batch(t.app):
-            if header:
-                ws.Range(ws.Cells(r1, c1), ws.Cells(r1, c1 + len(header) - 1)).Value = (tuple(xl_text(h) for h in header),)
-                written.append(addr(r1, c1, r1, c1 + len(header) - 1))
-                r1 += 1
-
-            if args.formula:
-                formulas = [f if f.startswith("=") else "=" + f for f in args.formula]
-                if r2c2 is None:
-                    if len(formulas) != 1:
-                        raise rt.InputError("수식이 여러 개면 --range로 범위를 지정하세요 (예: A2:B101).")
-                    r2, c2 = r1, c1
+            for a, b, c, d, kind, payload in ops:
+                cells_rng = ws.Range(ws.Cells(a, b), ws.Cells(c, d))
+                if kind == "formula":
+                    cells_rng.Formula = payload
                 else:
-                    r2, c2 = r2c2
-                if r2 < r1:
-                    raise rt.InputError("--range 범위가 헤더 행만 포함합니다. 데이터 행까지 포함하세요.")
-                ncols = c2 - c1 + 1
-                if len(formulas) == 1:
-                    ws.Range(ws.Cells(r1, c1), ws.Cells(r2, c2)).Formula = formulas[0]   # 상대참조 자동 조정
-                elif len(formulas) == ncols:
-                    for j, f in enumerate(formulas):
-                        ws.Range(ws.Cells(r1, c1 + j), ws.Cells(r2, c1 + j)).Formula = f
-                else:
-                    raise rt.InputError(f"수식 {len(formulas)}개와 범위의 열 수 {ncols}가 다릅니다. 열마다 수식 1개씩 주세요.")
-                written.append(addr(r1, c1, r2, c2))
-            elif args.value is not None:
-                v = xl_text(coerce(args.value))
-                if r2c2:
-                    ws.Range(ws.Cells(r1, c1), ws.Cells(*r2c2)).Value = v
-                    written.append(addr(r1, c1, *r2c2))
-                else:
-                    ws.Cells(r1, c1).Value = v
-                    written.append(addr(r1, c1))
-            else:
-                data = rect(table)
-                nrows, ncols = len(data), len(data[0])
-                ws.Range(ws.Cells(r1, c1), ws.Cells(r1 + nrows - 1, c1 + ncols - 1)).Value = tuple(
-                    tuple(xl_text(v) for v in r) for r in data)
-                written.append(addr(r1, c1, r1 + nrows - 1, c1 + ncols - 1))
+                    cells_rng.Value = payload
+                written.append(addr(a, b, c, d))
 
         first = parse_cell(written[0].split(":")[0])
         last_ref = written[-1].split(":")[-1]
@@ -950,6 +980,14 @@ def cmd_sheet(args) -> Dict[str, Any]:
     return rt.ok(TOOL, "sheet", msg, target_resolved=resolved, sheets=names)
 
 
+def _is_number(text: str) -> bool:
+    try:
+        float(text.strip().replace(",", ""))
+        return True
+    except ValueError:
+        return False
+
+
 def _filled_cells(ws: Any, rng: Any) -> List[Tuple[str, Any]]:
     """범위에서 값이 있는 칸 [(주소, 값)] (문서 순서)."""
     r0, c0 = int(rng.Row), int(rng.Column)
@@ -1256,6 +1294,7 @@ def build_cli():
     p.add_argument("--formula", nargs="+", help="수식. 1개면 범위 전체, 여러 개면 열마다 (상대참조 자동 조정)")
     p.add_argument("--header", help="첫 행에 쓸 머리글 (쉼표 구분). 데이터/수식은 그 아래부터")
     p.add_argument("--append", action="store_true", help="기존 데이터 아래에 이어 쓰기 (같은 머리글은 생략)")
+    p.add_argument("--overwrite", action="store_true", help="값이 있는 칸을 덮어쓰기 (사용자가 확인했을 때만)")
     p.add_argument("--new-sheet", action="store_true",
                    help="--sheet(또는 --range '이름'!A1)의 시트를 새로 만들어 쓰기. 없으면 없는 시트는 오류")
     p.add_argument("--no-autofit", action="store_true", help="열 너비 자동 맞춤 안 함")

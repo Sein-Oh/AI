@@ -546,7 +546,10 @@ def _to_excel(args, rows: List[List[Any]], sheet_base: str) -> Dict[str, Any]:
                                 f"사용자 확인 후 --overwrite를 붙이세요. [추천] {free}")
         ws = t.sheet(existing or name, create=existing is None)
         width = max(len(r) for r in rows)
-        data = tuple(tuple(list(r) + [""] * (width - len(r))) for r in rows)
+        import excel
+        # Word/PPT text stays text: "001", "1-2", "(100)" would become numbers/dates, "=..." a formula
+        cell = lambda v: "'" + v if isinstance(v, str) and v.startswith("=") else excel.xl_text(v)  # noqa: E731
+        data = tuple(tuple(cell(v) for v in list(r) + [""] * (width - len(r))) for r in rows)
         with off.excel_batch(t.app):
             ws.Range(ws.Cells(1, 1), ws.Cells(len(data), width)).Value = data
             header = ws.Range(ws.Cells(1, 1), ws.Cells(1, width))
@@ -830,11 +833,16 @@ def cmd_undo(args) -> Dict[str, Any]:
     kind = _app(args.app) if args.app else None
     snaps = off.list_snapshots(kind)
     if args.list:
+        # 번호는 --app 필터에 따라 달라지므로 그대로 실행할 명령(같은 --app 포함)을 항목마다 줍니다
+        app_arg = ["--app", args.app] if args.app else []
         items = [{"pick": i, "app": off.APP_LABEL[s["app"]], "name": s["name"], "created_at": s.get("created_at", "")[:15],
-                  "by": s.get("by", "")} | ({"undo_available": False, "reason": s.get("reason", "")} if s.get("barrier") else {})
+                  "by": s.get("by", "")}
+                 | ({"undo_available": False, "reason": s.get("reason", "")} if s.get("barrier")
+                    else {"command": rt.next_command("office.py", ["undo", "--pick", i] + app_arg, "")["command"]})
                  for i, s in enumerate(snaps[:20], 1)]
-        return rt.ok(TOOL, "undo", f"되돌릴 수 있는 지점 {sum(1 for s in snaps if not s.get('barrier'))}개", snapshots=items,
-                     count=len(snaps), shown=len(items), truncated=len(snaps) > len(items))
+        return rt.ok(TOOL, "undo", f"되돌릴 수 있는 지점 {sum(1 for s in snaps if not s.get('barrier'))}개",
+                     "VERIFIED: 목록을 사용자에게 보여 주세요. 사용자가 고른 항목의 command를 글자 그대로 실행하세요 (번호만 바꿔 직접 만들지 않음).",
+                     snapshots=items, count=len(snaps), shown=len(items), truncated=len(snaps) > len(items))
     if not snaps:
         return rt.ok(TOOL, "undo", "되돌릴 스냅샷이 없습니다",
                      "VERIFIED: 되돌릴 수 있는 작업이 없습니다. 사용자에게 알리세요.", restored=False)

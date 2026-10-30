@@ -261,7 +261,10 @@ def get_active(kind: str) -> Dict[str, Any]:
         if doc is not None:
             full = str(getattr(doc, "FullName", "") or doc.Name)
             return {"name": str(doc.Name), "path": full if os.path.isabs(full) else "", "app": app, "doc": doc}
-    raise rt.InputError(f"열려 있는 {APP_LABEL[kind]} 문서가 없습니다. 문서를 열거나 --target에 파일 경로를 지정하세요.")
+    raise rt.UserDecisionError(
+        f"열려 있는 {APP_LABEL[kind]} 문서가 없습니다.",
+        "실행하지 않았습니다. 사용자에게 문서를 열어 달라고 하거나 파일의 전체 경로를 물어, 같은 명령에 "
+        "--target \"<전체경로>\"를 붙여 1번만 실행하세요. 경로를 추측하지 마세요.")
 
 
 def match_open(kind: str, target: str, docs: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
