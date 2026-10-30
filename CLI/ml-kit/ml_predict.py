@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.9.5"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.9.6"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -97,8 +97,7 @@ class InputError(ValueError):
 
 
 # Exceptions caused by arguments, data schema or environment (not by a bug in the tool)
-_STOP_RETRY_ERRORS = (ValueError, KeyError, FileNotFoundError, NotADirectoryError,
-                      IsADirectoryError, PermissionError)
+_STOP_RETRY_ERRORS = (InputError, FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError)
 
 
 def error_payload(exc: BaseException, hint: str = "") -> Dict[str, Any]:
@@ -1110,6 +1109,7 @@ class Table:
 def nearest_rows(df: pd.DataFrame, cols: List[str], target: np.ndarray, span: np.ndarray,
                  show: List[str], n: int = NEAREST_N) -> List[Dict[str, Any]]:
     X = np.column_stack([coerce_numeric(df[c]).to_numpy(dtype=float) for c in cols])
+    num = {c: coerce_numeric(df[c]) for c in show if _is_numeric_col(df[c])}    # numbers, not text from CSV
     d = np.sqrt(np.nansum(((X - target) / span) ** 2, axis=1))
     d[~np.isfinite(X).all(axis=1)] = np.inf
     out = []
@@ -1117,7 +1117,7 @@ def nearest_rows(df: pd.DataFrame, cols: List[str], target: np.ndarray, span: np
         if not np.isfinite(d[i]):
             break
         rec = {"row": int(df["__row"].iloc[i]), "distance": round(float(d[i]), 4)}
-        rec.update({c: _cell(df[c].iloc[i]) for c in show})
+        rec.update({c: _cell(num[c].iloc[i] if c in num else df[c].iloc[i]) for c in show})
         out.append(rec)
     return out
 
@@ -1928,11 +1928,13 @@ def execute_find(args: argparse.Namespace) -> Dict[str, Any]:
     base = {**fixed, **filled}
     warnings: List[str] = []
     for f, v in fixed.items():
+        if f not in numeric_in:
+            continue
         st = stats.get(f)
         try:
             fv = float(v)
         except (TypeError, ValueError):
-            continue
+            raise InputError(f"고정 입력 '{f}'의 값 '{v}'이(가) 숫자가 아닙니다. -i에 '{f}=<숫자>'로 다시 지정하십시오.")
         if st and (fv < st["min"] or fv > st["max"]):
             warnings.append(f"고정 입력 '{f}'={_fmt(fv)}이(가) 학습 범위({_fmt(st['min'])}~{_fmt(st['max'])}) 밖이라 답을 믿기 어렵습니다")
 

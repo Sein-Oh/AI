@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.4.4"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.4.5"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -360,6 +360,13 @@ def run_cli(tool: str, command: str, execute: Callable[[], Dict[str, Any]]) -> N
     sys.exit(0 if result.get("status") == "ok" else 1)
 
 
+# 경량 LLM이 자주 지어내는 명령·옵션 (회사 PC 오류 로그). 실제 이름으로 안내합니다.
+COMMAND_ALIASES = {"excel": {"list": "info", "sheets": "info"}, "word": {"list": "info", "toc": "outline"},
+                   "ppt": {"list": "info"}, "office": {"list": "windows", "redo": "undo"}}
+OPTION_SYNONYMS = {"--target": ["--app", "--file", "--name"], "--file": ["--target"], "--path": ["--file", "--target"],
+                   "--output": ["--save"], "--out": ["--save"], "--sheet-name": ["--sheet", "--name"]}
+
+
 class JsonArgumentParser(argparse.ArgumentParser):
     """인자 오류를 텍스트 대신 JSON(exit 2)으로 응답하는 ArgumentParser. 서브파서에도 그대로 상속됩니다."""
 
@@ -379,6 +386,38 @@ class JsonArgumentParser(argparse.ArgumentParser):
                    "agent_directive": "VERIFIED: 도움말을 stderr에 출력했습니다. SKILL.md의 명령 템플릿을 그대로 사용하세요. "
                                       "도구 코드(.py)는 읽지 마세요. 방법을 모르겠으면 사용자에게 물어보세요."})
 
+    def _hint(self, message: str) -> str:
+        """흔한 잘못(없는 명령, 다른 명령의 옵션, 따옴표 없는 경로)에 [추천]을 붙입니다 (회사 PC 오류 로그)."""
+        import difflib
+        top = self if self.prog.count(" ") == 0 else None
+        subs = {}
+        for parser in ([top] if top else []):
+            for act in parser._actions:
+                if isinstance(act, argparse._SubParsersAction):
+                    subs = act.choices
+        m = re.search(r"invalid choice: '([^']+)'", message)
+        if m:
+            choices = list(subs) or re.findall(r"'([^']+)'", message.split("choose from", 1)[-1])
+            alias = COMMAND_ALIASES.get(self.tool_name, {}).get(m.group(1).lower())
+            best = alias or next(iter(difflib.get_close_matches(m.group(1), choices, n=1, cutoff=0.6)), None)
+            return f" [추천] {best}" if best else f" [후보] {', '.join(choices)}"
+        m = re.search(r"unrecognized arguments: (.+)$", message)
+        if not m:
+            return ""
+        cmd = CURRENT_ARGV[0] if CURRENT_ARGV else ""
+        sub = subs.get(cmd) if subs else self
+        opts = [o for a in (sub._actions if sub else []) for o in a.option_strings if o.startswith("--")]
+        extra = m.group(1).split()
+        flags = [x for x in extra if x.startswith("--")]
+        for f in flags:
+            near = [o for o in OPTION_SYNONYMS.get(f, []) if o in opts] or difflib.get_close_matches(f, opts, n=1, cutoff=0.7)
+            if near:
+                return f" '{cmd}' 명령에는 {f} 옵션이 없습니다. [추천] {near[0]}"
+        if not flags:
+            return " 띄어쓰기가 있는 경로나 값은 큰따옴표로 감싸세요 (예: --target \"C:\\폴더 이름\\파일.xlsx\")."
+        opts = [o for o in opts if o != "--help"]
+        return f" '{cmd}' 명령의 옵션: {', '.join(opts)}" if opts else ""
+
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
         payload = {
@@ -386,8 +425,9 @@ class JsonArgumentParser(argparse.ArgumentParser):
             "tool": self.tool_name,
             "command": "",
             "error_type": "input",
-            "message": f"CLI 인자 오류: {message}",
-            "agent_directive": "STOP_RETRY: CLI 인자가 잘못되었습니다. SKILL.md의 명령 형식을 확인하고 사용자에게 보고하세요.",
+            "message": f"CLI 인자 오류: {message}." + self._hint(message),
+            "agent_directive": "STOP_RETRY: CLI 인자가 잘못되었습니다. message에 [추천]이 있으면 그 부분만 바꿔 1번만 다시 실행하고, "
+                               "없으면 SKILL.md의 명령 형식을 확인해 사용자에게 보고하세요.",
         }
         write_error_log(self.tool_name, None, payload)
         emit_json(payload)
@@ -533,6 +573,26 @@ def resolve_output_path(path: Optional[str], default_stem: str, ext: str, overwr
 # ==============================================================================
 # 4. 파일 입출력
 # ==============================================================================
+
+_WIN_PATH = re.compile(r"(?:[A-Za-z]:\\|\\\\)[^\s\"'<>|]*")
+
+
+def unescape_newlines(text: str) -> str:
+    """--text의 글자 '\\n'을 줄바꿈으로. Windows 경로 안의 \\n(C:\\new\\data)은 그대로 둡니다."""
+    out, pos = [], 0
+    for m in _WIN_PATH.finditer(text):
+        path, tail = m.group(0), ""
+        cut = path.rfind("\\n")
+        # 경로가 파일 이름(확장자)으로 끝났거나, \n 뒤가 비었거나 목록·제목 기호뿐이면 경로가 끝나고 줄이 바뀐 것
+        # ("C:\\a\\b.xlsx\\n다음", "C:\\data\\n- 다음 줄")
+        if cut > 2 and "\\" not in path[cut + 2:] and (re.fullmatch(r"[-#*>|]*|\d+\.", path[cut + 2:])
+                                                         or re.search(r"\.\w{1,5}$", path[:cut])):
+            path, tail = path[:cut], "\n" + path[cut + 2:]
+        out += [text[pos:m.start()].replace("\\n", "\n"), path, tail]
+        pos = m.end()
+    out.append(text[pos:].replace("\\n", "\n"))
+    return "".join(out)
+
 
 def read_text_file(path: str) -> str:
     """Windows 도구들이 쓰는 인코딩(UTF-8 +/- BOM, UTF-16 BOM, CP949/EUC-KR)을 자동 판별해 읽습니다.

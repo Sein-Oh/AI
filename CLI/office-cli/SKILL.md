@@ -4,7 +4,7 @@ description: 열려 있는 Excel/Word/PowerPoint 문서를 읽고 쓰며(값/표
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "1.4.4"
+  version: "1.4.5"
   platform: windows
 ---
 
@@ -46,7 +46,7 @@ metadata:
 | 캐시된 파일 조회 | `reader.py list [--name 이름일부] [--folder 폴더]` |
 | 캐시 지우기 (원본은 그대로) | `reader.py clear --name 이름일부` / `--file "<파일>"` / `--folder "<폴더>"` / `--missing`(원본 없는 것) / `--all`. 먼저 `--dry-run`으로 목록을 보여 주고 확인받은 뒤 `next_commands[0]` 실행 |
 | 메일 | `outlook.py current`, `search --query 말 [--from 이름]`, `read --id <id>`, `reply --body "내용"`, `new --to 주소 --subject 제목 --body 내용` |
-| 되돌리기 / 창 | `office.py undo` (`--list`, `--pick N`), `office.py windows`, `office.py focus --app excel` |
+| 되돌리기 / 창 | `office.py undo` (목록 `--list`: 사용자가 고른 항목의 `command`를 그대로 실행), `office.py windows`, `office.py focus --app excel` |
 | 결과 배치 확인 | `ppt.py info --detail --slides N`, `excel.py info --detail`, `word.py info --detail` (`layout_warnings`가 0이 아니면 `warnings`를 알림) |
 
 ## 2. 여러 단계 작업
@@ -73,6 +73,6 @@ metadata:
 - `search` 결과가 `UNVERIFIED:`이면 `not_searched`(검색하지 못한 부분)를 그대로 알린다. 0건이어도 "근거 없음"이라고 단정하지 않는다.
 - `search`는 `--file`이 없으면 등록된 문서(캐시)만 찾는다. `--file`을 주면 그 파일/폴더의 새 문서를 먼저 등록한다(`indexed_now`를 사용자에게 알린다). `not_indexed` 오류면 사용자에게 폴더를 물어 `--file "<폴더>"`로 실행한다.
 - 메일은 기본으로 작성 창만 띄운다. `--send`는 사용자가 **발송을 분명히 요청한 경우에만** 붙인다.
-- 아래는 사용자가 요청한 경우에만 쓴다: 시트/슬라이드 삭제, `ppt.py slide --action clear --all-slides`, `--new-sheet`(새 시트), `--overwrite`(기존 시트·기존 노트를 덮어쓰기).
+- 아래는 사용자가 요청한 경우에만 쓴다: 시트/슬라이드 삭제, `ppt.py slide --action clear --all-slides`, `--new-sheet`(새 시트), `--overwrite`(기존 시트·기존 노트·값이 있는 칸을 덮어쓰기).
 - 저장 경로에 같은 이름의 파일이 있으면 도구가 덮어쓰지 않고 새 이름으로 저장한다. 결과의 `output_file`과 `recovered`를 그대로 알린다.
 - 잘못 고쳤으면 `office.py undo`로 되돌린다. 저장한 적 없는 문서도 그 문서를 되돌린다 (결과 `preview`를 그대로 알린다).

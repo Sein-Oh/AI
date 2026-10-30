@@ -1267,13 +1267,25 @@ def _outlier_flags(values: pd.Series) -> Tuple[np.ndarray, Optional[float]]:
     return flag.to_numpy(dtype=bool), med
 
 
+def _exclude_mark(v: Any) -> str:
+    """A '제외' cell as text; 0 / FALSE (0-1 or TRUE/FALSE flags) mean "not marked", like an empty cell."""
+    if v is None or (not isinstance(v, str) and pd.isna(v)) or isinstance(v, (bool, np.bool_)) and not v:
+        return ""
+    t = str(v).strip()
+    if t.upper() == "FALSE":
+        return ""
+    try:
+        return "" if float(t) == 0 else t
+    except ValueError:
+        return t
+
+
 def plan_exclusions(marks: Optional[pd.Series], y: pd.Series, X: pd.DataFrame, schema: Dict[str, Any],
                     created: List[str], task: str, target_name: str) -> Dict[str, Any]:
     """Rows to leave out of training for one target: the user's '제외' marks plus automatic outliers."""
     n = len(y)
     valid = y.notna().to_numpy()
-    text = (marks.map(lambda v: "" if pd.isna(v) else str(v).strip()).to_numpy()
-            if marks is not None else np.array([""] * n, dtype=object))
+    text = (marks.map(_exclude_mark).to_numpy() if marks is not None else np.array([""] * n, dtype=object))
     forced = text == INCLUDE_MARK
     manual = (text != "") & ~forced & valid
     candidate = valid & ~manual & ~forced
@@ -1984,7 +1996,8 @@ TASK_ORDER = [TASK_REGRESSION, TASK_CLASSIFICATION]
 
 
 REPORT_PURPOSE = {  # 2.9.2: a regression report also makes the performance calculator (ml_export.py)
-    TASK_REGRESSION: "ML 결과 보고서(Word)와 성능예측표(엑셀 계산기) 생성 (모든 타겟, 입력을 줄이며 다시 학습해 몇 분 걸림, SKILL.md 5단계대로 --title)",
+    TASK_REGRESSION: "ML 결과 보고서(Word)와 성능예측표(엑셀 계산기) 생성 (모든 타겟, 입력을 줄이며 다시 학습해 몇 분 걸림. "
+                     "성능예측표 제목은 학습 때 데이터 설명에서 자동으로 정함)",
     TASK_CLASSIFICATION: "ML 결과 보고서(Word) 생성 (이 데이터의 모든 타겟을 1개 문서로)",
 }
 

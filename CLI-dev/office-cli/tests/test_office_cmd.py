@@ -131,6 +131,23 @@ def test_word_text_to_new_excel_sheet_with_unique_name(monkeypatch, capsys):
     assert ws.values[(3, 4)] == "내용입니다"
 
 
+def test_word_text_to_excel_stays_text(monkeypatch, capsys):
+    app = FakeXlApp()
+    wb = FakeExcelWorkbook(app, sheets=("Sheet1",))
+    fake, _ = make_win32com()
+    monkeypatch.setattr(off, "win32com", fake)
+    monkeypatch.setattr(off, "pythoncom", None)
+    monkeypatch.setattr(off, "list_open", lambda kind: [])
+    monkeypatch.setattr(off, "get_active", lambda kind: {"name": wb.Name, "path": wb.FullName, "app": app, "doc": wb})
+    monkeypatch.setattr(off, "save_snapshot", lambda *a, **k: None)
+    rows = [["코드", "기간", "손익", "식"], ["001", "1-2", "(100)", "=A1+1"]]
+    monkeypatch.setattr(office, "_word_rows", lambda args: (rows, "표.docx"))
+    code, out = run(capsys, "transfer", "--from", "word", "--to", "excel")
+    ws = wb.Worksheets(out["sheet"])
+    assert [ws.values[(2, c)] for c in range(1, 5)] == ["001", "1-2", "(100)", "=A1+1"]
+    assert {(2, c) for c in range(1, 5)} <= ws.prefixed                    # written as text, not number/date/formula
+
+
 def test_transfer_to_existing_excel_sheet_does_not_overwrite(monkeypatch, capsys):
     app = FakeXlApp()
     wb = FakeExcelWorkbook(app, sheets=("Sheet1", "결과"))
@@ -177,6 +194,9 @@ def test_undo_closed_file_restores_backs_up_and_consumes(tmp_path, monkeypatch, 
     off.save_snapshot("excel", FakeWorkbook(str(orig)), "excel", "write")      # 스냅샷 내용: snapshot-of-a.xlsx
     code, out = run(capsys, "undo", "--list")
     assert out["snapshots"][0]["by"] == "excel write"
+    assert out["snapshots"][0]["command"].endswith("undo --pick 1")
+    code, out = run(capsys, "undo", "--list", "--app", "excel")
+    assert out["snapshots"][0]["command"].endswith("undo --pick 1 --app excel")     # 같은 필터로 고르기
     code, out = run(capsys, "undo")
     assert code == 0 and out["restored_as"] == "file_replaced"
     assert orig.read_bytes() == b"snapshot-of-a.xlsx"

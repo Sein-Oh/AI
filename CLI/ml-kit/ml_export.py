@@ -100,14 +100,21 @@ def raw_inputs(meta: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     return raw, evals
 
 
+def _refers(rhs: str, name: str) -> bool:
+    """Whole-name match ('온도' is not found inside '반응온도'); expressions are stored with full column names."""
+    return re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", rhs) is not None
+
+
 def evals_for(subset: List[str], evals: List[str], raw: List[str]) -> List[str]:
-    """Derived features whose source inputs are all kept (sources = raw input names found in the expression;
-    expressions are stored with full column names)."""
-    out = []
-    for e in evals:
+    """Derived features whose sources are all kept: raw inputs in the subset and earlier derived features kept
+    (a derived feature built from another one is dropped with it)."""
+    out, lhs_all = [], [e.split("=", 1)[0].strip() for e in evals]
+    kept_lhs: List[str] = []
+    for e, lhs in zip(evals, lhs_all):
         rhs = e.split("=", 1)[1]
-        if all(r in subset for r in raw if r in rhs):
+        if all(r in subset for r in raw if _refers(rhs, r)) and all(d in kept_lhs for d in lhs_all if d != lhs and _refers(rhs, d)):
             out.append(e)
+            kept_lhs.append(lhs)
     return out
 
 
@@ -136,18 +143,19 @@ def fit_subset(data: pd.DataFrame, target: str, subset: List[str], evals: List[s
             "interval": info.get("prediction_interval")}
 
 
-def search(data: pd.DataFrame, target: str, inputs: List[str], keep: List[str], evals: List[str]) -> List[Dict[str, Any]]:
+def search(data: pd.DataFrame, target: str, inputs: List[str], keep: List[str], evals: List[str],
+           raw: List[str]) -> List[Dict[str, Any]]:
     """Backward elimination with retraining: one candidate per input count, from all inputs down to the keep set / 1."""
     cur = list(inputs)
     progress(f"'{target}': 입력 {len(cur)}개 학습")
-    best = fit_subset(data, target, cur, evals, inputs)
+    best = fit_subset(data, target, cur, evals, raw)
     cands = [best]
     while len(cur) > max(1, len(keep)):
         trials = []
         for drop in [c for c in cur if c not in keep]:
             sub = [c for c in cur if c != drop]
             progress(f"'{target}': 입력 {len(sub)}개 시험 ({strip_unit(drop)} 빼기)")
-            trials.append((drop, fit_subset(data, target, sub, evals, inputs)))
+            trials.append((drop, fit_subset(data, target, sub, evals, raw)))
         if not trials:
             break
         drop, res = max(trials, key=lambda tr: tr[1]["val_r2"])
@@ -329,9 +337,15 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
         for c in p["cand"]["inputs"]:
             if c not in all_inputs:
                 all_inputs.append(c)
-    data = vinfo["data"]
-    rng = {c: (float(coerce_numeric(data[c]).min()), float(coerce_numeric(data[c]).max()),
-               float(coerce_numeric(data[c]).median())) for c in all_inputs}
+    # training range per input = the span every table using it covers (rows left out of training excluded),
+    # so "범위 밖" in the calculator means "outside the table", never a silent extrapolation
+    rng = {}
+    for c in all_inputs:
+        users = [p for p in plans if c in p["cand"]["inputs"]]
+        lo = max(float(p["table"]["lo"][p["cand"]["inputs"].index(c)]) for p in users)
+        hi = min(float(p["table"]["hi"][p["cand"]["inputs"].index(c)]) for p in users)
+        med = float(pd.concat([coerce_numeric(p["data"][c]) for p in users]).median())
+        rng[c] = (lo, hi, min(max(med, lo), hi))
 
     # -- table sheets ------------------------------------------------------------------------
     for p in plans:
@@ -379,16 +393,17 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
             ws.cell(row=row, column=c + 1, value=f"=({x}-INDEX({ax},{pos[-1]}))/(INDEX({ax},{pos[-1]}+1)-INDEX({ax},{pos[-1]}))")
             frac.append(f"{_col(c + 1)}{row}")
             c += 2
-        p_terms, d_terms = [], []
-        for bits in itertools.product((0, 1), repeat=k):
+        # corner terms in two contiguous blocks (prediction, distance) summed as ranges: 2^k terms would exceed
+        # Excel's 255-argument limit as a list from 8 inputs on
+        corners = list(itertools.product((0, 1), repeat=k))
+        p0, d0 = c, c + len(corners)
+        for i, bits in enumerate(corners):
             w = "*".join(frac[j] if b else f"(1-{frac[j]})" for j, b in enumerate(bits))
             idx = "1+" + "+".join(f"({pos[j]}-1{'+1' if b else ''})*{p['strides'][j]}" for j, b in enumerate(bits))
-            ws.cell(row=row, column=c, value=f"={w}*INDEX({p['pred_rng']},{idx})")
-            ws.cell(row=row, column=c + 1, value=f"={w}*INDEX({p['dist_rng']},{idx})")
-            p_terms.append(f"{_col(c)}{row}")
-            d_terms.append(f"{_col(c + 1)}{row}")
-            c += 2
-        return f"SUM({','.join(p_terms)})", f"SUM({','.join(d_terms)})", c
+            ws.cell(row=row, column=p0 + i, value=f"={w}*INDEX({p['pred_rng']},{idx})")
+            ws.cell(row=row, column=d0 + i, value=f"={w}*INDEX({p['dist_rng']},{idx})")
+        end = d0 + len(corners)
+        return (f"SUM({_col(p0)}{row}:{_col(d0 - 1)}{row})", f"SUM({_col(d0)}{row}:{_col(end - 1)}{row})", end)
 
     # -- 계산기 ------------------------------------------------------------------------------
     calc.sheet_view.showGridLines = False
@@ -586,7 +601,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
                  ("원래 모델", f"{m.get('champion_model')} / 입력 {len(p['all_inputs'])}개 / 검증 R² {m.get('val_r2')}"),
                  ("이 표의 모델", f"{c['model']} / 입력 {len(c['inputs'])}개 / 검증 R² {round(c['val_r2'], 4)} / RMSE {round(c['rmse'], 4)}"),
                  ("입력", ", ".join(c["inputs"])),
-                 ("뺀 입력 (학습 범위)", ", ".join(f"{x} ({_fmt(rng_all(vinfo, x)[0])}~{_fmt(rng_all(vinfo, x)[1])})" for x in dropped) or "없음"),
+                 ("뺀 입력 (학습 범위)", ", ".join(f"{x} ({_fmt(rng_of(p['data'], x)[0])}~{_fmt(rng_of(p['data'], x)[1])})" for x in dropped) or "없음"),
                  ("파생변수 (자동 계산)", ", ".join(c["evals"]) or "없음"),
                  ("표", f"축마다 {p['table']['n']}점, {len(p['table']['grid']):,}행, 보간 오차 RMSE {round(p['table']['interp_rmse'], 4)}"),
                  ("모델 대비 일치도", agreement_text(p["table"]["agreement"])),
@@ -619,8 +634,8 @@ def short_version(vdir: str) -> str:
     return os.path.join(os.path.basename(os.path.dirname(vdir)), os.path.basename(vdir))
 
 
-def rng_all(vinfo: Dict[str, Any], col: str) -> Tuple[float, float]:
-    s = coerce_numeric(vinfo["data"][col])
+def rng_of(data: pd.DataFrame, col: str) -> Tuple[float, float]:
+    s = coerce_numeric(data[col])
     return float(s.min()), float(s.max())
 
 
@@ -675,25 +690,32 @@ def excel_check(path: str, plans: List[Dict[str, Any]]) -> Optional[str]:
     try:
         import win32com.client as w32
         xl = w32.DispatchEx("Excel.Application")
+    except Exception as e:
+        return f"엑셀로 계산 확인 실패: {type(e).__name__}: {e}"
+    wb = None
+    try:   # Excel is always closed, also when opening the file fails (no hidden EXCEL.EXE left behind)
         xl.Visible = False
         xl.DisplayAlerts = False
         wb = xl.Workbooks.Open(os.path.abspath(path), ReadOnly=True)
-        try:
-            ws = wb.Worksheets("계산기")
-            xl.CalculateFull()
-            problems = []
-            for ti, p in enumerate(plans):
-                got = ws.Range(p["calc_cell"]).Value
-                x = np.array([float(ws.Range(p["input_cells"][c]).Value) for c in p["cand"]["inputs"]])
-                want = excel_interp(p["table"], x, p["table"]["pred"])
-                if got is None or abs(float(got) - want) > 1e-6 * max(1.0, abs(want)):
-                    problems.append(f"'{p['target']}' 엑셀 계산 {got} != {want:.6g}")
-            return "; ".join(problems) or None
-        finally:
-            wb.Close(SaveChanges=False)
-            xl.Quit()
+        ws = wb.Worksheets("계산기")
+        xl.CalculateFull()
+        problems = []
+        for p in plans:
+            got = ws.Range(p["calc_cell"]).Value
+            x = np.array([float(ws.Range(p["input_cells"][c]).Value) for c in p["cand"]["inputs"]])
+            want = excel_interp(p["table"], x, p["table"]["pred"])
+            if got is None or abs(float(got) - want) > 1e-6 * max(1.0, abs(want)):
+                problems.append(f"'{p['target']}' 엑셀 계산 {got} != {want:.6g}")
+        return "; ".join(problems) or None
     except Exception as e:
         return f"엑셀로 계산 확인 실패: {type(e).__name__}: {e}"
+    finally:
+        for close in ((lambda: wb.Close(SaveChanges=False)) if wb is not None else None, xl.Quit):
+            try:
+                if close:
+                    close()
+            except Exception:
+                pass
 
 
 # ==============================================================================
@@ -719,8 +741,19 @@ def execute_export(args) -> Dict[str, Any]:
             data = data[coerce_numeric(data[excl]).fillna(0) != 1]
         data = data[coerce_numeric(data[target]).notna()].reset_index(drop=True)
         keep = resolve_column_names([s.strip() for s in args.keep.split(",") if s.strip()], inputs, "꼭 포함할 입력(--keep)")[0] if args.keep else []
+        # an input with a single value carries no information and cannot be a table axis
+        const = [c for c in inputs if coerce_numeric(data[c]).nunique(dropna=True) <= 1]
+        if const:
+            warnings.append(f"'{target}': 값이 하나뿐인 입력 {const}은(는) 성능예측표 입력에서 뺐습니다 (학습 데이터에서 변하지 않음)")
+        usable = [c for c in inputs if c not in const]
+        if not usable:
+            raise InputError(f"'{target}': 학습 데이터에서 값이 변하는 입력이 없어 성능예측표를 만들 수 없습니다.")
+        keep = [c for c in keep if c not in const]
         if args.inputs:
             chosen_inputs = resolve_column_names([s.strip() for s in args.inputs.split(",") if s.strip()], inputs, "입력(--inputs)")[0]
+            chosen_inputs = [c for c in chosen_inputs if c not in const]
+            if not chosen_inputs:
+                raise InputError(f"'{target}': --inputs의 입력이 모두 값이 하나뿐이라 표를 만들 수 없습니다. [추천] {','.join(usable)}")
             missing_keep = [k for k in keep if k not in chosen_inputs]
             if missing_keep:
                 raise InputError(f"--inputs에 --keep 입력 {missing_keep}이(가) 빠져 있습니다.")
@@ -728,7 +761,7 @@ def execute_export(args) -> Dict[str, Any]:
             cands = [fit_subset(data, target, chosen_inputs, evals, inputs)]
             cand, reason = cands[0], "지정한 입력 (--inputs)"
         else:
-            cands = search(data, target, inputs, keep, evals)
+            cands = search(data, target, usable, keep, evals, inputs)
             cand = recommend(cands)
             best = max(c["val_r2"] for c in cands)
             reason = (f"최고 검증 R² {best:.4f}와 {RECOMMEND_TOL} 이내에서 입력 수가 가장 적은 안"
@@ -744,7 +777,7 @@ def execute_export(args) -> Dict[str, Any]:
             warnings.append(f"'{target}': 입력이 {len(cand['inputs'])}개라 표가 축마다 {cand['table']['n']}점뿐입니다. "
                             f"보간 오차 {cand['interp_rmse']} (모델 RMSE {round(cand['rmse'], 4)})")
         plans.append({"target": target, "cand": cand, "cands": cands, "table": cand["table"], "all_inputs": inputs,
-                      "reason": reason, "keep": keep})
+                      "reason": reason, "keep": keep, "data": data})
 
     # retrained models and the candidate table next to the version (never inside the version files)
     exp_dir = os.path.join(vinfo["dir"], "export")

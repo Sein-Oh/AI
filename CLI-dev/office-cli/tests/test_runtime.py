@@ -417,3 +417,26 @@ def test_read_text_file_normalizes_crlf(tmp_path):
     p = tmp_path / "w.txt"
     p.write_bytes("가\r\n나\r\n".encode("cp949"))
     assert rt.read_text_file(str(p)) == "가\n나\n"
+
+
+def test_unescape_newlines_keeps_windows_paths():
+    assert rt.unescape_newlines(r"## 제목\n- 항목") == "## 제목\n- 항목"
+    assert rt.unescape_newlines(r"경로 C:\new\data 확인") == r"경로 C:\new\data 확인"          # \n inside a path
+    assert rt.unescape_newlines(r"- C:\new\data\n- 다음") == "- C:\\new\\data\n- 다음"
+    assert rt.unescape_newlines(r"저장: C:\a\b.xlsx\n다음") == "저장: C:\\a\\b.xlsx\n다음"
+
+
+@pytest.mark.parametrize("argv, want", [
+    (["excel.py", "list"], "[추천] info"),
+    (["excel.py", "raed"], "[추천] read"),
+    (["office.py", "undo", "--target", "excel"], "[추천] --app"),
+    (["excel.py", "read", "--target", "C:\\a", "b.xlsx"], "큰따옴표"),
+])
+def test_argument_errors_from_real_logs_get_a_hint(argv, want):
+    tool_dir = os.path.dirname(rt.__file__)
+    proc = subprocess.run([sys.executable, os.path.join(tool_dir, argv[0]), *argv[1:]], capture_output=True, text=True,
+                          encoding="utf-8")
+    out = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    assert proc.returncode == 2 and len(out) == 1
+    payload = json.loads(out[0])
+    assert want in payload["message"] and "[추천]" in payload["agent_directive"]

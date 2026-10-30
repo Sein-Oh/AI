@@ -353,3 +353,10 @@ def test_busy_message_filter_retries_then_gives_up(monkeypatch):
     assert rt.RECOVERED == [f.NOTE]
     assert f.RetryRejectedCall(0, f.BUSY_RETRY_MS + 1, 2) == -1
     assert rt.RECOVERED == [] and rt.RECOVERY_ATTEMPTS
+
+
+def test_no_open_document_asks_for_the_path(monkeypatch):
+    monkeypatch.setattr(off, "find_apps", lambda kind: [])
+    with pytest.raises(rt.UserDecisionError) as ei:
+        off.get_active("excel")
+    assert "--target" in ei.value.directive and "추측하지" in ei.value.directive
