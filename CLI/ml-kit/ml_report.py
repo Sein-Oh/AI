@@ -1357,6 +1357,29 @@ def resolve_version_dir(args: argparse.Namespace) -> str:
     return os.path.join(root, best["version"])
 
 
+def attach_export(result: Dict[str, Any], version_dir: str, task: str, title: Optional[str]) -> None:
+    """2.9.2: the report and the performance calculator (ml_export.py) are made as a set (regression versions only).
+    A failure of the calculator never fails the report: it becomes export_note."""
+    if task != "regression" or os.environ.get("ML_KIT_SKIP_EXPORT") == "1":
+        return
+    try:
+        import ml_export  # heavy (retraining); only when a report is made
+        res = ml_export.execute_export(argparse.Namespace(model=version_dir, targets=None, keep=None, inputs=None,
+                                                          title=title, save=None))
+        result["export_file"] = res["output_file"]
+        result["export"] = {t: {k: v[k] for k in ("inputs", "dropped", "val_r2", "table_rows")} for t, v in res["targets"].items()}
+        result["export_verified"] = res["verified"]
+        if res.get("unverified"):
+            result["export_unverified"] = res["unverified"]
+        result["preview"] += f" | 성능예측표: {os.path.basename(res['output_file'])}"
+        result["agent_directive"] += (" 성능예측표(엑셀 계산기) export_file도 함께 만들었습니다: 경로와 타겟별 남긴 입력(export.<타겟>.inputs)을 알리세요."
+                                      + (" export_unverified 내용도 그대로 알리세요." if res.get("unverified") else ""))
+    except Exception as e:
+        result["export_note"] = f"성능예측표를 만들지 못했습니다 (보고서는 정상): {type(e).__name__}: {str(e)[:200]}"
+        result["agent_directive"] += " export_note를 그대로 알리세요."
+        sys.stderr.write(f"[WARN] {result['export_note']}\n")
+
+
 def execute_report(args: argparse.Namespace) -> Dict[str, Any]:
     for err, pkg in ((_DOCX_IMPORT_ERROR, "python-docx"), (_MPL_IMPORT_ERROR, "matplotlib")):
         if err is not None:
@@ -1366,8 +1389,11 @@ def execute_report(args: argparse.Namespace) -> Dict[str, Any]:
         target_filter = [t.strip() for t in args.target.split(",") if t.strip()]
     if getattr(args, "file", None) and not args.model and not args.data_dir:
         return execute_best_report(args, target_filter)
-    ctx = load_version(resolve_version_dir(args), target_filter)
-    return build_report(ctx, parse_slots(args.slots), args.out, overwrite=args.overwrite)
+    vdir = resolve_version_dir(args)
+    ctx = load_version(vdir, target_filter)
+    result = build_report(ctx, parse_slots(args.slots), args.out, overwrite=args.overwrite)
+    attach_export(result, vdir, result["task"], getattr(args, "title", None))
+    return result
 
 
 def _numbered_out(out: Optional[str], version: str, many: bool) -> Optional[str]:
@@ -1429,6 +1455,10 @@ def execute_best_report(args: argparse.Namespace, target_filter: Optional[List[s
         f"report_file 링크, overall_verdict, best_targets의 타겟별 출처 버전과 점수를 사용자에게 알리세요. "
         f"이후 예측에는 best_version_dir을 쓰세요 ({predict})."
     )
+    reg = next((r for r in reports if r["task"] == "regression"), None)
+    if reg is not None:
+        attach_export(result, next(bv["version_dir"] for bv in versions if bv["version"] == reg["version"]), "regression",
+                      getattr(args, "title", None))
     return result
 
 
@@ -1452,6 +1482,7 @@ def main():
     parser.add_argument("--header-row", type=int, help="-f와 함께: 최고 버전을 새로 학습할 때 헤더 행 (생략 시 이력 값)")
     parser.add_argument("--unit-row", type=int, help="-f와 함께: 단위 행 (생략 시 이력 값)")
     parser.add_argument("--data-row", type=int, help="-f와 함께: 데이터 시작 행 (생략 시 이력 값)")
+    parser.add_argument("--title", help="함께 만드는 성능예측표(엑셀)의 제목 (데이터 설명을 짧게 정리한 글, 40자 이내)")
     args = parser.parse_args()
     if not args.model and not args.data_dir and not args.file:
         parser.error("-f <데이터파일>, -m <version_dir>, -d <data_root> 중 하나를 지정해야 합니다.")

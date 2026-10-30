@@ -4,7 +4,7 @@ description: 표(Excel/CSV) 데이터로 수치 예측(회귀) 또는 범주 예
 license: Proprietary
 compatibility: opencode
 metadata:
-  version: "2.9.1"
+  version: "2.9.2"
   platform: windows
 ---
 
@@ -32,7 +32,7 @@ metadata:
 | "이 조건이면 얼마야?", "새 데이터 예측" | 4단계 예측 |
 | 모델을 만든 뒤 "생산효율이 50이 되려면 온도는?" (목표값이 되는 조건) | 4-B단계 모델 반대 찾기 |
 | "보고서 만들어줘" | 5단계 보고서 |
-| "성능예측표", "엑셀 계산기로 만들어줘", "엑셀로 배포" | 7단계 성능예측표 |
+| "성능예측표", "엑셀 계산기로 만들어줘" | 5단계 보고서 (성능예측표가 함께 만들어짐). 입력을 바꿔 다시 만들 때만 7단계 |
 | 모델 없이 "데이터(표)에서 ~일 때 값", "보간", "맵핑", "표에서 ~가 50이 되는 온도는?" | 6단계 표 보간·반대 찾기 |
 
 실행 전에 꼭 알아야 할 것: 데이터 파일 경로, 타겟(맞힐 컬럼), 피처(입력 컬럼). 모르면 사용자에게 묻는다.
@@ -114,15 +114,18 @@ python "C:\CLI\ml-kit\ml_predict.py" -m "<version_dir>" --find "<타겟>=<목표
 - 알릴 것: `solutions`(답 모두, 하나만 고르지 않음), `operating_windows`(목표가 예측 오차 안에 드는 운전 구간), `measured`(학습 데이터 기준 답),
   `nearest_rows`(가까운 실측 5행). 0건이면 `reachable`. `warnings`는 반드시 함께. 모델이 예측한 조건이지 보장된 조건이 아니라고 덧붙인다.
 
-## 5단계: ML 결과 보고서 (Word)
+## 5단계: ML 결과 보고서 (Word)와 성능예측표 (엑셀)
 
 ```powershell
-python "C:\CLI\ml-kit\ml_report.py" -f "<데이터파일>"
+python "C:\CLI\ml-kit\ml_report.py" -f "<데이터파일>" --title "<제목>"
 ```
+- 숫자 타겟(회귀)이면 성능예측표(엑셀 계산기)도 함께 만들어진다. `<제목>`은 학습 때 데이터 설명(`description`)을 30자 안팎의 짧은 제목으로 정리해 넣는다 (예: "반응 공정 생산효율 예측").
+  입력을 줄이며 다시 학습하므로 몇 분 걸린다 (시간 제한 600000).
 - 도구가 이력에서 타겟마다 가장 좋았던 학습 조건으로 모든 타겟을 묶은 최고 모델을 자동으로 만들고(필요할 때만 다시 학습, 몇 분 걸릴 수 있으니 시간 제한 600000) 보고서 1개를 만든다. 타겟이나 버전을 고르지 않는다.
 - 회귀와 분류 타겟이 섞여 있으면 보고서가 2개(`best_reports`)다.
-- 알릴 것: `report_file`(링크), `overall_verdict`(적합/조건부/부적합), `made_best`(true면 이번에 다시 학습함),
+- 알릴 것: `report_file`, `export_file`(성능예측표)과 `export`의 타겟별 `inputs`(남긴 입력), `overall_verdict`(적합/조건부/부적합), `made_best`(true면 이번에 다시 학습함),
   `best_targets`의 타겟별 `source_version`(학습 조건 출처), `source_score`(그때 점수), `new_score`(이번 점수)를 짧게.
+- `export_note`나 `export_unverified`가 있으면 그대로 알린다 (보고서는 정상).
 - 이후 예측(4단계)에는 결과의 `best_version_dir`을 쓴다.
 - 사용자가 보고서 문장을 직접 정해 주면, 파일 쓰기 도구로 `slots.json`(UTF-8)을 만들고 명령 끝에 `--slots "<그 경로>"`를 붙인다.
   형식: `{"summary": "<요약 문장>", "operation": "<운영 문장>"}`
@@ -142,13 +145,13 @@ python "C:\CLI\ml-kit\ml_map.py" -f "<데이터파일>" --find "<목표열>=<목
   반대 찾기는 `solutions`를 모두(하나만 고르지 않음), 0건이면 `reachable`. `output_file`이 있으면 그 경로.
 - `extrapolated`가 true이거나 `warnings`가 있으면 그 내용을 반드시 함께 알린다 (범위 밖 외삽값, 흩어진 기록).
 
-## 7단계: 성능예측표 (엑셀 계산기, ml_export.py)
+## 7단계: 성능예측표 다시 만들기 (ml_export.py)
 
+성능예측표는 5단계 보고서와 함께 만들어진다. 사용자가 꼭 넣을 입력을 말하거나 다른 입력 조합을 원할 때만 이 명령을 쓴다.
 ```powershell
-python "C:\CLI\ml-kit\ml_export.py" -m "<version_dir>" --title "<제목>"
+python "C:\CLI\ml-kit\ml_export.py" -m "<best_version_dir>" --keep "<입력1>,<입력2>" --title "<제목>"
 ```
-- `<제목>`: 학습 때 데이터 설명(`description`)을 30자 안팎의 짧은 제목으로 정리해 넣는다 (예: "반응 공정 생산효율 예측"). 설명을 모르면 사용자에게 묻는다.
-- 사용자가 꼭 넣어야 할 입력을 말하면 `--keep "<입력1>,<입력2>"`를 붙인다. 입력을 줄이며 다시 학습하므로 몇 분 걸린다 (시간 제한 600000).
+- 입력을 줄이며 다시 학습하므로 몇 분 걸린다 (시간 제한 600000). 같은 이름 파일이 있으면 시각을 붙인 새 이름으로 저장된다.
 - 알릴 것: `output_file`, 타겟별 `inputs`(남긴 입력)와 `dropped`(뺀 입력), `val_r2`, `table_rows`.
   사용자가 다른 입력 조합을 원하면 `candidates`를 표로 보여 주고, 고른 안의 `next_commands` 명령을 그대로 실행한다.
 

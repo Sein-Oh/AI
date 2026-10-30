@@ -13,6 +13,8 @@ import pytest
 def _mlkit_data_dir(tmp_path_factory):
     old = os.environ.get("ML_KIT_DATA_DIR")
     os.environ["ML_KIT_DATA_DIR"] = str(tmp_path_factory.mktemp("mlkit_data"))
+    # ml_report.py also makes the performance calculator (retraining, minutes): only test_report_set_v292 turns it on
+    os.environ["ML_KIT_SKIP_EXPORT"] = "1"
     yield os.environ["ML_KIT_DATA_DIR"]
     if old is None:
         os.environ.pop("ML_KIT_DATA_DIR", None)

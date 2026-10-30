@@ -732,11 +732,13 @@ def execute_export(args) -> Dict[str, Any]:
     if len(title) > TITLE_MAX:
         warnings.append(f"제목이 {len(title)}자로 길어 {TITLE_MAX}자로 줄였습니다")
         title = title[:TITLE_MAX - 3].rstrip() + "..."
-    stem = re.sub(r"_ml_data$", "", os.path.basename(os.path.dirname(vinfo["dir"]))) or "모델"
-    default = os.path.join(os.path.dirname(os.path.dirname(vinfo["dir"])), f"{stem}_성능예측표_{os.path.basename(vinfo['dir'])}.xlsx")
+    # same folder as the report and history.jsonl (<data>_ml_data), name paired with ML결과보고서_<data>_<version>.docx
+    data_root = os.path.dirname(vinfo["dir"])
+    stem = re.sub(r"_ml_data$", "", os.path.basename(data_root)) or "모델"
+    default = os.path.join(data_root, f"성능예측표_{stem}_{os.path.basename(vinfo['dir'])}.xlsx")
     path = args.save if args.save else default
     if args.save and not os.path.isabs(path):
-        path = os.path.join(os.path.dirname(os.path.dirname(vinfo["dir"])), path)
+        path = os.path.join(data_root, path)
     if not path.lower().endswith(".xlsx"):
         path += ".xlsx"
     path = avoid_overwrite(os.path.abspath(path), what="성능예측표")
@@ -800,7 +802,7 @@ def main():
     parser.add_argument("--keep", help="입력을 줄일 때 꼭 포함할 입력 (쉼표 구분)")
     parser.add_argument("--inputs", help="최적화 없이 이 입력 조합으로 바로 만들기 (쉼표 구분)")
     parser.add_argument("--title", help="계산기 제목 (데이터 설명을 짧게 정리한 글, 40자 이내)")
-    parser.add_argument("--save", help="저장 경로 (.xlsx, 생략 시 데이터 폴더에 <데이터>_성능예측표_<버전>.xlsx)")
+    parser.add_argument("--save", help="저장 경로 (.xlsx, 생략 시 보고서와 같은 <데이터>_ml_data 폴더에 성능예측표_<데이터>_<버전>.xlsx)")
     args = parser.parse_args()
     run_cli(lambda: execute_export(args), hint="Check the version folder and input names in SKILL.md.")
 

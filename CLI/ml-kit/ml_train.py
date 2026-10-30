@@ -1163,12 +1163,10 @@ def build_next_commands(
 
     if mean_score >= 0.90:  # caller passes the weakest target's score
         cmds.append({
-            "purpose": "ML 결과 보고서(Word) 생성 (이 데이터의 모든 타겟을 1개 문서로)",
+            "purpose": REPORT_PURPOSE[task],
             "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -f {_q(raw_file)}",
             "needs_input": False,
         })
-        if task == TASK_REGRESSION:
-            cmds.append(export_command(here, final_dir))
         cmds.append({
             "purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
             "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
@@ -1649,7 +1647,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         if min_score >= 0.90:
             recommendations.append(
                 f"모든 타겟이 목표 성능({metric_label} >= 0.90)을 달성했습니다. 예측 배포와 보고서 작성이 가능합니다."
-                + (" 엑셀만으로 예측하는 성능예측표(엑셀 계산기)도 만들 수 있습니다." if task == TASK_REGRESSION else ""))
+                + (" 보고서를 만들면 엑셀만으로 예측하는 성능예측표(엑셀 계산기)도 함께 만들어집니다." if task == TASK_REGRESSION else ""))
         else:
             if len(target_names) > 1:
                 recommendations.append(f"목표({metric_label} >= 0.90) 미달 타겟: {below}. 아래 권고는 가장 낮은 '{primary_target}' 기준입니다.")
@@ -1991,21 +1989,18 @@ BEST_TAG = "best"
 TASK_ORDER = [TASK_REGRESSION, TASK_CLASSIFICATION]
 
 
-def export_command(here: str, final_dir: str) -> Dict[str, Any]:
-    """Next command: Excel performance calculator (ml_export.py, regression only). Takes minutes (retraining)."""
-    return {"purpose": "성능예측표(엑셀 계산기) 만들기: 엑셀만으로 예측하는 배포용 파일. 입력을 줄이며 다시 학습해 몇 분 걸림 "
-                       "(SKILL.md 7단계대로 --title을 붙일 것)",
-            "command": f"python {_q(os.path.join(here, 'ml_export.py'))} -m {_q(final_dir)}",
-            "needs_input": False}
+REPORT_PURPOSE = {  # 2.9.2: a regression report also makes the performance calculator (ml_export.py)
+    TASK_REGRESSION: "ML 결과 보고서(Word)와 성능예측표(엑셀 계산기) 생성 (모든 타겟, 입력을 줄이며 다시 학습해 몇 분 걸림, SKILL.md 5단계대로 --title)",
+    TASK_CLASSIFICATION: "ML 결과 보고서(Word) 생성 (이 데이터의 모든 타겟을 1개 문서로)",
+}
 
 
 def build_best_next_commands(raw_file: str, final_dir: str, task: str = TASK_REGRESSION) -> List[Dict[str, Any]]:
     here = os.path.dirname(os.path.abspath(__file__))
     return [
-        {"purpose": "ML 결과 보고서(Word) 생성 (모든 타겟 1개 문서)",
+        {"purpose": REPORT_PURPOSE.get(task, REPORT_PURPOSE[TASK_CLASSIFICATION]),
          "command": f"python {_q(os.path.join(here, 'ml_report.py'))} -f {_q(raw_file)}",
          "needs_input": False},
-        *([export_command(here, final_dir)] if task == TASK_REGRESSION else []),
         {"purpose": "새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)",
          "command": f"python {_q(os.path.join(here, 'ml_predict.py'))} -m {_q(final_dir)} -f \"<새데이터.xlsx>\"",
          "needs_input": True, "placeholder": "<새데이터.xlsx>"},
