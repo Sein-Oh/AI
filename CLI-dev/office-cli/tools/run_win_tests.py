@@ -116,6 +116,9 @@ def log(msg):
     print(msg, flush=True, file=sys.stderr if AGENT else sys.stdout)
 
 
+UNVERIFIED_SEEN = []   # 도구가 UNVERIFIED로 답한 호출 (R1 비교 규칙 확인용, 결과 파일 끝에 모아 기록)
+
+
 def run_cli(module, *cli_args):
     """도구를 별도 프로세스로 실행하고 (JSON dict 또는 None, 종료 코드, stdout, stderr 마지막 부분)을 반환합니다."""
     cmd = [PY, os.path.join(ROOT, module)] + [str(a) for a in cli_args]
@@ -145,6 +148,8 @@ def run_cli(module, *cli_args):
             except Exception:
                 pass
             break
+    if isinstance(data, dict) and str(data.get("agent_directive", "")).startswith("UNVERIFIED"):
+        UNVERIFIED_SEEN.append({"command": shown, "unverified": data.get("unverified", [])})
     return data, proc.returncode, out, err[-1500:]
 
 
@@ -751,7 +756,7 @@ def a1_value(book="A.xlsx", sheet="Sheet1"):
 def test_C(ctx):
     def c1():
         activate_xl("A.xlsx", "Sheet1")
-        data, code, raw, err = run_cli("excel.py", "write", "--range", "A1", "--value", "안녕")
+        data, code, raw, err = run_cli("excel.py", "write", "--range", "A1", "--value", "안녕", "--overwrite")   # A1=원래값 (1.4.5 확인)
         filled = a1_value()
         if filled != "안녕":
             record(ctx, "C1", "Excel 쓰기 후 undo", False, f"쓰기 후 A1={filled!r}", data, code, raw, err)
@@ -765,9 +770,9 @@ def test_C(ctx):
 
     def c2():
         activate_xl("A.xlsx", "Sheet1")
-        run_cli("excel.py", "write", "--range", "A1", "--value", "값1")
+        run_cli("excel.py", "write", "--range", "A1", "--value", "값1", "--overwrite")
         activate_xl("A.xlsx", "Sheet1")
-        run_cli("excel.py", "write", "--range", "A1", "--value", "값2")
+        run_cli("excel.py", "write", "--range", "A1", "--value", "값2", "--overwrite")
         run_cli("office.py", "undo", "--app", "excel")
         wait_for(lambda: xl_wb("A.xlsx"), timeout=20)
         v1 = a1_value()
@@ -787,7 +792,7 @@ def test_C(ctx):
         com_retry(_seed)
         new_wb.Activate()
         before = app.Workbooks.Count
-        run_cli("excel.py", "write", "--range", "A1", "--value", "새문서값")
+        run_cli("excel.py", "write", "--range", "A1", "--value", "새문서값", "--overwrite")
         data, code, raw, err = run_cli("office.py", "undo", "--app", "excel")
         time.sleep(2)
         app = xl_app()
@@ -1606,7 +1611,7 @@ def test_I(ctx):
         activate_xl("A.xlsx", "Sheet1")
         run_cli("excel.py", "sheet", "--action", "add", "--name", "I_UNDO")
         run_cli("excel.py", "write", "--sheet", "I_UNDO", "--range", "A1", "--value", "v1")
-        run_cli("excel.py", "write", "--sheet", "I_UNDO", "--range", "A1", "--value", "v2")
+        run_cli("excel.py", "write", "--sheet", "I_UNDO", "--range", "A1", "--value", "v2", "--overwrite")
         dl = run_cli("office.py", "undo", "--app", "excel", "--list")[0]
         snaps = (dl or {}).get("snapshots") or []
         d, c, r, e = run_cli("office.py", "undo", "--app", "excel", "--pick", "2")
@@ -2011,6 +2016,11 @@ def write_report(ctx):
         if r.get("trace"):
             lines.append("    trace: " + r["trace"].replace("\n", "\n        "))
         lines.append("")
+    # R1: 도구가 결과를 다시 읽어 확인하지 못한 호출 (정상인데 여기 있으면 비교 규칙을 고쳐야 함)
+    lines.append(f"UNVERIFIED 결과 {len(UNVERIFIED_SEEN)}건" + (" (없음)" if not UNVERIFIED_SEEN else ":"))
+    for u in UNVERIFIED_SEEN:
+        lines.append(f"    {u['command']}")
+        lines.append(f"        unverified: {u['unverified']}")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     return path, counts
