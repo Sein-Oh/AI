@@ -146,6 +146,7 @@ def test_word_text_to_excel_stays_text(monkeypatch, capsys):
     ws = wb.Worksheets(out["sheet"])
     assert [ws.values[(2, c)] for c in range(1, 5)] == ["001", "1-2", "(100)", "=A1+1"]
     assert {(2, c) for c in range(1, 5)} <= ws.prefixed                    # written as text, not number/date/formula
+    assert out["agent_directive"].startswith("VERIFIED:") and out["verified"] is True    # 넣은 칸을 다시 읽음 (R1)
 
 
 def test_transfer_to_existing_excel_sheet_does_not_overwrite(monkeypatch, capsys):

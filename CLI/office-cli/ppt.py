@@ -792,8 +792,8 @@ def cmd_export(args) -> Dict[str, Any]:
             out = rt.resolve_output_path(args.save, os.path.splitext(t.name)[0] + "_사본", src_ext or ".pptx")
             prs.SaveCopyAs(os.path.normpath(out))                     # 원본 형식 그대로 사본
         resolved = t.resolved()
-    return rt.ok(TOOL, "export", f"{resolved['name']}을(를) 저장: {out}", "VERIFIED: 저장 완료. 원본은 그대로입니다.",
-                 target_resolved=resolved, output_file=out)
+    return rt.ok_file(TOOL, "export", f"{resolved['name']}을(를) 저장: {out}", out,
+                      "VERIFIED: 저장한 파일을 확인했습니다. 원본은 그대로입니다.", target_resolved=resolved, output_file=out)
 
 
 # ==============================================================================

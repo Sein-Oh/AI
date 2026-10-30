@@ -861,7 +861,8 @@ def cmd_export(args) -> Dict[str, Any]:
         sheet, r0, c0, matrix, _ = _read_matrix_closed(closed, args.sheet, args.range)
         out = rt.resolve_output_path(args.save, sheet, ".csv")
         out = rt.write_csv_rows(out, [[out_value(v) for v in r] for r in matrix], args.encoding)
-        return rt.ok(TOOL, "export", f"{sheet} ({len(matrix)}행)를 CSV로 저장: {out}", output_file=out, rows=len(matrix))
+        return rt.ok_file(TOOL, "export", f"{sheet} ({len(matrix)}행)를 CSV로 저장: {out}", out,
+                          "VERIFIED: 저장한 파일을 확인했습니다.", output_file=out, rows=len(matrix))
 
     with off.open_target("excel", args.target, readonly=True) as t:
         ws = t.sheet(args.sheet)
@@ -914,8 +915,8 @@ def cmd_export(args) -> Dict[str, Any]:
             detail = "XLSX"
         info = range_info(rng)
         resolved = t.resolved()
-    return rt.ok(TOOL, "export", f"{info['sheet']}!{info['range']}를 {detail}로 저장: {out}",
-                 "VERIFIED: 저장 완료. 원본 통합문서는 그대로입니다.", target_resolved=resolved, output_file=out, **info)
+    return rt.ok_file(TOOL, "export", f"{info['sheet']}!{info['range']}를 {detail}로 저장: {out}", out,
+                      "VERIFIED: 저장한 파일을 확인했습니다. 원본 통합문서는 그대로입니다.", target_resolved=resolved, output_file=out, **info)
 
 
 # ==============================================================================

@@ -1161,8 +1161,8 @@ def cmd_export(args) -> Dict[str, Any]:
                 except OSError:
                     pass
         resolved = t.resolved()
-    return rt.ok(TOOL, "export", f"{resolved['name']}을(를) {ext[1:].upper()}로 저장: {out}",
-                 "VERIFIED: 저장 완료. 원본 문서는 바뀌지 않았습니다.", target_resolved=resolved, output_file=out,
+    return rt.ok_file(TOOL, "export", f"{resolved['name']}을(를) {ext[1:].upper()}로 저장: {out}", out,
+                      "VERIFIED: 저장한 파일을 확인했습니다. 원본 문서는 바뀌지 않았습니다.", target_resolved=resolved, output_file=out,
                  page_number=bool(args.page_number))
 
 

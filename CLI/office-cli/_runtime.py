@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 TOOL_NAME = "office-cli"
-VERSION = "1.4.6"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
+VERSION = "1.4.7"                         # SKILL.md metadata.version과 같아야 함 (테스트로 확인)
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(TOOL_DIR, "config.json")
 
@@ -217,6 +217,17 @@ def note_recovered(msg: str) -> None:
 def _attach_recovered(payload: Dict[str, Any]) -> None:
     if RECOVERED:
         payload["recovered"] = list(RECOVERED)
+
+
+def ok_file(tool: str, command: str, preview: str, path: str, directive: str, **fields: Any) -> Dict[str, Any]:
+    """저장한 파일 결과 (R1): 파일이 있고 비어 있지 않으면 VERIFIED, 아니면 UNVERIFIED."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = -1
+    if size > 0:
+        return ok(tool, command, preview, directive, verified=True, **fields)
+    return ok_unverified(tool, command, preview, ["저장한 파일이 없음" if size < 0 else "저장한 파일이 비어 있음 (0바이트)"], **fields)
 
 
 def ok_unverified(tool: str, command: str, preview: str, unverified: List[str], **fields: Any) -> Dict[str, Any]:

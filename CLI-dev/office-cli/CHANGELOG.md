@@ -2,6 +2,12 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.4.7] - 2026-10-30
+
+### 변경 (R1 사후 확인)
+- 내보내기(`excel export`, `word export`, `ppt export`): 저장한 파일이 있고 비어 있지 않은지 확인 (`_runtime.ok_file`).
+- `office.py transfer`: 엑셀 범위를 워드·PPT 표로 넣으면 넣은 범위·슬라이드에서 머리글을, 워드·PPT 내용을 엑셀로 넣으면 넣은 칸을 다시 읽어 확인.
+
 ## [1.4.6] - 2026-10-30
 
 ### 변경 (R1 사후 확인)
@@ -9,7 +15,7 @@
   같으면 `VERIFIED:` + `verified: true`, 다르면 `UNVERIFIED:` + `unverified`(다른 칸).
 - `word write`: 넣은 범위를 다시 읽어 비어 있지 않고 넣은 글의 첫 줄(마크다운 기호 제외)이 들어 있는지 확인.
 - `ppt write`: 쓴 슬라이드를 다시 읽어 제목·첫 줄·표 머리글·카드 제목이 들어 있는지 확인.
-- 세 명령의 "다시 읽어서 확인하지 마세요" 문구를 "다시 읽어 확인했습니다"로.
+- 위 명령의 "다시 읽어서 확인하지 마세요" 문구를 "다시 읽어 확인했습니다"로.
 
 ## [1.4.5] - 2026-10-30
 
@@ -398,7 +404,7 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
 상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI-dev/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
-- [ ] R1 사후 확인 나머지: excel replace/style/sheet/range/chart, word replace/export, ppt replace/export, office transfer, outlook. 그 뒤 `_runtime.ok()`의 `VERIFIED:` 강제 제거 (excel/word/ppt write는 1.4.6)
+- [ ] R1 사후 확인 나머지: excel replace/style/sheet/range/chart, word/ppt replace, transfer 차트(그림), outlook. 그 뒤 `_runtime.ok()`의 `VERIFIED:` 강제 제거 (write는 1.4.6, export와 transfer 표는 1.4.7)
 - [ ] `recovered` 나머지: transfer 방식 대체, 오래된 스냅샷 정리 (잠금·기존 파일 새 이름 저장, 낡은 캐시는 1.4.0)
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
 - [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)에 적용. (1.4.0: undo 복원 복사는 `retry_fs`, retry_fs는 일시적 오류만 재시도 완료)

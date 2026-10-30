@@ -227,8 +227,9 @@ def _pdf_export(pp, behavior, version="16.0"):
         calls.append((path, fmt, kw))
         if "PrintRange" not in kw:      # 실제 pywin32: 생략하면 인자 변환 단계에서 TypeError
             raise TypeError("The Python instance can not be converted to a COM object")
-        if behavior == "ok":
-            open(path, "wb").close()
+        if behavior in ("ok", "empty"):
+            with open(path, "wb") as f:
+                f.write(b"%PDF" if behavior == "ok" else b"")
         else:
             raise behavior
     pp["prs"].ExportAsFixedFormat = export
@@ -241,6 +242,13 @@ def test_export_pdf_passes_print_range_none(pp, capsys):
     code, out = run(capsys, "export", "--save", "deck.pdf")
     assert code == 0 and out["output_file"].endswith("deck.pdf")
     assert calls[0][1] == 2 and calls[0][2] == {"PrintRange": None}
+    assert out["agent_directive"].startswith("VERIFIED:") and out["verified"] is True     # 저장한 파일 확인 (R1)
+
+
+def test_export_empty_file_is_unverified(pp, capsys):
+    _pdf_export(pp, "empty")
+    code, out = run(capsys, "export", "--save", "deck.pdf")
+    assert code == 0 and out["agent_directive"].startswith("UNVERIFIED:") and "0바이트" in out["unverified"][0]
 
 
 def test_export_pdf_ppt2007_without_addin_is_input_error(pp, capsys, monkeypatch):

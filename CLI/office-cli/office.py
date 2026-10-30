@@ -426,11 +426,15 @@ def _excel_range_transfer(args, targets: List[str]) -> Dict[str, Any]:
     import word
     rows, sheet = _excel_range_rows(args)
     results: Dict[str, Any] = {}
+    problems: List[str] = []
+    first = next((str(v) for v in rows[0] if str(v).strip()), "")       # 다시 읽어 찾을 머리글 (R1)
     for kind in targets:
         if kind == "word":
             with off.open_target("word", args.to_target, readonly=False, create=True, tool=TOOL, command="transfer") as t:
                 start, _ = word._insert_position(t.doc, args.anchor, "after" if args.anchor else "end", args.occurrence)
-                word.Writer(t.doc, start, off.get_theme(args.theme)).table(rows)
+                w = word.Writer(t.doc, start, off.get_theme(args.theme))
+                w.table(rows)
+                problems += [f"워드: {p}" for p in word._verify_inserted(t.doc, start, w.pos, [first])]
                 t.set_focus()
                 results["word"] = {"method": "table", "target_resolved": t.resolved()}
         elif kind == "ppt":
@@ -441,12 +445,15 @@ def _excel_range_transfer(args, targets: List[str]) -> Dict[str, Any]:
                     s, no = _ppt_slide(t.doc, args.slide if not slides else "new", "")
                     ppt.SlideWriter(t.doc, s, off.get_theme(args.theme or "navy")).table([header] + body[k:k + ppt.TABLE_ROWS_PER_SLIDE])
                     slides.append(no)
+                problems += [f"PPT: {p}" for p in ppt._verify_slides(t.doc, slides, [first])]
                 t.set_focus(slide=slides[-1])
                 results["ppt"] = {"method": "table", "slides": slides, "target_resolved": t.resolved()}
         else:
             raise rt.InputError("엑셀 범위는 word, ppt로 보낼 수 있습니다. 엑셀 안에서 옮기려면 excel.py range --action copy를 쓰세요.")
-    return rt.ok(TOOL, "transfer", f"{sheet}!{args.range} ({len(rows)}행)을 표로 넣었습니다: {', '.join(results)}",
-                 rows=len(rows), results=results)
+    preview = f"{sheet}!{args.range} ({len(rows)}행)을 표로 넣었습니다: {', '.join(results)}"
+    if problems:
+        return rt.ok_unverified(TOOL, "transfer", preview, problems, rows=len(rows), results=results)
+    return rt.ok(TOOL, "transfer", preview, "VERIFIED: 넣은 표를 다시 읽어 확인했습니다.", verified=True, rows=len(rows), results=results)
 
 
 def _word_rows(args) -> Tuple[List[List[Any]], str]:
@@ -552,6 +559,7 @@ def _to_excel(args, rows: List[List[Any]], sheet_base: str) -> Dict[str, Any]:
         data = tuple(tuple(cell(v) for v in list(r) + [""] * (width - len(r))) for r in rows)
         with off.excel_batch(t.app):
             ws.Range(ws.Cells(1, 1), ws.Cells(len(data), width)).Value = data
+            problems = excel._verify_written(ws, [(1, 1, len(data), width, "values", data)])
             header = ws.Range(ws.Cells(1, 1), ws.Cells(1, width))
             header.Font.Bold = True
             try:
@@ -559,7 +567,7 @@ def _to_excel(args, rows: List[List[Any]], sheet_base: str) -> Dict[str, Any]:
             except Exception:
                 pass
         t.set_focus(sheet=ws)
-        return {"sheet": str(ws.Name), "rows": len(data), "cols": width, "target_resolved": t.resolved()}
+        return {"sheet": str(ws.Name), "rows": len(data), "cols": width, "target_resolved": t.resolved(), "problems": problems}
 
 
 def cmd_transfer(args) -> Dict[str, Any]:
@@ -584,8 +592,12 @@ def cmd_transfer(args) -> Dict[str, Any]:
         raise rt.InputError(f"'{name}'에서 옮길 내용이 없습니다.")
     base = f"{'Word' if src == 'word' else 'PPT'} {'내용' if args.what == 'text' else '표'}"
     info = _to_excel(args, rows, base)
-    return rt.ok(TOOL, "transfer", f"'{name}'의 {'내용' if args.what == 'text' else '표'}을 엑셀 시트 '{info['sheet']}'에 넣었습니다 "
-                 f"({info['rows']}행 x {info['cols']}열)", "VERIFIED: 전달 완료. 다시 읽어서 확인하지 마세요.", **info)
+    problems = info.pop("problems")
+    preview = (f"'{name}'의 {'내용' if args.what == 'text' else '표'}을 엑셀 시트 '{info['sheet']}'에 넣었습니다 "
+               f"({info['rows']}행 x {info['cols']}열)")
+    if problems:
+        return rt.ok_unverified(TOOL, "transfer", preview, problems, **info)
+    return rt.ok(TOOL, "transfer", preview, "VERIFIED: 넣은 칸을 다시 읽어 확인했습니다.", verified=True, **info)
 
 
 # ==============================================================================
