@@ -219,6 +219,17 @@ def _attach_recovered(payload: Dict[str, Any]) -> None:
         payload["recovered"] = list(RECOVERED)
 
 
+def ok_file(tool: str, command: str, preview: str, path: str, directive: str, **fields: Any) -> Dict[str, Any]:
+    """저장한 파일 결과 (R1): 파일이 있고 비어 있지 않으면 VERIFIED, 아니면 UNVERIFIED."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = -1
+    if size > 0:
+        return ok(tool, command, preview, directive, verified=True, **fields)
+    return ok_unverified(tool, command, preview, ["저장한 파일이 없음" if size < 0 else "저장한 파일이 비어 있음 (0바이트)"], **fields)
+
+
 def ok_unverified(tool: str, command: str, preview: str, unverified: List[str], **fields: Any) -> Dict[str, Any]:
     """실행은 됐지만 결과를 다시 읽어 확인하지 못한 성공 응답 (R1). LLM은 재시도하지 않고 unverified를 그대로 알립니다."""
     payload: Dict[str, Any] = {"status": "ok", "tool": tool, "command": command, "preview": preview}
