@@ -176,8 +176,10 @@ def group_f(work, st):
     if not (p or {}).get("export_file"):
         return
     root = os.path.dirname(p["report_file"])
+    same = lambda a, b: os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
     safe("F", "F2", "보고서·성능예측표·history가 같은 폴더", lambda: (
-        os.path.dirname(p["export_file"]) == root and os.path.isfile(os.path.join(root, "history.jsonl")), p["export_file"]))
+        same(os.path.dirname(p["export_file"]), root) and os.path.isfile(os.path.join(root, "history.jsonl")),
+        f"보고서 {p['report_file']} / 성능예측표 {p['export_file']} / history 있음 {os.path.isfile(os.path.join(root, 'history.jsonl'))}"))
     expect = {"생산효율(%)": {"반응온도(°C)", "촉매비율(wt%)", "수분함량(%)"}, "불순물(ppm)": {"반응온도(°C)", "압축압력(bar)"},
               "소비전력(kW)": {"압축압력(bar)", "유량(L/min)"}}
     safe("F", "F3", "출력별로 실제 영향 입력만 남김 (분진 제외)", lambda: (
