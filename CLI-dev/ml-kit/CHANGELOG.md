@@ -2,6 +2,17 @@
 
 이 문서는 2.0.0부터 관리합니다. 형식: 버전별 `구조 / 기능 / 호환` + 하단 `남은 할 일`.
 
+## [2.9.7] - 2026-10-30
+
+베타 정책(AGENTS.md: 이전 버전 호환 불필요)에 따라 예전 버전 호환 코드를 지웠습니다. 이전 버전 폴더는 같은 데이터로 다시 학습해서 씁니다.
+
+### 삭제
+- 2.9.1 이전 모델(모델 정보에 `input_columns_required`나 `feature_schema`가 없음)과 정보 파일이 없는 모델: 대체 예측 경로 대신 `STOP_RETRY` "다시 학습".
+- 2.7.0 이전 학습 데이터 사본(`원본행` 열 없음)의 줄 번호 대체: 실측 비교값·`--find` 실측 근거를 계산하지 않고 다시 학습 안내.
+- 결과·원장의 예전 회귀 전용 키 `mean_val_r2`, `delta_r2`, `--history`의 `best_mean_val_r2` (`mean_val_score`, `delta_score`, `best_mean_val_score` 사용).
+- `ml_report.py`: 2.1 소견 이름(`slot1_residual` 등), `--history`/`-H` 별칭(`--data-dir`/`-d`), `-d`에 history.json 파일 경로 받기.
+- 성능예측표가 만드는 `export/model_<타겟>.json`에도 `input_columns_required`.
+
 ## [2.9.6] - 2026-10-30
 
 전체 검토에서 찾은 오류 수정.

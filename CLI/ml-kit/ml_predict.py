@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.9.6"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.9.7"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -729,11 +729,8 @@ def eval_source_columns(evals: List[str], columns: List[str]) -> List[str]:
 
 def model_raw_inputs(meta: Dict[str, Any]) -> List[str]:
     """Columns the user must provide to a model: its own non-derived features plus the source columns of its
-    derived features (2.9.1 'input_columns_required'; older models: non-derived features only)."""
-    if meta.get("input_columns_required"):
-        return list(meta["input_columns_required"])
-    derived = {e.split("=", 1)[0].strip() for e in (meta.get("derived_evals") or []) if "=" in e}
-    return [f for f in meta.get("features_required", []) if f not in derived]
+    derived features."""
+    return list(meta["input_columns_required"])
 
 
 def apply_eval_expressions(
@@ -1269,6 +1266,11 @@ def resolve_target_models(
 
     if not model_items:
         raise InputError(f"조건에 일치하는 대상 모델을 찾을 수 없습니다 (filter={filter_targets})")
+    old = [it["target"] for it in model_items
+           if not it["meta"].get("feature_schema") or not it["meta"].get("input_columns_required")]
+    if old:   # beta: no fallback paths for models made by older versions
+        raise InputError(f"타겟 {old}의 모델은 ml-kit 2.9.1 이전에 학습했거나 모델 정보 파일(model_<타겟>.json)이 없습니다. "
+                         "같은 데이터로 다시 학습한 뒤 사용하십시오.")
 
     # Load Pipelines (warn on scikit-learn version mismatch between training and serving PCs)
     try:
@@ -1393,20 +1395,17 @@ def compare_with_measured(meta: Dict[str, Any], target: str, version_dir: str, d
     raw = model_raw_inputs(meta)
     cats = [c for c in schema.get("categorical", {}) if c in raw]
     keys = [c for c in raw if c not in cats and c not in schema.get("datetime", {}) and c not in derived]
-    if not schema or not keys:
-        return {"note": f"타겟 '{target}': 숫자 입력이 없거나 2.1.0 이전 모델이라 실측 비교값을 계산하지 않았습니다"}
+    if not keys:
+        return {"note": f"타겟 '{target}': 숫자 입력이 없어 실측 비교값을 계산하지 않았습니다"}
     if len(df_evaled) > MAP_CHECK_MAX_ROWS:
         return {"note": f"입력이 {len(df_evaled):,}행으로 많아 실측 비교값을 계산하지 않았습니다 (최대 {MAP_CHECK_MAX_ROWS:,}행)"}
     data = _load_snapshot(version_dir, cache)
-    if data is None or target not in data.columns or any(c not in data.columns for c in keys + cats):
-        return {"note": f"타겟 '{target}': 버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없거나 열이 달라 실측 비교값을 계산하지 않았습니다"}
+    if data is None or any(c not in data.columns for c in keys + cats + [target, SNAPSHOT_ROW_COL]):
+        return {"note": f"타겟 '{target}': 버전 폴더에 학습 데이터 사본(model_dataset.csv)이 없거나 열이 달라 실측 비교값을 계산하지 않았습니다 "
+                        "(2.7.0 이전 버전이면 다시 학습하면 됩니다)"}
     data = data.copy()
     notes: List[str] = []
-    if SNAPSHOT_ROW_COL in data.columns:
-        data["__row"] = coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int)
-    else:
-        data["__row"] = np.arange(2, len(data) + 2)
-        notes.append("2.7.0 이전에 학습한 버전이라 근거 행 번호는 학습 데이터 사본(model_dataset.csv)의 줄 번호입니다")
+    data["__row"] = coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int)
     excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
     if excl in data.columns:
         data = data[coerce_numeric(data[excl]).fillna(0) != 1]
@@ -1600,16 +1599,10 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 + f"\n[입력 데이터 컬럼 목록]: {available_cols}"
             )
 
-        schema = meta.get("feature_schema")  # models trained by 2.1.0+; older models use the numeric-array path
-        if schema:
-            X_model = prepare_features(df_evaled, schema)
-            numeric_view = X_model[[c for c in schema["numeric"]]]
-            owner = input_column_owner(schema)
-        else:
-            # Same numeric parsing as training (thousands separators, '-', 'N/A', pandas 2/3 dtypes)
-            X_model = pd.DataFrame({f: coerce_numeric(df_evaled[f]) for f in req_features}, index=df_evaled.index)
-            numeric_view = X_model
-            owner = {f: f for f in req_features}
+        schema = meta["feature_schema"]
+        X_model = prepare_features(df_evaled, schema)
+        numeric_view = X_model[[c for c in schema["numeric"]]]
+        owner = input_column_owner(schema)
 
         # Missing / unparseable inputs are imputed by the pipeline -> tell the agent explicitly
         for col, n_miss in X_model.isna().sum().items():
@@ -1618,24 +1611,23 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
                 missing_counts[raw_col] = max(missing_counts.get(raw_col, 0), int(n_miss))
 
         # Categories never seen in training are encoded as "none of the known categories"
-        if schema:
-            for col, known in schema.get("categorical", {}).items():
-                vals = X_model[col].dropna()
-                unseen = sorted(set(vals) - set(known))
-                if unseen:
-                    category_warnings.append(
-                        f"범주형 피처 '{col}'에 학습 때 없던 값 {unseen[:5]}이(가) {int(vals.isin(unseen).sum())}건 있습니다. "
-                        f"해당 행의 예측 신뢰도가 낮을 수 있습니다. [학습 범주]: {known[:10]}"
+        for col, known in schema.get("categorical", {}).items():
+            vals = X_model[col].dropna()
+            unseen = sorted(set(vals) - set(known))
+            if unseen:
+                category_warnings.append(
+                    f"범주형 피처 '{col}'에 학습 때 없던 값 {unseen[:5]}이(가) {int(vals.isin(unseen).sum())}건 있습니다. "
+                    f"해당 행의 예측 신뢰도가 낮을 수 있습니다. [학습 범주]: {known[:10]}"
+                )
+        for col, rng in (meta.get("datetime_stats") or {}).items():
+            dt = parse_datetime(df_evaled[col]).dropna()
+            if not dt.empty:
+                lo, hi = pd.Timestamp(rng["min"]), pd.Timestamp(rng["max"])
+                n_out = int(((dt < lo) | (dt > hi)).sum())
+                if n_out:
+                    drift_warnings.append(
+                        f"날짜 피처 '{col}' 학습 기간({lo.date()} ~ {hi.date()}) 밖의 값 {n_out}건 (외삽)"
                     )
-            for col, rng in (meta.get("datetime_stats") or {}).items():
-                dt = parse_datetime(df_evaled[col]).dropna()
-                if not dt.empty:
-                    lo, hi = pd.Timestamp(rng["min"]), pd.Timestamp(rng["max"])
-                    n_out = int(((dt < lo) | (dt > hi)).sum())
-                    if n_out:
-                        drift_warnings.append(
-                            f"날짜 피처 '{col}' 학습 기간({lo.date()} ~ {hi.date()}) 밖의 값 {n_out}건 (외삽)"
-                        )
 
         # Data Drift / Out-of-bounds Check (with quantitative severity ratio)
         if feature_stats:
@@ -1898,9 +1890,7 @@ def execute_find(args: argparse.Namespace) -> Dict[str, Any]:
     meta, pipe, target = item["meta"], item["pipeline"], item["target"]
     if meta.get("task", "regression") != "regression":
         raise InputError(f"타겟 '{target}'은(는) 분류 모델입니다. 모델 반대 찾기는 숫자 타겟(회귀)만 됩니다.")
-    schema = meta.get("feature_schema")
-    if not schema:
-        raise InputError("2.1.0 이전에 학습한 모델이라 반대 찾기를 할 수 없습니다. 다시 학습하십시오.")
+    schema = meta["feature_schema"]
     raw_inputs = model_raw_inputs(meta)
     stats = meta.get("feature_stats", {})
     numeric_in = [f for f in raw_inputs if f not in schema.get("categorical", {}) and f not in schema.get("datetime", {})]
@@ -1976,10 +1966,9 @@ def execute_find(args: argparse.Namespace) -> Dict[str, Any]:
     measured: Dict[str, Any] = {}
     data = _load_snapshot(os.path.dirname(item["joblib_path"]), {})
     near: List[Dict[str, Any]] = []
-    if data is not None and target in data.columns and all(c in data.columns for c in raw_inputs if c in numeric_in):
+    if data is not None and all(c in data.columns for c in [target, SNAPSHOT_ROW_COL] + [c for c in raw_inputs if c in numeric_in]):
         data = data.copy()
-        data["__row"] = (coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int) if SNAPSHOT_ROW_COL in data.columns
-                         else np.arange(2, len(data) + 2))
+        data["__row"] = coerce_numeric(data[SNAPSHOT_ROW_COL]).fillna(-1).astype(int)
         excl = f"{SNAPSHOT_EXCL_PREFIX}{target}"
         if excl in data.columns:
             data = data[coerce_numeric(data[excl]).fillna(0) != 1]

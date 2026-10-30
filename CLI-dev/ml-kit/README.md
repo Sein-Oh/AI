@@ -362,7 +362,7 @@ python ml_predict.py -m v3 --find "생산효율=105" --vary 반응온도 -i "압
 - 다른 입력을 고정하고 `--vary` 입력을 학습 범위 안에서 2,000단계로 바꿔 한 번에 예측, 목표값을 지나는 지점을 모두 찾습니다.
   범위의 3%보다 가까운 답은 하나로 묶어 구간(`from`~`to`)으로 줍니다 (트리 모델은 예측이 계단 모양이라 가짜 교차가 생김). 학습 범위 밖은 찾지 않습니다.
 - `operating_windows`: 목표가 90% 예측 오차 안에 드는 입력 구간 (예측값이 `[목표 - residual_upper, 목표 - residual_lower]` 안). 답이 없는 아주 짧은 구간은 버림.
-- 고정하지 않은 숫자 입력은 학습 중앙값(`filled_defaults`, 경고), 글자·날짜 입력은 `STOP_RETRY` + `[후보]`. 분류 타겟과 2.1.0 이전 모델은 `STOP_RETRY`.
+- 고정하지 않은 숫자 입력은 학습 중앙값(`filled_defaults`, 경고), 글자·날짜 입력은 `STOP_RETRY` + `[후보]`. 분류 타겟은 `STOP_RETRY`.
 - `measured`: 숫자 입력 3개 이하면 같은 조건의 학습 데이터 표 보간으로 찾은 답 (실측이 둘러싼 영역 안). 모델 답과 범위의 5% 넘게 다르면 경고.
   4개 이상이면 생략하고 `nearest_rows`(목표값·고정 조건에 가까운 실측 5행)만.
 - 확인: 답 구간 주변을 다시 예측해 목표값을 지나는지 확인하면 `VERIFIED`. 0건이면 `reachable`(학습 범위에서 가능한 예측 최소~최대).
@@ -371,7 +371,7 @@ python ml_predict.py -m v3 --find "생산효율=105" --vary 반응온도 -i "압
 - **회귀/분류 자동 분기**: 모델 메타데이터의 `task`로 분기합니다 (`task`가 없는 1.x 모델은 회귀). 분류 모델은 `pred_<타겟>`(라벨), `proba_<타겟>_<클래스>`(클래스별 확률), `conf_<타겟>`(최대 확률) 컬럼을 만들고, 확신도 0.6 미만 예측이 있으면 `low_confidence_warning: true`를 반환합니다.
 - **입력 점검 경고 (2.1.0)**: 빈 값/숫자가 아닌 값이 대치되면 `missing_input_warning`과 컬럼별 `missing_input_counts`, 학습 때 없던 범주가 오면 `unseen_category_warning`, 학습 기간 밖 날짜는 `drift_warnings`에 추가됩니다.
 - **회귀 예측 범위**: `pred_lo_<타겟>`, `pred_hi_<타겟>` 컬럼, 인라인 JSON `intervals`(90%).
-- **2.1.0 이전 모델 호환**: 메타데이터에 `feature_schema`가 없으면 기존 수치 배열 방식으로 예측합니다.
+- **이전 버전 모델**: 2.9.1 이전에 학습한 모델은 쓰지 않습니다 (`STOP_RETRY`, 같은 데이터로 다시 학습). 베타 기간에는 이전 버전 호환을 두지 않습니다.
 - **폴더 대상 일괄 추론 (`--model <버전폴더>`)**: 특정 버전 디렉토리(`v1/`, `v2/`)를 지정하면 폴더 내에 저장된 모든 타겟 모델을 자동 스캔하여 다중 타겟 예측 컬럼(`pred_<타겟1>`, `pred_<타겟2>`)을 자동 일괄 생성합니다.
 - **파생변수 수식 자동 재현 (Replay Evaluator)**: 학습 당시 적용되었던 `--eval` 수식이 메타데이터에 보존되어 있으므로, 새로운 추론 데이터가 입력되면 동일한 파생변수를 자동으로 사전 계산하여 모델에 투입합니다.
 - **외삽 및 데이터 드리프트 실시간 진단 (Extrapolation Guard)**: 입력 피처 값이 학습 시점의 동적 경계선(`[min, max]`)을 벗어날 경우, 터미널 로그에 `[WARN] Extrapolation detected`를 출력하고 예측 결과 데이터셋에 경고 플래그(`drift_warning`)를 부착합니다.
@@ -438,7 +438,7 @@ python ml_predict.py \
 | `--task` | `-f`와 함께: 이 작업 유형의 보고서만 |
 | `--header-row`, `--unit-row`, `--data-row` | `-f`와 함께: 최고 버전을 새로 학습할 때 표 구조 (생략 시 이력 값) |
 | `--model`, `-m` | 버전 폴더 (학습 결과의 `version_dir`). 그 버전 그대로 |
-| `--data-dir`, `-d` (`--history`, `-H`) | 데이터 폴더. `-v`가 없으면 가장 최근 학습과 같은 task·타겟 조합 중 최고 점수 버전 |
+| `--data-dir`, `-d` | 데이터 폴더. `-v`가 없으면 가장 최근 학습과 같은 task·타겟 조합 중 최고 점수 버전 |
 | `--version`, `-v` | `-d`와 함께 쓸 버전 (`v2` 또는 `2`) |
 | `--target`, `-t` | 문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 `all` = 전체) |
 | `--title` | 성능예측표 계산기 맨 위 제목 (30자 안팎, 생략 시 학습 때 데이터 설명에서, 2.9.2) |
@@ -489,7 +489,7 @@ python ml_report.py -d sample_ml_data --slots slots.json
  "correlation": "...", "operation": "...",
  "targets": {"생산효율(%)": {"performance": "...", "features": "..."}}}
 ```
-`lineage`/`operation`은 해당 장이 없어져 요약 소견 끝에 붙습니다 (2.4.1). `performance`/`features`는 타겟별 값이 없으면 문서 수준 값을 모든 타겟에 씁니다. 2.1 이전 이름(`slot1_residual`, `slot2_feature`, `slot3_lineage`, `slot4_correlation`, `slot5_serving`)도 받습니다.
+`lineage`/`operation`은 해당 장이 없어져 요약 소견 끝에 붙습니다 (2.4.1). `performance`/`features`는 타겟별 값이 없으면 문서 수준 값을 모든 타겟에 씁니다.
 
 ---
 
@@ -577,8 +577,8 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
   },
   "features_used": ["반응온도(°C)", "소비전력(kW)", "유입유속(m/s)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"],
   "derived_evals": [],
-  "mean_val_r2": 0.9645,
-  "delta_r2": 0.0,
+  "mean_val_score": 0.9645,
+  "delta_score": 0.0,
   "is_best": true,
   "prescription": "목표 성능(검증 R2 >= 0.90) 초과 달성. ExtraTrees 1위 챔피언 선정.",
   "recommendations": [
@@ -624,7 +624,7 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
 
 ### 1) 학습 엔진 (`ml_train.py`) 반환 규격
 
-2.0.0부터 모든 결과에 `task`, `primary_metric`(`val_r2` 또는 `val_f1_macro`), `mean_val_score`, `delta_score`가 포함됩니다. 회귀는 기존 키 `mean_val_r2`, `delta_r2`도 그대로 함께 반환합니다.
+2.0.0부터 모든 결과에 `task`, `primary_metric`(`val_r2` 또는 `val_f1_macro`), `mean_val_score`, `delta_score`가 포함됩니다. (예전 회귀 전용 키 `mean_val_r2`, `delta_r2`는 2.9.7에서 없앴습니다.)
 
 2.1.0부터 `feature_types`(피처 유형 판별 결과)와 `next_commands`가 추가됩니다. `next_commands`는 바로 실행 가능한 다음 명령 목록입니다:
 ```json
@@ -647,8 +647,8 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
   "data_root": "C:\\path\\sample_v2_ml_data",
   "version_dir": "C:\\path\\sample_v2_ml_data\\v1",
   "targets": ["생산효율(%)"],
-  "mean_val_r2": 0.9645,
-  "delta_r2": "base",
+  "mean_val_score": 0.9645,
+  "delta_score": "base",
   "is_best": true,
   "recommendations": [
     "사전 목표 성능(검증 R2 >= 0.90)을 달성하여 배포 승인 준비가 완료되었습니다.",
@@ -827,7 +827,7 @@ flowchart TD
   `--eval "에너지집중도 = 소비전력 / (반응온도 + 1e-6)"`
 - 기여도가 1% 미만인 노이즈 변수는 `-x` 목록에서 과감히 제외합니다.
 - `--description`은 생략하여 `v1`의 도메인 지식을 자동 상속받습니다.
-- `delta_r2`와 `is_best` 플래그를 확인하여 성능 개선 여부를 판단합니다.
+- `delta_score`와 `is_best` 플래그를 확인하여 성능 개선 여부를 판단합니다.
 
 ### 4) 4턴: 도메인 기반 합성 시험 데이터 생성 및 가설 검증
 - `history.json`의 `description`(정성 규칙)과 `vX/model_<타겟>.json`의 `feature_stats`(정량 경계치 `[min, max]`)를 결합하여, LLM이 시뮬레이션 시험 레코드를 생성합니다.

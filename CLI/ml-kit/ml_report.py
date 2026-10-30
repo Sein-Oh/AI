@@ -1301,24 +1301,7 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     }
 
 
-LEGACY_SLOTS = {  # names accepted by ml_report.py 2.1 and earlier
-    "slot1_residual": "performance", "residual": "performance",
-    "slot2_feature": "features", "feature": "features",
-    "slot3_lineage": "lineage",
-    "slot4_correlation": "correlation",
-    "slot5_serving": "operation", "serving": "operation",
-}
-
-
 def parse_slots(raw: Optional[str]) -> Dict[str, Any]:
-    data = _read_slots(raw)
-    for old, new in LEGACY_SLOTS.items():
-        if data.get(old) and not data.get(new):
-            data[new] = data[old]
-    return data
-
-
-def _read_slots(raw: Optional[str]) -> Dict[str, Any]:
     if not raw:
         return {}
     s_raw = raw.strip()
@@ -1344,8 +1327,6 @@ def resolve_version_dir(args: argparse.Namespace) -> str:
     if not args.data_dir:
         raise InputError("보고서를 만들 버전 폴더(-m <version_dir>) 또는 데이터 폴더(-d <data_root>)를 지정하십시오.")
     root = os.path.abspath(args.data_dir)
-    if os.path.isfile(root):  # history.json(l) path given (2.1 style)
-        root = os.path.dirname(root)
     if args.version:
         return os.path.join(root, normalize_version(args.version))
     ledger = os.path.join(root, "history.jsonl")
@@ -1486,7 +1467,7 @@ def main():
     parser = JsonArgumentParser(description="ML 결과 보고서 (Word) generator (-f: every target in one report per task)")
     parser.add_argument("--model", "-m",
                         help="보고서를 만들 학습 버전 폴더 (학습 결과 JSON의 version_dir, 예: data_ml_data\\v3)")
-    parser.add_argument("--data-dir", "-d", "--history", "-H", dest="data_dir",
+    parser.add_argument("--data-dir", "-d", dest="data_dir",
                         help="데이터 폴더 (<파일명>_ml_data). -v 생략 시 최근 학습과 같은 타겟 조합 중 최고 버전")
     parser.add_argument("--version", "-v", help="-d와 함께 쓸 버전 (예: v2 또는 2)")
     parser.add_argument("--target", "-t", help="문서에 넣을 타겟만 지정 (쉼표 구분, 생략 또는 all = 전체)")

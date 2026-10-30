@@ -1636,7 +1636,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
         same_task = [h for h in history_records if _same_experiment(h, task, target_names)]
 
         def _rec_score(h: Dict[str, Any]) -> Optional[float]:
-            v = h.get("mean_val_score", h.get("mean_val_r2", h.get("val_r2")))
+            v = h.get("mean_val_score")
             return float(v) if isinstance(v, (int, float)) else None
 
         prev_scores = [v for v in (_rec_score(h) for h in same_task) if v is not None]
@@ -1684,8 +1684,6 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             "mean_val_score": round(mean_val_score, 4),
             "delta_score": delta_score,
         }
-        if task == TASK_REGRESSION:
-            score_keys.update({"mean_val_r2": round(mean_val_score, 4), "delta_r2": delta_score})
 
         # Stage Artifacts in .tmp_vX/
         log_progress(90, f"버전 산출물 패키징 중 ({current_version})...")
@@ -2020,9 +2018,7 @@ def _record_task(rec: Dict[str, Any]) -> str:
 
 def _target_score(rec: Dict[str, Any], target: str) -> Optional[float]:
     champ = ((rec.get("targets_benchmark") or {}).get(target) or {}).get("champion") or {}
-    v = champ.get("val_score", champ.get(PRIMARY_METRIC.get(_record_task(rec), "val_r2")))
-    if v is None and len(rec.get("targets", [])) == 1:  # very old records: one target, run-level score
-        v = rec.get("mean_val_score", rec.get("mean_val_r2"))
+    v = champ.get("val_score")
     return float(v) if isinstance(v, (int, float)) else None
 
 
@@ -2295,16 +2291,14 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
         ver = r.get("version", "-")
         tag = r.get("tag") or "-"
         task = r.get("task", TASK_REGRESSION)
-        score = r.get("mean_val_score", r.get("mean_val_r2"))
-        delta = r.get("delta_score", r.get("delta_r2", "base"))
+        score = r.get("mean_val_score")
+        delta = r.get("delta_score", "base")
         row = {
             "version": ver, "tag": tag, "task": task,
             "primary_metric": r.get("primary_metric", PRIMARY_METRIC.get(task, "val_r2")),
             "mean_val_score": score, "delta_score": delta,
             "is_best": bool(r.get("is_best")), "targets": r.get("targets", []),
         }
-        if task == TASK_REGRESSION:
-            row.update({"mean_val_r2": score, "delta_r2": delta})
         if r.get("best"):
             row["best"] = True  # built by --best (every target with its best recipe)
         rows.append(row)
@@ -2342,11 +2336,10 @@ def print_history_summary(data_root: str) -> Dict[str, Any]:
         "record_count": len(rows),
         "best_version": best["version"] if best else None,
         "best_mean_val_score": best["mean_val_score"] if best else None,
-        "best_mean_val_r2": best_by_task.get(TASK_REGRESSION, {}).get("mean_val_score"),
         "best_by_task": best_by_task,
         "latest_version": rows[-1]["version"],
         "records": rows,
-        "agent_directive": "VERIFIED: History summary returned. Do not re-read history.json for the same information.",
+        "agent_directive": "VERIFIED: History summary returned. Do not re-read history.jsonl for the same information.",
     }
 
 

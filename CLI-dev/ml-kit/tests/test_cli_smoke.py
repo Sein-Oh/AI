@@ -134,7 +134,7 @@ def test_train_strings_with_commas_and_placeholders(tmp_path):
     payload = run_tool("ml_train.py", "-f", str(p), "-x", FEATURES + ",상수열", "-y", TARGET)
     hist = (tmp_path / "comma_ml_data" / "history.jsonl").read_text(encoding="utf-8")
     assert "NaN" not in hist
-    assert payload["mean_val_r2"] > 0.5
+    assert payload["mean_val_score"] > 0.5 and "mean_val_r2" not in payload
 
 
 def test_train_history_mode_is_json(trained):

@@ -107,14 +107,14 @@ th { background: var(--soft); font-weight: 700; }
 <button id="menu" type="button">목차 열기/닫기</button>
 <nav id="side">
   <div class="brand">ml-kit 사용 가이드</div>
-  <div class="ver">베타 | ml-kit 2.9.6 | Gemma 기준</div>
+  <div class="ver">베타 | ml-kit 2.9.7 | Gemma 기준</div>
   <input id="tocq" type="search" placeholder="목차에서 찾기 (예: 차트)">
   <div id="toc"></div>
 </nav>
 <main>
 <header class="top">
   <h1>ml-kit 사용 가이드</h1>
-  <p>엑셀 데이터로 예측 모델을 만들고, 새 조건의 결과를 예측하고, 보고서를 만드는 방법 | 베타테스트용 | ml-kit 2.9.6</p>
+  <p>엑셀 데이터로 예측 모델을 만들고, 새 조건의 결과를 예측하고, 보고서를 만드는 방법 | 베타테스트용 | ml-kit 2.9.7</p>
 </header>
 
 <p class="lead">ml-kit은 엑셀이나 CSV로 모아 둔 과거 데이터에서 <b>규칙을 스스로 배워</b>, 새로운 조건에서 결과가 어떻게 될지 <b>예측</b>하는 도구입니다.
@@ -368,7 +368,6 @@ th { background: var(--soft); font-weight: 700; }
   <li>비교값이 <b>90% 예측 범위 밖</b>이면 "모델 예측과 실측 데이터가 많이 다름" 경고가 나옵니다. 근거 행을 엑셀에서 확인해 보세요.</li>
   <li>학습에서 뺀 행(이상치, "제외" 표시)은 비교에도 쓰지 않습니다.</li>
   <li>입력이 많은 모델은 "비슷한 실측"도 조건이 꽤 다를 수 있어 비교값이 거칩니다. 그래서 가까운 실측이 충분히 가까울 때만 경고합니다.</li>
-  <li>2.7.0 이전에 학습한 버전은 근거 행 번호가 엑셀 행이 아닌 학습 데이터 사본의 줄 번호로 나옵니다. 다시 학습하면 엑셀 행 번호가 됩니다.</li>
 </ul>
 
 <h3 id="p-find">6.5 목표값이 되는 조건 찾기 (모델 반대 찾기)</h3>
