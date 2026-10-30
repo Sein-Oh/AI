@@ -157,3 +157,14 @@ def test_several_inputs_and_outputs(tmp_path):
     assert [calc[f"B{r}"].value for r in (11, 12)] == ["효율", "전력"]
     assert "COUNT($C$6)=1" in calc["C11"].value and "COUNT($C$7,$C$8)=2" in calc["C12"].value
     assert wb.sheetnames[3:5] == ["표_효율", "표_전력"]
+
+
+def test_workbook_has_no_full_paths(version):
+    """The folder path before <data>_ml_data (user name, company folders) is personal information."""
+    d, _, vdir = version
+    res = run_tool("ml_export.py", "-m", vdir, "--inputs", "온도,유량,농도")
+    wb = openpyxl.load_workbook(res["output_file"])
+    parent = os.path.dirname(os.path.dirname(vdir))
+    texts = [str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    assert not any(parent in t for t in texts)
+    assert any(t == os.path.join("s_ml_data", "v1") for t in texts)

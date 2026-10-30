@@ -544,7 +544,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
 
     info.sheet_view.showGridLines = False
     rows = [("제목", title), ("만든 날짜", f"{datetime.now():%Y-%m-%d %H:%M}"), ("ml-kit", VERSION),
-            ("원래 모델 버전 폴더", vinfo["dir"])]
+            ("원래 모델", short_version(vinfo["dir"]))]
     for p in plans:
         c, m = p["cand"], vinfo["metas"][p["target"]]
         dropped = [x for x in p["all_inputs"] if x not in c["inputs"]]
@@ -577,6 +577,11 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
     def _save(pth: str) -> None:
         wb.save(pth)
     return save_with_lock_fallback(path, _save, what="성능예측표")
+
+
+def short_version(vdir: str) -> str:
+    """'<data>_ml_data\\v3' only: the full path (user name, folders) is personal information and is not distributed."""
+    return os.path.join(os.path.basename(os.path.dirname(vdir)), os.path.basename(vdir))
 
 
 def rng_all(vinfo: Dict[str, Any], col: str) -> Tuple[float, float]:
@@ -717,7 +722,7 @@ def execute_export(args) -> Dict[str, Any]:
             json.dump({"target": p["target"], "task": "regression", "features_required": c["inputs"] + [e.split("=", 1)[0].strip() for e in c["evals"]],
                        "derived_evals": c["evals"], "feature_schema": c["schema"], "champion_model": c["model"],
                        "val_r2": round(c["val_r2"], 4), "rmse": round(c["rmse"], 4), "prediction_interval": c["interval"],
-                       "source_version": vinfo["dir"], "exported_at": datetime.now().isoformat(timespec="seconds"),
+                       "source_version": short_version(vinfo["dir"]), "exported_at": datetime.now().isoformat(timespec="seconds"),
                        "ml_kit": VERSION}, f, ensure_ascii=False, indent=2)
     pd.DataFrame([{"타겟": p["target"], "입력 수": len(c["inputs"]), "입력": ", ".join(c["inputs"]), "검증 R2": round(c["val_r2"], 4),
                    "RMSE": round(c["rmse"], 4), "모델": c["model"], "표 행 수": c["rows"], "표 보간 오차": c["interp_rmse"],
