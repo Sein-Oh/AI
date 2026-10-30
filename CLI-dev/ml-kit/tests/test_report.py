@@ -105,20 +105,19 @@ def test_report_rejects_non_version_folder(regression_report, tmp_path):
     assert "버전 폴더" in missing["message"]
 
 
-def test_data_dir_mode_picks_best_version_and_legacy_slots(regression_report):
-    """2.1-style call: -d <data_root> without -v uses the best version of the latest experiment;
-    old slot names (slot1_residual ... slot5_serving) still land in the document."""
+def test_data_dir_mode_picks_best_version_and_slots(regression_report):
+    """-d <data_root> without -v uses the best version of the latest experiment; --slots text lands in the document."""
     work, tr, _, _ = regression_report
     root = os.path.dirname(tr["version_dir"])
     lines = open(os.path.join(root, "history.jsonl"), encoding="utf-8").read().splitlines()
     recs = [json.loads(x) for x in lines]
     best = max(recs, key=lambda r: r["mean_val_score"])["version"]
-    legacy = json.dumps({"slot1_residual": "옛 이름 성능 소견", "slot5_serving": "옛 이름 운영 소견"}, ensure_ascii=False)
-    out = work / "legacy.docx"
-    payload = run_tool("ml_report.py", "-d", root, "--slots", legacy, "-o", str(out))
+    slots = json.dumps({"performance": "직접 쓴 성능 소견", "operation": "직접 쓴 운영 소견"}, ensure_ascii=False)
+    out = work / "slots.docx"
+    payload = run_tool("ml_report.py", "-d", root, "--slots", slots, "-o", str(out))
     assert payload["best_version"] == payload["version"] == best
     text = _all_text(docx.Document(str(out)))
-    assert "옛 이름 성능 소견" in text and "옛 이름 운영 소견" in text
+    assert "직접 쓴 성능 소견" in text and "직접 쓴 운영 소견" in text
 
 
 def test_report_requires_oof_files(regression_report, tmp_path):

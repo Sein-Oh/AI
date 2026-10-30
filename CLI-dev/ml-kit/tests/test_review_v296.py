@@ -101,3 +101,25 @@ def test_nearest_rows_are_numbers_and_find_rejects_text_input(tmp_path):
     assert all(isinstance(nr["온도"], float) for nr in f["nearest_rows"])
     bad = run_fail("ml_predict.py", "-m", v, "--find", "효율=80", "--vary", "온도", "-i", "압력=x")
     assert bad["agent_directive"].startswith("STOP_RETRY") and "압력" in bad["message"] and "숫자" in bad["message"]
+
+
+def test_model_from_before_291_asks_for_retraining(tmp_path):
+    """2.9.7 (beta, no compatibility paths): an older model is refused with a clear message, not half-supported."""
+    import json
+    import shutil
+    r = np.random.default_rng(2)
+    df = pd.DataFrame({"a": r.uniform(0, 1, 120), "b": r.uniform(0, 1, 120)})
+    df["y"] = 2 * df.a + df.b + r.normal(0, 0.05, 120)
+    p = tmp_path / "o.csv"
+    df.to_csv(p, index=False)
+    v = run_tool("ml_train.py", "-f", str(p), "-x", "a,b", "-y", "y")["version_dir"]
+    old = tmp_path / "v_old"
+    shutil.copytree(v, old)
+    meta_p = old / "model_y.json"
+    meta = json.loads(meta_p.read_text(encoding="utf-8"))
+    del meta["input_columns_required"]
+    meta_p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    bad = run_fail("ml_predict.py", "-m", str(old), "-i", "a=0.5,b=0.5")
+    assert bad["agent_directive"].startswith("STOP_RETRY") and "다시 학습" in bad["message"]
+    res = run_tool("ml_train.py", "-f", str(p), "--history")
+    assert "mean_val_r2" not in res["records"][0] and "best_mean_val_r2" not in res

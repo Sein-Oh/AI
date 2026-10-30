@@ -787,7 +787,8 @@ def execute_export(args) -> Dict[str, Any]:
         safe = re.sub(r'[\\/*?:"<>|]', "_", p["target"])
         joblib.dump(c["pipe"], os.path.join(exp_dir, f"model_{safe}.joblib"), compress=3)
         with open(os.path.join(exp_dir, f"model_{safe}.json"), "w", encoding="utf-8") as f:
-            json.dump({"target": p["target"], "task": "regression", "features_required": c["inputs"] + [e.split("=", 1)[0].strip() for e in c["evals"]],
+            json.dump({"target": p["target"], "task": "regression", "input_columns_required": c["inputs"],
+                       "features_required": c["inputs"] + [e.split("=", 1)[0].strip() for e in c["evals"]],
                        "derived_evals": c["evals"], "feature_schema": c["schema"], "champion_model": c["model"],
                        "val_r2": round(c["val_r2"], 4), "rmse": round(c["rmse"], 4), "prediction_interval": c["interval"],
                        "source_version": short_version(vinfo["dir"]), "exported_at": datetime.now().isoformat(timespec="seconds"),

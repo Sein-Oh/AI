@@ -93,9 +93,8 @@ def test_old_snapshot_and_missing_snapshot(two, tmp_path):
     shutil.copytree(vdir, old)
     snap = pd.read_csv(old / "model_dataset.csv", encoding="cp949").drop(columns=["원본행", "학습제외_생산효율"])
     snap.to_csv(old / "model_dataset.csv", index=False, encoding="cp949")
-    res = run_tool("ml_predict.py", "-m", str(old), "-i", "반응온도=180,압축압력=3")
-    assert res["predictions_summary"]["생산효율"]["map_check"][0]["value"] is not None
-    assert "줄 번호" in res["map_check_notes"][0]
+    res = run_tool("ml_predict.py", "-m", str(old), "-i", "반응온도=180,압축압력=3")     # snapshot from before 2.7.0
+    assert "map_check" not in res["predictions_summary"]["생산효율"] and "다시 학습" in res["map_check_notes"][0]
 
     os.remove(old / "model_dataset.csv")
     res = run_tool("ml_predict.py", "-m", str(old), "-i", "반응온도=180,압축압력=3")
