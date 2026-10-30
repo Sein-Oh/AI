@@ -727,6 +727,7 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
 {
   "status": "ok",
   "output_file": "C:\\path\\new_batch_pred_20261027_011000.csv",
+  "verified": true,
   "total_rows": 180,
   "predictions_summary": {
     "생산효율(%)": {
@@ -761,6 +762,7 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
 {
   "status": "ok",
   "report_file": "C:\\path\\sample_ml_data\\ML결과보고서_sample_v3.docx",
+  "verified": true,
   "best_version": "v3",
   "version": "v3",
   "task": "regression",
@@ -774,7 +776,7 @@ python ml_export.py -m 공정_ml_data\v3 --inputs "반응온도,소비전력,촉
   "agent_directive": "VERIFIED: ML result report for v3 (2 target(s)) saved to 'ML결과보고서_sample_v3.docx'. Overall verdict=적합. Next step: report the file path to the user."
 }
 ```
-`best_version`은 문서에 사용한 버전입니다 (`version`과 같음).
+`best_version`은 문서에 사용한 버전입니다 (`version`과 같음). `verified`는 저장한 Word 파일을 다시 열어 버전 표기와 표 수를 확인했는지(2.9.8), 아니면 `unverified`에 이유가 있고 `agent_directive`가 `UNVERIFIED:`입니다.
 
 `-f`(2.4.0)로 만들면 위 키는 첫 번째 보고서(회귀가 있으면 회귀) 기준이고, 다음 키가 추가됩니다:
 `made_best`, `best_version_dir`(예측에 쓸 폴더), `best_versions`, `best_targets`(`--best`와 같은 형식), `report_count`,

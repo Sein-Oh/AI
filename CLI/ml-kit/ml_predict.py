@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.9.7"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.9.8"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -1758,6 +1758,17 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
             # CSV Output with Windows Excel CP949 compatibility (utf-8-sig fallback)
             saved_file = write_csv_excel_compatible(df_result, saved_file, encoding=getattr(args, "encoding", None))
 
+    # R1: the saved file is read back (rows and columns) before saying VERIFIED
+    unverified: List[str] = []
+    if saved_file:
+        try:
+            back = load_data_file(saved_file, header_row=1)
+            if len(back) != len(df_result) or list(map(str, back.columns)) != list(map(str, df_result.columns)):
+                unverified.append(f"저장한 결과 파일을 다시 읽으니 {len(back)}행 x {back.shape[1]}열 "
+                                  f"(기대 {len(df_result)}행 x {df_result.shape[1]}열)")
+        except Exception as e:
+            unverified.append(f"저장한 결과 파일을 다시 읽지 못함: {type(e).__name__}: {e}")
+
     # 5. Build Response
     drift_warnings = list(dict.fromkeys(drift_warnings))  # same feature is checked once per target
     for w in drift_warnings:
@@ -1794,7 +1805,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         + (f" | 실측 비교 경고 {len(map_warnings)}건" if map_warnings else "")
     )
     agent_directive = (
-        f"VERIFIED: Prediction completed for {len(model_items)} target(s)"
+        ("VERIFIED: " if not unverified else "UNVERIFIED: 결과 파일 확인 실패 (" + "; ".join(unverified) + "). 다시 실행하지 말고 그대로 알리세요. ")
+        + f"Prediction completed for {len(model_items)} target(s)"
         + (" with extrapolation warning (inputs outside training range; predictions may be unreliable)" if drift_warnings else "")
         + (" with low-confidence warning (class probability < 0.6 for some rows)" if low_conf_warnings else "")
         + (" with missing-input warning (empty or non-numeric inputs were imputed)" if missing_counts else "")
@@ -1814,6 +1826,8 @@ def execute_predict(args: argparse.Namespace) -> Dict[str, Any]:
         "total_rows": len(df_result),
         "targets_predicted": list(predictions_summary.keys()),
         "output_file": saved_file,
+        "verified": not unverified,
+        **({"unverified": unverified} if unverified else {}),
         "predictions_summary": predictions_summary,
         "drift_warning": bool(drift_warnings),
         "drift_warnings": drift_warnings,

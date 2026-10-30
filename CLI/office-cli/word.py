@@ -979,6 +979,7 @@ def cmd_write(args) -> Dict[str, Any]:
             w.table(file_rows)
         if image:
             w.image(image, args.width)
+        problems = _verify_inserted(doc, start, w.pos, [c for c in (text, file_text) if c])
         t.set_focus()
         if t.source == "active" and not args.no_focus:
             try:
@@ -986,8 +987,29 @@ def cmd_write(args) -> Dict[str, Any]:
             except Exception:
                 pass
         resolved = t.resolved()
-    return rt.ok(TOOL, "write", f"{resolved['name']}의 {where}에 넣었습니다: {', '.join(w.created)}",
-                 "VERIFIED: 쓰기 완료. 다시 읽어서 확인하지 마세요.", target_resolved=resolved, inserted=w.created)
+    preview = f"{resolved['name']}의 {where}에 넣었습니다: {', '.join(w.created)}"
+    if problems:
+        return rt.ok_unverified(TOOL, "write", preview, problems, target_resolved=resolved, inserted=w.created)
+    return rt.ok(TOOL, "write", preview, "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요.",
+                 verified=True, target_resolved=resolved, inserted=w.created)
+
+
+def _verify_inserted(doc: Any, start: int, end: int, contents: List[str]) -> List[str]:
+    """R1: 넣은 범위를 다시 읽어, 범위가 비어 있지 않고 넣은 글의 첫 줄이 들어 있는지 확인합니다 (마크다운 기호 제외)."""
+    try:
+        got = re.sub(r"[\s\x00-\x1f]+", "", str(doc.Range(start, end).Text))   # 표 칸 구분 기호도 무시
+    except Exception as e:
+        return [f"넣은 범위를 다시 읽지 못함: {type(e).__name__}"]
+    if end <= start:
+        return ["넣은 범위가 비어 있음"]
+    problems = []
+    for content in contents:
+        first = next((ln for ln in content.splitlines() if ln.strip()), "")
+        first = re.sub(r"^\s*(#+|[-*+]|\d+[.)]|>)\s*|\*\*|__|\|", "", first)
+        key = re.sub(r"\s+", "", first)[:20]
+        if key and key not in got:
+            problems.append(f"넣은 범위에서 '{first.strip()[:20]}'을(를) 찾지 못함")
+    return problems
 
 
 # ==============================================================================

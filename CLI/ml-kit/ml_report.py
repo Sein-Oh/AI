@@ -1282,6 +1282,7 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
     warn_long_path(out_abs)
     out_abs = avoid_overwrite(out_abs, overwrite, what="보고서")
     saved = R.save(out_abs)
+    unverified = verify_docx(saved, version, len(targets))
 
     return {
         "status": "ok",
@@ -1295,8 +1296,11 @@ def build_report(ctx: Dict[str, Any], slots: Dict[str, Any], out_path: Optional[
         "figure_count": R.figure_no,
         "table_count": R.table_no,
         "slots_used": slots_used,
+        "verified": not unverified,
+        **({"unverified": unverified} if unverified else {}),
         "preview": f"[보고서 완료] {version} / 타겟 {len(targets)}개 / 종합 판정 {overall} / 저장: {os.path.basename(saved)}",
-        "agent_directive": (f"VERIFIED: ML result report for {version} ({len(targets)} target(s)) saved to "
+        "agent_directive": (("VERIFIED: " if not unverified else "UNVERIFIED: 보고서 확인 실패 (" + "; ".join(unverified)
+                             + "). 다시 실행하지 말고 unverified를 그대로 알리세요. ") + f"ML result report for {version} ({len(targets)} target(s)) saved to "
                             f"'{os.path.basename(saved)}'. Overall verdict={overall}. Next step: report the file path to the user."),
     }
 
@@ -1358,6 +1362,22 @@ def make_export(version_dir: str, task: str, title: Optional[str]) -> Optional[D
         note = f"성능예측표를 만들지 못했습니다 (보고서는 정상): {type(e).__name__}: {str(e)[:200]}"
         sys.stderr.write(f"[WARN] {note}\n")
         return {"note": note}
+
+
+def verify_docx(path: str, version: str, n_targets: int) -> List[str]:
+    """R1: reopens the saved report and checks it is a readable Word file with the version and every target section."""
+    try:
+        from docx import Document
+        doc = Document(path)
+    except Exception as e:
+        return [f"저장한 보고서를 다시 열지 못함: {type(e).__name__}: {e}"]
+    text = "\n".join(p.text for p in doc.paragraphs)
+    problems = []
+    if version not in text:
+        problems.append(f"보고서에 버전 '{version}'이 없음")
+    if len(doc.tables) < n_targets:
+        problems.append(f"표가 {len(doc.tables)}개뿐임 (타겟 {n_targets}개)")
+    return problems
 
 
 def attach_export(result: Dict[str, Any], export: Optional[Dict[str, Any]]) -> None:
@@ -1454,8 +1474,13 @@ def execute_best_report(args: argparse.Namespace, target_filter: Optional[List[s
     multi = (f" 회귀와 분류 타겟이 섞여 있어 최고 버전과 보고서가 각각 {len(reports)}개입니다 (best_reports)."
              if len(reports) > 1 else "")
     predict = "; ".join(f"{bv['task']}: ml_predict.py -m \"{bv['version_dir']}\"" for bv in versions)
+    bad = [u for r in reports for u in r.get("unverified", [])]
+    result["verified"] = not bad
+    if bad:
+        result["unverified"] = bad
     result["agent_directive"] = (
-        f"VERIFIED: {made}최고 버전 {vers}으로 ML 결과 보고서 {len(reports)}개를 저장했습니다 ({files}).{multi} "
+        ("VERIFIED: " if not bad else "UNVERIFIED: 보고서 확인 실패 (" + "; ".join(bad) + "). 다시 실행하지 말고 unverified를 그대로 알리세요. ")
+        + f"{made}최고 버전 {vers}으로 ML 결과 보고서 {len(reports)}개를 저장했습니다 ({files}).{multi} "
         f"report_file 링크, overall_verdict, best_targets의 타겟별 출처 버전과 점수를 사용자에게 알리세요. "
         f"이후 예측에는 best_version_dir을 쓰세요 ({predict})."
     )

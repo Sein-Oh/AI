@@ -68,6 +68,7 @@ def test_write_new_slide_title_placeholder_and_bullets(pp, capsys):
     assert body.TextFrame.TextRange.Text == "안정성\r확장성\r설명"
     assert body.Top >= 20 + 60                                     # 제목 아래에 쌓임
     assert pp["app"].ActiveWindow.View.goto == [4]                 # 고친 슬라이드로만 이동
+    assert out["agent_directive"].startswith("VERIFIED:") and out["verified"] is True   # 다시 읽어 확인 (R1)
 
 
 def bullet(shape, i):
@@ -121,6 +122,7 @@ def test_write_markdown_file_makes_one_slide_per_heading(pp, capsys, tmp_path):
     assert live(prs.Slides(5))[1].TextFrame.TextRange.Text == "마일스톤 일정 정리"      # ** 제거
     table = [s for s in live(prs.Slides(6)) if s.HasTable][0].Table
     assert table.Cell(2, 1).Shape.TextFrame.TextRange.Text == "A"
+    assert out["agent_directive"].startswith("VERIFIED:")
 
 
 def test_write_long_csv_table_splits_slides_with_header(pp, capsys, tmp_path):
@@ -130,6 +132,7 @@ def test_write_long_csv_table_splits_slides_with_header(pp, capsys, tmp_path):
     assert out["slides_written"] == [4, 5]
     t2 = [s for s in live(pp["prs"].Slides(5)) if s.HasTable][0].Table
     assert t2.Cell(1, 1).Shape.TextFrame.TextRange.Text == "이름" and t2.Rows.Count == 6
+    assert out["agent_directive"].startswith("VERIFIED:")
 
 
 def test_write_image_fits_remaining_space_keeping_ratio(pp, capsys, tmp_path):
@@ -330,3 +333,10 @@ def test_notes_from_crlf_file_has_no_blank_lines(pp, capsys, tmp_path):
     f.write_bytes("첫 줄\r\n둘째 줄\r\n".encode("utf-8"))        # Windows 메모장 형식
     code, out = run(capsys, "notes", "--slide", "2", "--file", str(f))
     assert code == 0 and pp["prs"].Slides(2).NotesPage.body.TextFrame.TextRange.Text == "첫 줄\r둘째 줄"
+
+
+def test_write_reports_unverified_when_text_is_missing(pp, capsys, monkeypatch):
+    import ppt
+    monkeypatch.setattr(ppt, "slide_units", lambda slide, idx: {"no": idx, "title": "", "text": "", "notes": ""})
+    code, out = run(capsys, "write", "--slide", "new", "--title", "제목")
+    assert code == 0 and out["agent_directive"].startswith("UNVERIFIED:") and "제목" in out["unverified"][0]
