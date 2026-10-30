@@ -23,7 +23,7 @@ from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, emit_json_response, dumps_json, run_cli, JsonArgumentParser,
     InputError, sanitize_filename, normalize_version, warn_long_path,
     read_text_file, load_json_file, resolve_column_names, coerce_numeric,
-    load_data_file as _load_table, apply_eval_expressions,
+    load_data_file as _load_table, apply_eval_expressions, eval_source_columns,
     parse_datetime, normalize_category, prepare_features, date_part_column, input_column_owner, DATE_PARTS,
     strip_unit,
     retry_fs, remove_tree, atomic_write_text, write_csv_excel_compatible,
@@ -1390,7 +1390,15 @@ def _prepare_group(df_raw: pd.DataFrame, group: Dict[str, Any], task: str) -> Di
         )
     for col in feature_schema["numeric"]:
         df_clean[col] = X_all[col]
+    # Columns the user must provide at prediction time: own raw features + sources of derived features (2.9.1)
+    sources = eval_source_columns(applied_evals, [str(c) for c in df_raw.columns])
+    raw_required = [f for f in feature_names if f not in created_features]
+    raw_required += [c for c in sources if c not in raw_required and c not in target_names]
+    for c in raw_required:
+        if c not in df_clean.columns and c in df_raw.columns:
+            df_clean[c] = df_raw[c]
     return {"df": df_clean, "features": feature_names, "targets": target_names, "aliases": column_aliases,
+            "raw_required": raw_required,
             "evals": applied_evals, "created": created_features, "schema": feature_schema, "X": X_all,
             "dtypes": dtypes, "positive_class": group.get("positive_class")}
 
@@ -1718,8 +1726,10 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
             # Feature statistics for inference validation (numeric extrapolation guard)
             feat_stats = {}
             used_rows = ~exclusions[target_name]["mask"]   # training range = rows the model learned from
-            for fname in g["schema"]["numeric"]:
-                s = g["df"][fname][used_rows].dropna()
+            source_numeric = [c for c in g["raw_required"] if c not in g["schema"]["numeric"]
+                              and c not in g["schema"].get("categorical", {}) and c not in g["schema"].get("datetime", {})]
+            for fname in list(g["schema"]["numeric"]) + source_numeric:
+                s = coerce_numeric(g["df"][fname])[used_rows].dropna()
                 if not s.empty:
                     feat_stats[fname] = {
                         "mean": round(float(s.mean()), 4),
@@ -1763,6 +1773,7 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                 meta_json["excluded"] = excl
             meta_json.update({
                 "features_required": g["features"],
+                "input_columns_required": g["raw_required"],
                 "feature_count": len(g["features"]),
                 "feature_stats": feat_stats,
                 "datetime_stats": _datetime_stats(g, used_rows),
@@ -1778,7 +1789,8 @@ def train_version(args: argparse.Namespace, task: str, groups: List[Dict[str, An
                 f.write(dumps_json(meta_json, indent=2))
 
         # 3. Clean Dataset Snapshot (model_dataset.csv)
-        dataset_snapshot_cols = [c for c in feature_names + target_names if c in df_clean.columns]
+        raw_extra = [c for g in prepared for c in g["raw_required"] if c not in feature_names]
+        dataset_snapshot_cols = list(dict.fromkeys(c for c in feature_names + raw_extra + target_names if c in df_clean.columns))
         snapshot_df = df_clean[dataset_snapshot_cols].copy()
         # 2.7.0: Excel row numbers and per-target training exclusions, so ml_predict.py can compare its predictions
         # with the measured rows the model learned from (evidence rows are shown as Excel row numbers)

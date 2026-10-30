@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ml_predict import (  # noqa: E402  shared runtime lives in ml_predict.py
     setup_console, run_cli, JsonArgumentParser, InputError, resolve_column_names, coerce_numeric, load_data_file,
     strip_unit, avoid_overwrite, save_with_lock_fallback, apply_inference_evals, prepare_features, quote_arg,
-    VERSION, SNAPSHOT_EXCL_PREFIX, _fmt,
+    VERSION, SNAPSHOT_EXCL_PREFIX, _fmt, model_raw_inputs,
 )
 import ml_train as mt  # noqa: E402  same training competition as ml_train.py
 
@@ -93,8 +93,7 @@ def raw_inputs(meta: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     """(raw numeric inputs, derived feature expressions) of a model; text/date raw inputs are not supported."""
     schema = meta.get("feature_schema") or {}
     evals = list(meta.get("derived_evals") or [])
-    derived = {e.split("=", 1)[0].strip() for e in evals if "=" in e}
-    raw = [f for f in meta.get("features_required", []) if f not in derived]
+    raw = model_raw_inputs(meta)
     bad = [f for f in raw if f in schema.get("categorical", {}) or f in schema.get("datetime", {})]
     if bad or not schema:
         raise InputError(f"글자·날짜 입력 {bad}이(가) 있는 모델은 성능예측표로 만들 수 없습니다 (숫자 입력만 가능).")
