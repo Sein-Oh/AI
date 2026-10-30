@@ -1,6 +1,6 @@
 """실기 테스트 러너(run_win_tests.py)의 판단 규칙 (표준 라이브러리만, pywin32 없이 import 가능).
 
-러너와 정리 스크립트(CLEANUP_SCRIPT)가 같이 쓰고, tests/test_win_test_rules.py가 Windows 없이 검증합니다.
+러너와 정리 스크립트(CLEANUP_SCRIPT)가 같이 쓰고, tests/test_win_runner.py가 Windows 없이 검증합니다.
 - 어떤 Office 프로세스를 끝내도 되는지 (사용자 문서를 가진 프로세스는 절대 끝내지 않음)
 - COM 오류가 '문서/항목 없음'(재시도해도 소용없음)인지
 - tasklist 출력에서 PID 목록 읽기

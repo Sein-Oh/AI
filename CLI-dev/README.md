@@ -9,7 +9,7 @@ AI 에이전트(26B~30B 경량 LLM)가 **스킬로 호출하는 CLI 도구**의 
 | 도구 | 설명 | 스킬 |
 |---|---|---|
 | [`ml-kit/`](ml-kit/README.md) | 회귀·분류 ML 학습 / 예측(단독 배포 가능) / Word 보고서 / 표 보간·반대 찾기 | [`CLI/ml-kit/SKILL.md`](../CLI/ml-kit/SKILL.md) |
-| [`office-cli/`](office-cli/README.md) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/EML 읽기와 검색 | [`CLI/office-cli/SKILL.md`](../CLI/office-cli/SKILL.md) |
+| [`office-cli/`](office-cli/README.md) | Excel/Word/PowerPoint/Outlook 자동화(열린 문서 읽기·쓰기, 앱 간 전달, 되돌리기), PDF/HWP/Office 파일 읽기와 검색 | [`CLI/office-cli/SKILL.md`](../CLI/office-cli/SKILL.md) |
 
 에이전트 런타임은 **OpenCode** 입니다. 스킬 폴더 이름 = 스킬 이름
 (소문자, 숫자, 하이픈만: `^[a-z0-9]+(-[a-z0-9]+)*$`) 이어야 합니다. 사내 PC 배치: 도구는 `C:\CLI\<tool>\`에 두고, OpenCode 스킬 폴더(`C:\Users\<사용자>\.config\opencode\skills\<tool>\`)에는 SKILL.md만 복사합니다 ([`docs/opencode/README.md`](../docs/opencode/README.md)). SKILL.md의 명령 경로는 `C:\CLI\<tool>` 기준입니다.
@@ -46,7 +46,7 @@ python run_all_tests.py --only diag            :: 환경 진단만 (1분)
 ```text
 CLI/<tool>/              # 폴더명 = 스킬명 (예: ml-kit). 사내 PC C:\CLI\<tool>로 그대로 복사
 ├── SKILL.md             # OpenCode 스킬. frontmatter: name(=폴더명), description(1024자 이하), license, compatibility, metadata
-└── <tool>_*.py          # CLI 진입점과 공통 런타임 (실행에 필요한 파일만, 폴더째 복사해도 단독 실행 가능)
+└── *.py                # CLI 진입점과 공통 런타임 (예: excel.py, _runtime.py. 실행에 필요한 파일만, 폴더째 복사해도 단독 실행 가능)
 
 CLI-dev/<tool>/
 ├── README.md            # 사람용 상세 설명서
@@ -61,22 +61,22 @@ CLI-dev/<tool>/
 1. **stdout = 정확히 1줄 JSON.** 진행 로그·표·경고는 모두 stderr.
 2. 성공: exit 0, `"status": "ok"`, `agent_directive`가 `VERIFIED:`로 시작.
 3. 실패: exit 1(인자 오류 2, 중단 130), `"status": "error"`, `agent_directive`가
-   - `STOP_RETRY:` – 입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도.
-   - `ERROR:` – 내부 오류. 재시도 금지.
+   - `STOP_RETRY:` - 입력/데이터 문제. message에 `[추천]`이 있으면 그 값으로 1회만 재시도.
+   - `ERROR:` - 내부 오류. 재시도 금지.
 4. 에이전트가 판단할 일을 줄인다: 이름 자동 매칭, 기본값, 자동 상속, 오타 추천을 도구가 처리.
 5. 문자 규칙: 이모지·원문자·장식 기호 금지, 로그 태그는 `[INFO] [PROGRESS] [WARN] [ERROR] [STATUS]` ([`AGENTS.md`](../AGENTS.md) "문자 규칙").
 6. 폐쇄망: 실행 중 네트워크 접근 금지. [표준 환경](../docs/ENVIRONMENT.md)에 있는 라이브러리만 사용 ([`docs/WINDOWS_OFFLINE.md`](../docs/WINDOWS_OFFLINE.md)).
 7. 공통 결과 키 (해당할 때만 넣음):
-   - `next_commands` – 이어서 그대로 실행할 전체 명령 목록.
-   - `truncated` – 결과를 상한에서 잘랐으면 `true`, 전체 결과 파일 경로를 함께 제공.
-   - `recovered` – 도구가 실패를 즉시 복구해 결과가 달라진 일 (예: 잠긴 파일 -> 새 이름 저장). `warnings`와 구분.
+   - `next_commands` - 이어서 그대로 실행할 전체 명령 목록.
+   - `truncated` - 결과를 상한에서 잘랐으면 `true`, 전체 결과 파일 경로를 함께 제공.
+   - `recovered` - 도구가 실패를 즉시 복구해 결과가 달라진 일 (예: 잠긴 파일 -> 새 이름 저장). `warnings`와 구분.
 8. 실패한 실행(exit 1, 2)은 `<도구 데이터 폴더>/logs/errors.txt`에 자동 기록. 로그 경로는 stdout JSON에 넣지 않음.
 
 설계 권장(사후 확인, 빈 결과 명시, 미리보기와 되돌리기, 인자 이름 일관성)과 JIT 자가복구 규칙은 [`AGENTS.md`](../AGENTS.md)에 있습니다.
 
 ## 공통 런타임 구현 규칙
 
-세 도구가 같은 문제를 같은 모양으로 풀기 위한 규칙입니다. 도구 폴더는 단독 배포되므로 코드는 공유하지 않고,
+모든 도구가 같은 문제를 같은 모양으로 풀기 위한 규칙입니다. 도구 폴더는 단독 배포되므로 코드는 공유하지 않고,
 각 도구의 공통 런타임(`ml_predict.py` PART C, `_runtime.py`)에 **같은 이름·같은 동작**으로 구현합니다.
 경량 LLM이 도구마다 다른 키나 문구를 만나지 않게 하는 것이 목적입니다. 키 이름과 directive 첫 단어는 바꾸지 마십시오.
 

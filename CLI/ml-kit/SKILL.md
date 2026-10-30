@@ -162,7 +162,8 @@ python "C:\CLI\ml-kit\ml_export.py" -m "<best_version_dir>" --keep "<입력1>,<�
 | `VERIFIED:` | 성공. `preview`와 위에서 정한 값을 사용자에게 알리고 끝낸다. |
 | `UNVERIFIED:` | 실행은 됐지만 결과를 확인하지 못했다. 다시 실행하지 않는다. `unverified` 내용을 그대로 알린다. |
 | `STOP_RETRY:` 이고 `message`에 `[추천]`이 있다 | `[추천]` 뒤의 이름(또는 `--version v3` 같은 옵션 값)으로 바꿔 **1번만** 다시 실행한다. 또 실패하면 `message`를 그대로 알린다. |
-| `STOP_RETRY:` 이고 `[추천]`이 없다 | 다시 실행하지 않는다. `message`를 그대로 알린다. |
+| `STOP_RETRY:` 이고 `message`에 `[후보]`가 있다 | 다시 실행하지 않는다. `[후보]`를 보여 주고 사용자가 고른 값으로 1번 실행한다. |
+| `STOP_RETRY:` 이고 `[추천]`, `[후보]`가 없다 | 다시 실행하지 않는다. `message`를 그대로 알린다. |
 | `ERROR:` | 다시 실행하지 않는다. `message`를 그대로 알린다. |
 
 결과 JSON에 `recovered`가 있으면 (예: 같은 이름 파일이 있어 새 이름으로 저장) 그 문장을 사용자에게 그대로 알린다.

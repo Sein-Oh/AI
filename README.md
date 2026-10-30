@@ -17,7 +17,10 @@ AI_WORK/
 │   ├── WINDOWS_OFFLINE.md     # 폐쇄망 wheel 반입/설치 가이드 (모든 도구 공통)
 │   ├── history/               # 지난 설계·검토 기록 (1.0 설계, 1차 지침 준수 검토)
 │   ├── guide/                 # 사용자(사무직)용 사용 가이드 HTML: office-cli, ml-kit (파일 하나씩, 폐쇄망에서 브라우저로 열림)
-│   ├── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내
+│   ├── opencode/              # 사내 PC OpenCode 전역 AGENTS.md와 스킬 배치 안내, 실기 테스트 안내
+│   │   ├── 자동테스트/        # Gemma 종합 테스트 메시지 팩 (CLI-dev/agent_scenarios.yaml에서 생성)
+│   │   └── 실기테스트_샘플/   # 정답을 아는 샘플 데이터 (CLI-dev/ml-kit/tools/make_beta_samples.py)
+│   ├── remote-agent/          # 원격 에이전트용 지시문 (SKILL.md에서 build.py로 생성)
 │   └── test_logs/             # 사내 PC 실기 결과 (GitHub 웹으로 업로드, 프로젝트 마무리 때 이력에서 정리)
 ├── archive/                   # 보관 도구 (수정·테스트 대상 아님, archive/README.md)
 │   └── doc-classifier/        # 폴더 파일 목록화/분류 0.9.2 (다른 개발자 담당으로 보관)
@@ -38,11 +41,15 @@ AI_WORK/
 └── CLI-dev/                   # 개발·실기 테스트용 (필요할 때만 C:\CLI-dev로, C:\CLI와 나란히)
     ├── README.md              # 도구 목록 + 새 도구 추가 규칙 / ACI 공통 계약
     ├── run_all_tests.py / .bat   # Windows 통합 테스트 (옆 폴더 CLI의 도구를 시험)
+    ├── run_beta_check.py      # ml-kit 베타 기능 자동 점검 (정답을 아는 샘플)
+    ├── grade_opencode.py      # OpenCode 대화 내보내기 채점 + 메시지 팩 생성
+    ├── agent_scenarios.yaml   # Gemma 종합 테스트 요청과 채점 기준
+    ├── tests/                 # 채점기·메시지 팩·지시문 동기화 테스트
     ├── ml-kit/
     │   ├── README.md          # 상세 설명서
     │   ├── CHANGELOG.md       # 변경 이력 + 남은 할 일
     │   ├── requirements.txt
-    │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너)
+    │   ├── tools/             # run_win_tests.py (Windows 실기 테스트 러너), make_beta_samples.py (샘플 생성)
     │   └── tests/             # CLI 계약 + 회귀 테스트
     └── office-cli/
         ├── README.md / CHANGELOG.md / TEST_CHECKLIST.md / requirements.txt
@@ -61,9 +68,9 @@ python -m pytest -q              # 전체 도구 테스트
 
 ## 관리 방법
 
-1. **코드는 압축 파일 대신 평문 파일로 커밋** – diff/리뷰가 가능해야 합니다.
-2. **CLI 인터페이스(인자 + stdout 1줄 JSON)는 공개 API** – 바꾸면 `SKILL.md`, `README.md`, `CHANGELOG.md`를 같이 갱신.
+1. **코드는 압축 파일 대신 평문 파일로 커밋** - diff/리뷰가 가능해야 합니다.
+2. **CLI 인터페이스(인자 + stdout 1줄 JSON)는 공개 API** - 바꾸면 `SKILL.md`, `README.md`, `CHANGELOG.md`를 같이 갱신.
 3. **작업 1건 = 브랜치 1개 = PR 1개**, 리팩터링과 동작 변경은 분리.
 4. **모든 PR은 `python -m pytest` 통과가 조건.**
-5. **배포 = 도구 폴더 복사** – `CLI/<tool>/` 폴더를 폐쇄망 PC의 스킬 폴더로 복사.
+5. **배포 = 도구 폴더 복사** - `CLI/<tool>/` 폴더를 폐쇄망 PC의 `C:\CLI\<tool>`로 복사하고, OpenCode 스킬 폴더에는 `SKILL.md`만 복사 ([`docs/opencode/README.md`](docs/opencode/README.md)).
    ml-kit 예측만 배포할 때는 `ml_predict.py` + 학습된 `vX\` 폴더 2가지만 복사하면 됩니다.

@@ -23,7 +23,7 @@ Thumbs.db
 # Offline wheel bundles (prepared per environment, not versioned)
 wheels/
 
-# Tool runtime data (error logs, caches) – each tool folder
+# Tool runtime data (error logs, caches) - each tool folder
 CLI/*/data/
 CLI/*/cache/
 CLI/office-cli/config.json

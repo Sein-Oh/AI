@@ -3,7 +3,7 @@
 Excel, Word, PowerPoint, Outlook을 AI 에이전트(26B~30B 경량 LLM)가 명령 한 줄로 다루게 하는 CLI 도구입니다.
 PDF, HWP, Office 파일은 Office 없이 읽고, 캐시에 등록해 쪽·장절·번호 근거와 함께 검색합니다.
 
-- 에이전트용 요약: [`SKILL.md`](SKILL.md)
+- 에이전트용 요약: [`SKILL.md`](../../CLI/office-cli/SKILL.md)
 - 변경 이력과 남은 할 일: [`CHANGELOG.md`](CHANGELOG.md)
 - 1.0 설계 배경과 결정 기록: [`docs/history/office-cli_WORK_PLAN_1.0.md`](../../docs/history/office-cli_WORK_PLAN_1.0.md)
 
@@ -13,10 +13,10 @@ PDF, HWP, Office 파일은 Office 없이 읽고, 캐시에 등록해 쪽·장절
 CLI/office-cli/  실행에 필요한 파일만 (사내 PC C:\CLI\office-cli)
 ├── SKILL.md     에이전트용 스킬
 ├── excel.py     엑셀   read / info / write / replace / style / export / sheet / range / chart
-├── word.py      워드   read / info / write / replace / export
-├── ppt.py       PPT    read / info / write / replace / export / slide
+├── word.py      워드   read / info / outline / write / replace / comment / revisions / export
+├── ppt.py       PPT    read / info / write / notes / replace / export / slide
 ├── outlook.py   메일   list / search / read / current / folders / new / reply / forward
-├── reader.py    파일   read / index / search / list   (Office 불필요: PDF, HWP, HWPX, DOCX, PPTX, XLSX, CSV, TXT, MD)
+├── reader.py    파일   read / index / search / list / clear   (Office 불필요: PDF, HWP, HWPX, DOCX, PPTX, XLSX, CSV, TXT, MD)
 ├── office.py    공통   windows / focus / transfer / undo
 ├── _runtime.py  공통 런타임 (응답 계약, 경로, 입출력, 마크다운 해석)
 └── _office.py   Office COM 공통 (세션, 스냅샷, 색/테마)
@@ -40,6 +40,7 @@ python -m pip install -r CLI-dev/office-cli/requirements.txt
 - 종료 코드: 0 성공, 1 오류, 2 인자 오류, 130 중단.
 - `agent_directive`:
   - `VERIFIED:` 완료
+  - `UNVERIFIED:` 실행은 됐지만 결과를 확인하지 못함 (예: 검색하지 못한 부분 `not_searched`). 다시 실행하지 않고 `unverified`를 알림
   - `STOP_RETRY:` 입력이나 대상 문제. `[추천]`이 있으면 그 값으로 1회만 다시 시도
   - `STOP_RETRY:` + `[후보]`(`error_type: "ambiguous"`, `candidates` 목록): 후보가 둘 이상이라 도구가 고르지 않음. 사용자가 고른 값으로 다시 실행
   - `ERROR:` 내부 오류

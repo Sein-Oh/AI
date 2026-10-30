@@ -101,3 +101,16 @@ def test_judge_uses_completions_api(tmp_path, monkeypatch):
     m1 = next(r for r in rows if r["id"] == "M1")
     assert (m1["점수"], m1["채점 이유"]) == (4, "값은 맞지만 경고가 빠짐")
     assert seen["path"] == "/v1/completions" and seen["body"]["model"] == "LLM42" and "B 16.25" in seen["body"]["prompt"]
+
+
+def test_remote_agent_instructions_match_skill_files(tmp_path, monkeypatch):
+    """docs/remote-agent/<tool>_지시문.md는 SKILL.md에서 만든 것: SKILL.md를 고치면 build.py를 다시 실행."""
+    repo = os.path.dirname(os.path.dirname(HERE))
+    spec_ = importlib.util.spec_from_file_location("build", os.path.join(repo, "docs", "remote-agent", "build.py"))
+    build = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(build)
+    monkeypatch.setattr(build, "OUT", str(tmp_path))
+    for tool in ("ml-kit", "office-cli"):
+        with open(os.path.join(repo, "docs", "remote-agent", f"{tool}_지시문.md"), encoding="utf-8") as f, \
+                open(build.convert(tool), encoding="utf-8") as g:
+            assert f.read() == g.read(), f"python docs/remote-agent/build.py 를 실행하세요 ({tool})"
