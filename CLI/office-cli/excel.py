@@ -643,6 +643,7 @@ def cmd_replace(args) -> Dict[str, Any]:
     fmt = _format_spec(args)
     replaced: List[str] = []
     skipped_formulas: List[str] = []
+    written: List[Tuple[Any, int, int, Any, str]] = []        # (시트, 행, 열, 쓴 값, 주소): 다시 읽어 확인 (R1)
     with write_session(args, "replace") as t:
         sheets = [t.doc.Worksheets(i) for i in range(1, t.doc.Worksheets.Count + 1)] if args.all_sheets else [t.sheet(args.sheet)]
         with off.excel_batch(t.app):
@@ -668,12 +669,15 @@ def cmd_replace(args) -> Dict[str, Any]:
                         if isinstance(f, str) and f.startswith("="):
                             skipped_formulas.append(cell_ref)      # 수식은 보존, 서식만
                         elif new != s:
-                            cell.Value = xl_text(coerce(new) if not isinstance(v, str) else new)
+                            val = xl_text(coerce(new) if not isinstance(v, str) else new)
+                            cell.Value = val
+                            written.append((ws, r0 + i, c0 + j, val, cell_ref))
                         if fmt:
                             _apply_format(cell, fmt)
                         replaced.append(cell_ref)
                 if replaced:
                     t.set_focus(sheet=ws)
+        problems = [ref for ws, r, c, val, ref in written if not _same_cell(val, ws.Cells(r, c).Value)]
         resolved = t.resolved()
     result = {"target_resolved": resolved, "changed_cells": len(replaced), "cells": replaced[:30]}
     if skipped_formulas:
@@ -682,7 +686,9 @@ def cmd_replace(args) -> Dict[str, Any]:
         return rt.ok(TOOL, "replace", "일치하는 셀이 없습니다",
                      "VERIFIED: 일치하는 셀이 없습니다. 검색어를 임의로 바꿔 재시도하지 말고 사용자에게 알리세요.", **result)
     preview = f"{len(replaced)}개 셀 처리" + (f" (수식 셀 {len(skipped_formulas)}개는 내용 유지, 서식만 적용)" if skipped_formulas else "")
-    return rt.ok(TOOL, "replace", preview, **result)
+    if problems:
+        return rt.ok_unverified(TOOL, "replace", preview, [f"다시 읽은 값이 다른 칸 {len(problems)}개: {', '.join(problems[:5])}"], **result)
+    return rt.ok(TOOL, "replace", preview, "VERIFIED: 바꾼 칸을 다시 읽어 확인했습니다.", verified=True, **result)
 
 
 # ==============================================================================
@@ -841,11 +847,40 @@ def cmd_style(args) -> Dict[str, Any]:
                     fc = rng.FormatConditions.Add(Type=1, Operator=XL_OPERATOR[op], Formula1=f"={formula}" if is_num else formula)
                 fc.Interior.Color = color
                 applied["highlight"] = args.highlight
+        problems = _verify_style(ws, rng, fmt, theme, bool(args.highlight))
         t.set_focus(sheet=ws)
         info = range_info(rng)
         resolved = t.resolved()
-    return rt.ok(TOOL, "style", f"{info['sheet']}!{info['range']}에 서식 적용: {', '.join(map(str, applied))}",
+    preview = f"{info['sheet']}!{info['range']}에 서식 적용: {', '.join(map(str, applied))}"
+    if problems:
+        return rt.ok_unverified(TOOL, "style", preview, problems, target_resolved=resolved, applied=applied, **info)
+    return rt.ok(TOOL, "style", preview, "VERIFIED: 적용한 서식을 다시 읽어 확인했습니다.", verified=True,
                  target_resolved=resolved, applied=applied, **info)
+
+
+def _verify_style(ws: Any, rng: Any, fmt: Dict[str, Any], theme: Optional[Dict[str, Any]], highlight: bool) -> List[str]:
+    """R1: 범위에 준 서식(배경·글자색·굵게·기울임·크기·숫자 서식)과 테마 머리글 색, 조건부 강조를 다시 읽어 비교합니다."""
+    problems: List[str] = []
+    checks = [("bg", lambda: rng.Interior.Color), ("color", lambda: rng.Font.Color), ("bold", lambda: rng.Font.Bold),
+              ("italic", lambda: rng.Font.Italic), ("size", lambda: rng.Font.Size), ("number_format", lambda: rng.NumberFormat)]
+    try:
+        for key, read in checks:
+            if key in fmt:
+                got = read()
+                same = (float(got) == float(fmt[key])) if key in ("bg", "color", "size") and got is not None else bool(got) == fmt[key] \
+                    if key in ("bold", "italic") else got == fmt[key]
+                if not same:
+                    problems.append(f"서식 '{key}'이(가) {got!r} (준 값 {fmt[key]!r})")
+        if theme:
+            r0, c0, ncols = int(rng.Row), int(rng.Column), int(rng.Columns.Count)
+            got = ws.Range(ws.Cells(r0, c0), ws.Cells(r0, c0 + ncols - 1)).Interior.Color
+            if got is None or float(got) != float(off.parse_color(theme["header_bg"])):
+                problems.append(f"테마 머리글 배경색이 {got!r}")
+        if highlight and int(rng.FormatConditions.Count) < 1:
+            problems.append("조건부 강조가 없음")
+    except Exception as e:
+        problems.append(f"서식을 다시 읽지 못함: {type(e).__name__}")
+    return problems
 
 
 # ==============================================================================
@@ -981,7 +1016,13 @@ def cmd_sheet(args) -> Dict[str, Any]:
                 msg = f"시트 '{existing}'을(를) 삭제했습니다 (되돌리기: office.py undo)"
         names = [str(sheets(i).Name) for i in range(1, sheets.Count + 1)]
         resolved = t.resolved()
-    return rt.ok(TOOL, "sheet", msg, target_resolved=resolved, sheets=names)
+    # R1: 다시 읽은 시트 목록으로 결과 확인
+    want = {"add": (existing or args.name, True), "rename": (args.new_name, True), "delete": (existing, False),
+            "copy": (args.new_name or f"{existing} 복사", True), "select": (existing, True)}[args.action]
+    if (rt.find_name(want[0], names) is not None) != want[1]:
+        return rt.ok_unverified(TOOL, "sheet", msg, [f"다시 읽은 시트 목록에 '{want[0]}'이(가) " + ("없음" if want[1] else "남아 있음")],
+                                target_resolved=resolved, sheets=names)
+    return rt.ok(TOOL, "sheet", msg, "VERIFIED: 시트 목록을 다시 읽어 확인했습니다.", verified=True, target_resolved=resolved, sheets=names)
 
 
 def _same_cell(want: Any, got: Any) -> bool:
@@ -1133,6 +1174,9 @@ def cmd_range(args) -> Dict[str, Any]:
                         + ", ".join(f"{c}={_short(v)}" for c, v in filled[:5]) + (" ..." if len(filled) > 5 else ""),
                         "옮기지 않았습니다. 덮어쓸 칸을 사용자에게 보여 주고, 사용자가 덮어써도 된다고 하면 --overwrite를 붙여 "
                         "다시 실행하세요. 아니면 비어 있는 다른 --dest를 쓰세요.")
+            src_vals = off.range_to_matrix(rng.Value)
+            dr, dc = parse_cell(dcell.replace("$", "").split(":")[0])
+            dest_block = (dws, dr, dc, dr + len(src_vals) - 1, dc + len(src_vals[0]) - 1)
             if a == "copy":
                 rng.Copy(Destination=dest)
             else:
@@ -1142,11 +1186,43 @@ def cmd_range(args) -> Dict[str, Any]:
         elif a == "border":
             _apply_border(rng if rng is not None else ws.UsedRange, args.weight, box=args.box)
             detail = args.weight + (" (외곽만)" if args.box else "")
+        # R1: 결과를 다시 읽어 확인 (autofit은 Excel이 정하는 너비라 비교할 값이 없음)
+        problems: List[str] = []
+        try:
+            if a in ("copy", "move"):
+                d, r1_, c1_, r2_, c2_ = dest_block
+                got = off.range_to_matrix(d.Range(d.Cells(r1_, c1_), d.Cells(r2_, c2_)).Value)
+                bad = [addr(r1_ + i, c1_ + j) for i, row in enumerate(src_vals) for j, v in enumerate(row)
+                       if not _same_cell(v, got[i][j] if i < len(got) and j < len(got[i]) else None)]
+                if bad:
+                    problems.append(f"대상에서 원본과 다른 칸 {len(bad)}개: {', '.join(bad[:5])}")
+            elif a == "clear" and args.type != "formats":
+                left = _filled_cells(ws, rng)
+                if left:
+                    problems.append(f"지운 범위에 값이 남은 칸 {len(left)}개: {', '.join(c for c, _ in left[:5])}")
+            elif a in ("merge", "unmerge") and bool(rng.MergeCells) != (a == "merge"):
+                problems.append(f"병합 상태가 {rng.MergeCells!r}")
+            elif a in ("width", "height"):
+                got = rng.ColumnWidth if a == "width" else rng.RowHeight
+                if got is None or abs(float(got) - float(args.size)) > 0.5:
+                    problems.append(f"{'너비' if a == 'width' else '높이'}가 {got!r} (준 값 {args.size})")
+            elif a in ("hide", "unhide"):
+                tgt = rng.EntireRow if _axis(args) == "rows" else rng.EntireColumn
+                if bool(tgt.Hidden) != (a == "hide"):
+                    problems.append(f"숨김 상태가 {tgt.Hidden!r}")
+            elif a in ("freeze", "unfreeze") and bool(t.app.ActiveWindow.FreezePanes) != (a == "freeze"):
+                problems.append("틀 고정 상태가 다름")
+        except Exception as e:
+            problems.append(f"결과를 다시 읽지 못함: {type(e).__name__}")
         t.set_focus(sheet=ws)
         info = range_info(rng) if rng is not None else {"sheet": str(ws.Name)}
         resolved = t.resolved()
     where = f"{info['sheet']}!{info.get('range', '')}".rstrip("!")
-    return rt.ok(TOOL, "range", f"{a} 완료: {where} {detail}".strip(), target_resolved=resolved, **info)
+    preview = f"{a} 완료: {where} {detail}".strip()
+    if problems:
+        return rt.ok_unverified(TOOL, "range", preview, problems, target_resolved=resolved, **info)
+    return rt.ok(TOOL, "range", preview, "VERIFIED: 결과를 다시 읽어 확인했습니다." if a != "autofit" else "VERIFIED: 열 너비 자동 맞춤을 적용했습니다.",
+                 verified=a != "autofit", target_resolved=resolved, **info)
 
 
 # ==============================================================================
@@ -1207,11 +1283,15 @@ def cmd_chart(args) -> Dict[str, Any]:
                 msg = f"시트 '{ws.Name}'의 차트 {n}개를 삭제했습니다"
             else:
                 ws, obj = find_chart(t, args.name, args.sheet)
-                msg = f"차트 '{obj.Name}'을(를) 삭제했습니다"
+                gone = str(obj.Name)
+                msg = f"차트 '{gone}'을(를) 삭제했습니다"
                 obj.Delete()
+            left = [str(o.Name) for o in _chart_objects(ws)]            # R1: 차트 목록을 다시 읽음
             t.set_focus(sheet=ws)
             resolved = t.resolved()
-        return rt.ok(TOOL, "chart", msg, target_resolved=resolved)
+        if (args.all and left) or (not args.all and gone in left):
+            return rt.ok_unverified(TOOL, "chart", msg, [f"다시 읽은 차트 목록에 남아 있음: {', '.join(left[:5])}"], target_resolved=resolved)
+        return rt.ok(TOOL, "chart", msg, "VERIFIED: 차트 목록을 다시 읽어 확인했습니다.", verified=True, target_resolved=resolved)
 
     # create
     theme = off.get_theme(args.theme)
@@ -1279,16 +1359,25 @@ def cmd_chart(args) -> Dict[str, Any]:
                 k += 1
             obj.Name = final
         chart_name = str(obj.Name)
+        problems = []                                                   # R1: 차트 목록과 제목을 다시 읽음
+        names = [str(o.Name) for o in _chart_objects(ws)]
+        if chart_name not in names:
+            problems.append(f"다시 읽은 차트 목록에 '{chart_name}'이(가) 없음")
+        elif args.title and _chart_title(obj) != args.title:
+            problems.append(f"차트 제목이 '{_chart_title(obj)}' (준 제목 '{args.title}')")
         t.set_focus(sheet=ws)
         info = range_info(rng)
         resolved = t.resolved()
         tgt = t.path if t.source in ("file", "new") else args.target
-    return rt.ok(TOOL, "chart", f"차트 '{chart_name}' 생성 ({chart_type}, 데이터 {info['sheet']}!{info['range']})",
-                 "VERIFIED: 차트 생성 완료. 워드/PPT로 옮기려면 next_commands를 그대로 실행하세요.",
-                 target_resolved=resolved, chart_name=chart_name, chart_type=chart_type, data_range=info,
-                 next_commands=[rt.next_command("office.py", ["transfer", "--from", "excel", "--from-target", tgt,
-                                                              "--chart", chart_name, "--to", "word,ppt"],
-                                                "이 차트를 열린 워드와 PPT에 그림으로 넣기 (한쪽만이면 --to word 또는 --to ppt)")])
+    preview = f"차트 '{chart_name}' 생성 ({chart_type}, 데이터 {info['sheet']}!{info['range']})"
+    fields = dict(target_resolved=resolved, chart_name=chart_name, chart_type=chart_type, data_range=info,
+                  next_commands=[rt.next_command("office.py", ["transfer", "--from", "excel", "--from-target", tgt,
+                                                               "--chart", chart_name, "--to", "word,ppt"],
+                                                 "이 차트를 열린 워드와 PPT에 그림으로 넣기 (한쪽만이면 --to word 또는 --to ppt)")])
+    if problems:
+        return rt.ok_unverified(TOOL, "chart", preview, problems, **fields)
+    return rt.ok(TOOL, "chart", preview, "VERIFIED: 차트를 다시 읽어 확인했습니다. 워드/PPT로 옮기려면 next_commands를 그대로 실행하세요.",
+                 verified=True, **fields)
 
 
 # ==============================================================================

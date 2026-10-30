@@ -440,3 +440,10 @@ def test_argument_errors_from_real_logs_get_a_hint(argv, want):
     assert proc.returncode == 2 and len(out) == 1
     payload = json.loads(out[0])
     assert want in payload["message"] and "[추천]" in payload["agent_directive"]
+
+
+def test_ok_does_not_add_verified_for_the_caller():
+    """R1: ok()는 VERIFIED:를 대신 붙이지 않음. 확인하지 못한 결과는 ok_unverified."""
+    assert rt.ok("t", "c", "p")["agent_directive"].startswith("VERIFIED:") and rt.ok("t", "c", "p")["verified"] is True
+    with pytest.raises(ValueError):
+        rt.ok("t", "c", "p", "완료")

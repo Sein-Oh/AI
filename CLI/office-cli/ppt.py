@@ -746,7 +746,17 @@ def cmd_replace(args) -> Dict[str, Any]:
                             changed = True
             if changed:
                 slides_changed.append(n)
+        # R1: 바꾼 슬라이드를 다시 읽어 확인 (바꾼 글이 찾는 글을 품지 않으면 찾는 글이 남지 않아야 함)
+        problems = []
         if slides_changed:
+            text = "\n".join(slide_units(prs.Slides(n), n)["title"] + "\n" + slide_units(prs.Slides(n), n)["text"] for n in slides_changed)
+            for find in counts:
+                rep_text = mapping[find]
+                hay, needle = (text, find) if args.match_case else (text.lower(), find.lower())
+                if needle not in rep_text.lower() and needle in hay:
+                    problems.append(f"'{find}'이(가) 슬라이드에 남아 있음")
+                elif rep_text and (rep_text if args.match_case else rep_text.lower()) not in hay:
+                    problems.append(f"'{rep_text}'을(를) 다시 읽은 슬라이드에서 찾지 못함")
             t.set_focus(slide=slides_changed[0])
         resolved = t.resolved()
     total = sum(counts.values())
@@ -754,7 +764,10 @@ def cmd_replace(args) -> Dict[str, Any]:
     if not total:
         return rt.ok(TOOL, "replace", "일치하는 문구가 없습니다",
                      "VERIFIED: 일치하는 문구가 없습니다. 검색어를 임의로 바꿔 재시도하지 말고 사용자에게 알리세요.", **result)
-    return rt.ok(TOOL, "replace", f"{total}곳 처리 (슬라이드 {', '.join(map(str, slides_changed))})", **result)
+    preview = f"{total}곳 처리 (슬라이드 {', '.join(map(str, slides_changed))})"
+    if problems:
+        return rt.ok_unverified(TOOL, "replace", preview, problems, **result)
+    return rt.ok(TOOL, "replace", preview, "VERIFIED: 바꾼 슬라이드를 다시 읽어 확인했습니다.", verified=True, **result)
 
 
 # ==============================================================================
@@ -928,6 +941,7 @@ def cmd_slide(args) -> Dict[str, Any]:
         elif a == "move":
             n = need(args.slide)
             dest = need(args.to, "--to")
+            moved_title = slide_units(prs.Slides(n), n)["title"]
             prs.Slides(n).MoveTo(dest)
             focus, msg = dest, f"슬라이드 {n}을(를) {dest}번 위치로 옮겼습니다"
         elif a == "delete":
@@ -950,7 +964,18 @@ def cmd_slide(args) -> Dict[str, Any]:
         t.set_focus(slide=focus)
         resolved = t.resolved()
         total = int(prs.Slides.Count)
-    return rt.ok(TOOL, "slide", msg, target_resolved=resolved, slides_total=total)
+        # R1: 슬라이드 수(추가·복제 +1, 삭제 -1), 옮긴 슬라이드 제목, 비운 슬라이드의 요소 수를 다시 읽어 확인
+        want = {"add": count + 1, "duplicate": count + 1, "delete": count - 1}.get(a, count)
+        problems = [] if total == want else [f"슬라이드가 {total}장 (기대 {want}장)"]
+        if a == "move" and moved_title and slide_units(prs.Slides(dest), dest)["title"] != moved_title:
+            problems.append(f"{dest}번 슬라이드 제목이 옮긴 슬라이드('{moved_title[:20]}')와 다름")
+        if a == "clear":
+            left = sum(int(prs.Slides(n).Shapes.Count) for n in numbers)
+            if left:
+                problems.append(f"비운 슬라이드에 요소 {left}개가 남음")
+    if problems:
+        return rt.ok_unverified(TOOL, "slide", msg, problems, target_resolved=resolved, slides_total=total)
+    return rt.ok(TOOL, "slide", msg, "VERIFIED: 슬라이드를 다시 읽어 확인했습니다.", target_resolved=resolved, slides_total=total)
 
 
 # ==============================================================================

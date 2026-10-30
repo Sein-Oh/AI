@@ -2,6 +2,20 @@
 
 형식: 버전별 `구조 / 기능 / 수정` + 하단 `남은 할 일`. 1.0.0부터 관리합니다.
 
+## [1.4.8] - 2026-10-30
+
+### 변경 (R1 사후 확인 마무리)
+- 쓰기 명령은 모두 결과를 다시 읽어 확인한 경우에만 `VERIFIED:` + `verified: true`, 아니면 `UNVERIFIED:` + `unverified`.
+  - `excel replace`: 바꾼 칸의 값. `excel style`: 준 서식(배경·글자색·굵게·기울임·크기·숫자 서식), 테마 머리글 색, 조건부 강조.
+  - `excel sheet`: 시트 목록 (추가·이름 변경·복사·삭제·선택). `excel range`: 복사·이동한 대상 값, 지운 칸, 병합 상태, 너비·높이, 숨김, 틀 고정 (자동 맞춤은 비교할 값이 없음).
+  - `excel chart`: 만든 차트가 목록에 있고 제목이 같은지, 지운 차트가 목록에 없는지.
+  - `word replace`: 문서를 다시 찾아 찾는 글이 남지 않았는지 (바꾼 글이 찾는 글을 품으면 바꾼 글이 그만큼 있는지). `ppt replace`: 바꾼 슬라이드를 다시 읽어 같은 확인.
+  - `ppt slide`: 슬라이드 수, 옮긴 슬라이드 제목, 비운 슬라이드의 요소 수.
+  - `transfer` 차트: 넣기 전후 그림 수 (붙여넣기 방식 relay는 `UNVERIFIED`).
+  - `office.py undo`: 되돌린 원본 파일이 스냅샷과 같은지.
+  - `outlook --send`: 실제 발송은 Outlook이 처리하므로 `UNVERIFIED`(보낸 편지함 확인 안내). 작성 창은 받는 사람·제목을 다시 읽어 `VERIFIED`.
+- `_runtime.ok()`는 더 이상 `VERIFIED:`를 대신 붙이지 않음 (다른 문구가 오면 내부 오류). 읽기·조회 명령은 읽은 결과가 곧 확인이라 기본 문구 유지.
+
 ## [1.4.7] - 2026-10-30
 
 ### 변경 (R1 사후 확인)
@@ -404,7 +418,6 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 
 ### 저장소 지침 반영 (AGENTS.md, 2026-10-28)
 상세 근거: `docs/history/COMPLIANCE_REVIEW_2026-10-28.md`. 공통 키·함수는 `CLI-dev/README.md` "공통 런타임 구현 규칙"(R1~R9)대로 구현. 우선순위 순.
-- [ ] R1 사후 확인 나머지: excel replace/style/sheet/range/chart, word/ppt replace, transfer 차트(그림), outlook. 그 뒤 `_runtime.ok()`의 `VERIFIED:` 강제 제거 (write는 1.4.6, export와 transfer 표는 1.4.7)
 - [ ] `recovered` 나머지: transfer 방식 대체, 오래된 스냅샷 정리 (잠금·기존 파일 새 이름 저장, 낡은 캐시는 1.4.0)
 - [ ] `require_lib()`: openpyxl(excel.py:215, reader.py:382), python-docx(reader.py:291, office.py:465), python-pptx(reader.py:329,346) 실패 시 STOP_RETRY + `python -m pip install ...` (회귀 테스트)
 - [ ] `remove_tree` 추가, `os.remove`(_office.py:314, _runtime.py:311, word.py:593)에 적용. (1.4.0: undo 복원 복사는 `retry_fs`, retry_fs는 일시적 오류만 재시도 완료)

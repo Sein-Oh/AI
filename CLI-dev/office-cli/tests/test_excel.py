@@ -266,7 +266,7 @@ def test_replace_keeps_formula_cells(xl, capsys):
     assert ws.formulas[(1, 2)] == "=1+2" and ws.values[(1, 3)] == 9
     assert out["formula_cells_kept"] == ["Sheet1!B1"]
     code, out = run(capsys, "replace", "--map", '{"초안": "최종"}')
-    assert ws.values[(1, 1)] == "최종 보고"
+    assert ws.values[(1, 1)] == "최종 보고" and out["agent_directive"].startswith("VERIFIED:")     # 다시 읽어 확인 (R1)
 
 
 def test_replace_no_match_is_ok_with_stop_hint(xl, capsys):
@@ -289,13 +289,14 @@ def test_style_theme_zebra_and_highlight(xl, capsys):
     assert any(k[0].startswith("$A$3:$B$3,$A$5:$B$5") for k in ws.styles)
     fc = ws.fcs["$A$1:$B$9"].items[0]
     assert fc.kw["Type"] == 1 and fc.kw["Operator"] == 7
+    assert out["agent_directive"].startswith("VERIFIED:") and out["verified"] is True        # 다시 읽어 확인 (R1)
 
 
 def test_style_unknown_theme_and_color(xl, capsys):
     code, out = run(capsys, "style", "--theme", "nvy")
     assert code == 1 and "[추천] navy" in out["message"]
     code, out = run(capsys, "style", "--bg", "노랑")
-    assert code == 0
+    assert code == 0 and out["agent_directive"].startswith("VERIFIED:")
 
 
 def test_range_move_uses_cut_and_merge_rules(xl, capsys):
@@ -317,7 +318,7 @@ def test_sheet_actions(xl, capsys):
     code, out = run(capsys, "sheet", "--action", "rename", "--name", "요약", "--new-name", "Sheet1")
     assert code == 1
     code, out = run(capsys, "sheet", "--action", "delete", "--name", "요약")
-    assert code == 0 and out["sheets"] == ["Sheet1"]
+    assert code == 0 and out["sheets"] == ["Sheet1"] and out["agent_directive"].startswith("VERIFIED:")   # 목록 다시 읽음 (R1)
     code, out = run(capsys, "sheet", "--action", "delete", "--name", "Sheet1")
     assert code == 1 and "마지막" in out["message"]
 
@@ -336,6 +337,7 @@ def test_chart_numeric_x_becomes_scatter_and_offers_transfer(xl, capsys):
         ws.set(r, 2, 0.5)
     code, out = run(capsys, "chart", "--range", "A1:B11", "--type", "line", "--title", "사인 2주기")
     assert code == 0 and out["chart_type"] == "scatter_lines" and out["chart_name"] == "사인 2주기"
+    assert out["agent_directive"].startswith("VERIFIED:")                 # 차트 목록·제목을 다시 읽음 (R1)
     cmd = out["next_commands"][0]["command"]
     assert "transfer" in cmd and '"사인 2주기"' in cmd
     code, out = run(capsys, "chart", "--range", "A1:B11", "--title", "사인 2주기")
@@ -461,6 +463,7 @@ def test_merge_with_several_values_needs_overwrite(xl, capsys):
     assert not [x for x in ws.log if x[0] == "Merge"]
     code, out = run(capsys, "range", "--action", "merge", "--range", "A1:C1", "--overwrite")
     assert code == 0 and ("Merge", "$A$1:$C$1", False) in ws.log
+    assert out["agent_directive"].startswith("VERIFIED:")                 # 병합 상태를 다시 읽음 (R1)
 
 
 def test_copy_over_existing_values_needs_overwrite(xl, capsys):
@@ -473,6 +476,7 @@ def test_copy_over_existing_values_needs_overwrite(xl, capsys):
     assert not [x for x in src.log if x[0] == "Copy"]
     code, out = run(capsys, "range", "--action", "copy", "--range", "A1:B2", "--dest", "요약!D1")
     assert code == 0 and ("Copy", "$A$1:$B$2", "$D$1") in src.log
+    assert out["agent_directive"].startswith("VERIFIED:") and dst.values[(1, 4)] == "원본"     # 대상을 다시 읽음 (R1)
 
 
 def test_hide_row_address_hides_rows_not_columns(xl, capsys):
