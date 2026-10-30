@@ -370,6 +370,10 @@ train/predict 완성 단계. CLI 인자와 기존 JSON 키는 모두 유지(추�
 - 이전 이력 문서(ROADMAP 등)를 정리하고 이 CHANGELOG로 일원화. `requirements-dev.txt`, `install_offline.bat` 삭제.
 
 ## 남은 할 일
+- [ ] `ml_export.py --format html` (검토 완료, 2.9.0 실기 테스트 후 결정): 같은 최적화·격자를 브라우저 한 파일로.
+  엑셀 행 한도가 없어 입력이 많을 때 격자를 더 촘촘하게(직선형 모델은 식 그대로), 슬라이더·반응 곡선·운전 구간(반대 찾기),
+  CSV 일괄계산과 내려받기. 회사에서 HTML 배포·실행은 문제없음 확인 (사용자, 2026-10-30).
+- [ ] 성능예측표 엑셀의 회사 PC 실기 확인: 엑셀 재계산 VERIFIED, 문서 보안 아래 열기 (`docs/opencode/실기테스트_2026-10-30.md` F2, F11)
 - [ ] 집 PC(Office 2007)에서 `tools/run_win_tests.py` M6/M7(보고서 열기·잠금)을 새 보고서로 재확인
 - [ ] `-x` 생략 시 피처 자동 선택 (ID/일련번호 배제 규칙)
 - [ ] 무거운 import 지연 로딩 (`--history` 응답 속도)
