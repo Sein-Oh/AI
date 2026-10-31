@@ -49,7 +49,7 @@
 - `run_all_tests.py --auto`: pytest 통과, UNVERIFIED 결과 0건, ENV-SKIP은 D1·D4 (PDF 추가 기능 없음, 오류 아님)
 - 수정 후 실제 Office로 다시 통과: M6·M7 (보고서가 Word 2007에서 열림), M10 (2만 행 예측 900초 초과 -> 40.7초), A3 (닫힌 Word 파일 쓰기)
 - 2.9.10으로 전체 재실행: pytest 516 passed·4 skipped, ml-kit 실기 14/14, office-cli 실기 PASS 69·ENV-SKIP 2, UNVERIFIED 0건
-- 눈 확인: V1~V7, V9 통과, V10은 `찾기`와 스크롤 미확인 (`docs/test_logs/눈확인_집PC_20261031.md`)
+- 눈 확인: V1~V7, V9~V10 통과 (`docs/test_logs/눈확인_집PC_20261031.md`)
 
 ## 4. 남은 일
 - 집 PC·회사 PC 실기 결과 분석과 수정
