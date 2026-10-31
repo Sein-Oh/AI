@@ -1,0 +1,942 @@
+# CLI 통합 테스트 결과 (생성 2026-10-31 09:27:28)
+# 이 파일 전체를 그대로 Claude에게 전달하세요. 편집하지 마세요.
+# 단계별 요약은 파일 맨 끝 <요약>에 있습니다.
+
+<환경 진단>
+OS: Windows-11-10.0.26200-SP0 (10.0.26200)
+Python: 3.13.13 (C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\python.exe)
+인코딩: 파일시스템 utf-8, 기본 cp949
+CLI 폴더: C:\CLI (도구: ml-kit, office-cli), 테스트 폴더: C:\CLI-dev
+
+[라이브러리 버전 / import]
+  numpy 2.5.2 - import 정상
+  pandas 3.0.5 - import 정상
+  scikit-learn 1.9.0 - import 정상
+  scipy 1.18.1 - import 정상
+  joblib 1.6.0 - import 정상
+  openpyxl 3.1.5 - import 정상
+  python-docx 1.2.0 - import 정상
+  python-pptx 1.0.2 - import 정상
+  matplotlib 3.11.1 - import 정상
+  pymupdf 1.28.2 - import 정상
+  olefile 0.47 - import 정상
+  pywin32 312 - import 정상
+  pytest 9.1.1 - import 정상
+  도구 ml-kit 2.9.8
+  도구 office-cli 1.4.8
+
+[문서 보안(DRM) 영향 점검]
+python-docx 기본 템플릿 C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\site-packages\docx\templates\default.docx: 크기 38116바이트, zip 형식=True, 앞 16바이트=50 4b 03 04 14 00 00 00 08 00 44 b8 28 4e 23 a0 (정상: 38116바이트, zip=True)
+python-docx 폴더 템플릿 default-docx-template 있음=True
+docx.Document(): 스타일 164개 (정상 164), Caption 있음=True, 본문 단락 0개 (정상 0), 앞 단락=[]
+python-pptx 기본 템플릿 C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\site-packages\pptx\templates\default.pptx: 크기 34030바이트, zip 형식=True, 앞 16바이트=50 4b 03 04 14 00 06 00 08 00 00 00 21 00 44 55 (정상: 34030바이트, zip=True, 50 4b 03 04로 시작)
+pptx.Presentation(): 정상 (레이아웃 11개)
+새로 쓴 진단.xlsx: 크기 4836바이트, zip 형식=True, 앞 16바이트=50 4b 03 04 14 00 00 00 08 00 70 4b 5f 5d 46 c7
+새로 쓴 진단.docx: 크기 36591바이트, zip 형식=True, 앞 16바이트=50 4b 03 04 14 00 00 00 08 00 70 4b 5f 5d ad 52
+새로 쓴 진단.txt: 크기 6바이트 (정상 6)
+새로 쓴 xlsx 다시 열기: 정상
+Office: ClickToRun 정보 없음 (MSI 설치이거나 Office 없음)
+보안/DRM으로 보이는 프로세스 (이름에 drm, fasoo, softcamp, markany, secu, guard 등): ['Secure System', 'SecurityHealthService.exe', 'SecurityHealthSystray.exe']
+설치된 패키지 368개: agent-detector==2.0.0, aiofile==3.12.3, aiofiles==24.1.0, aiohappyeyeballs==2.7.1, aiohttp==3.14.3, aiosignal==1.4.0, aiosqlite==0.21.0, altair==6.2.2, altgraph==0.17.5, annotated-doc==0.0.5, annotated-types==0.8.0, ansicon==1.89.0, anthropic==1.12.1, anyio==4.14.2, appdirs==1.4.4, APScheduler==3.11.3, art==6.5, asyncer==0.0.18, attrs==26.1.0, audioop-lts==0.2.2, Authlib==1.7.2, backoff==2.2.1, bcrypt==5.0.0, beartype==0.22.9, beautifulsoup4==4.15.0, bidict==0.24.1, blessed==1.48.0, blinker==1.9.0, build==1.6.1, cachetools==7.1.7, caio==0.12.2, cel-python==0.5.0, certifi==2026.7.22, cffi==2.1.1, chainlit==2.12.0, charset-normalizer==3.5.1, chevron==0.14.0, chromadb==1.1.1, click==8.4.2, cloudpickle==3.1.2, cobble==0.1.4, colorama==0.4.6, comtypes==1.4.16, contourpy==1.4.0, crewai==1.15.21, crewai-cli==1.15.21, crewai-core==1.15.21, cryptography==50.0.0, cuid==0.4, cycler==0.12.1, cyclopts==4.23.2, dataclasses-json==0.6.7, Deprecated==1.3.1, deprecation==2.1.0, detect-installer==0.2.1, discord.py==2.7.1, distro==1.9.0, dnspython==2.8.0, docstring_parser==0.18.0, durationpy==0.11, dxcam==0.3.0, email-validator==2.3.0, et_xmlfile==2.0.0, exceptiongroup==1.3.1, fastapi==0.141.1, fastapi-cli==0.0.32, fastapi-cloud-cli==0.26.0, fastar==0.12.0, fastmcp==3.4.7, fastmcp-slim==3.4.7, filelock==3.32.7, filetype==1.2.0, flatbuffers==25.12.19, fonttools==4.66.1, formulaic==1.2.2, frozenlist==1.8.0, fsspec==2026.7.0, fuzzywuzzy==0.18.0, google-ai-generativelanguage==0.6.15, google-api-core==2.33.0, google-api-python-client==2.201.0, google-auth==2.61.0, google-auth-httplib2==0.4.4, google-generativeai==0.8.6, google-re2==1.1.20251105, googleapis-common-protos==1.75.0, greenlet==3.5.5, griffelib==2.2.0, grpcio==1.83.0, grpcio-status==1.71.2, h11==0.16.0, hf-xet==1.6.0, httpcore==1.0.9, httpcore2==2.12.0, httplib2==0.32.0, httptools==0.8.0, httpx==0.28.1, httpx-sse==0.4.3, httpx2==2.12.0, huggingface_hub==1.31.0, idna==3.19, importlib_resources==7.1.0, inflection==0.5.1, iniconfig==2.3.1, instructor==1.17.0, interface_meta==2.0.1, itsdangerous==2.2.0, jaraco.classes==3.4.0, jaraco.context==6.1.2, jaraco.functools==4.6.0, Jinja2==3.1.6, jinxed==2.1.0, jiter==0.14.0, jmespath==1.1.0, joblib==1.6.0, joserfc==1.7.4, json_repair==0.60.1, json5==0.10.0, jsonpatch==1.33, jsonpointer==3.1.1, jsonref==1.1.0, jsonschema==4.26.0, jsonschema-path==0.5.0, jsonschema-specifications==2025.9.1, keyboard==0.13.5, keyring==25.7.0, kiwisolver==1.5.1, kubernetes==36.0.3, lance-namespace==0.13.0, lance-namespace-urllib3-client==0.13.0, lancedb==0.30.0, langchain-core==1.6.0, langchain-mcp-adapters==0.3.2, langchain-openai==1.6.0, langchain-protocol==0.0.18, langgraph==1.2.11, langgraph-checkpoint==4.2.0, langgraph-prebuilt==1.1.0, langgraph-sdk==0.4.3, langsmith==0.11.1, lark==1.3.1, Lazify==0.4.0, Levenshtein==0.27.4, lightgbm==4.7.0, linkify-it-py==2.1.1, literalai==0.1.201, lxml==6.1.3, mammoth==1.13.0, Markdown==3.10.3, markdown-it-py==4.2.0, markdownify==1.2.3, MarkupSafe==3.0.3, marshmallow==3.26.2, matplotlib==3.11.1, mcp==1.28.1, mdit-py-plugins==0.6.1, mdurl==0.1.2, mmh3==5.3.0, more-itertools==11.1.0, mouse==0.7.1, multidict==6.7.1, mypy_extensions==1.1.0, narwhals==2.25.0, nest-asyncio==1.6.0, networkx==3.7, numpy==2.5.2, oauthlib==3.3.1, office-visual==0.1.0, olefile==0.47, onnxruntime==1.30.0, openai==2.54.0, openapi-pydantic==0.5.1, opencv-python==5.0.0.93, opendataloader-pdf==2.5.7, openpyxl==3.1.5, opentelemetry-api==1.44.0, opentelemetry-exporter-otlp-proto-common==1.44.0, opentelemetry-exporter-otlp-proto-grpc==1.44.0, opentelemetry-exporter-otlp-proto-http==1.44.0, opentelemetry-instrumentation==0.65b0, opentelemetry-instrumentation-agno==0.62.3, opentelemetry-instrumentation-alephalpha==0.62.3, opentelemetry-instrumentation-anthropic==0.62.3, opentelemetry-instrumentation-bedrock==0.62.3, opentelemetry-instrumentation-chromadb==0.62.3, opentelemetry-instrumentation-cohere==0.62.3, opentelemetry-instrumentation-crewai==0.62.3, opentelemetry-instrumentation-google-generativeai==0.62.3, opentelemetry-instrumentation-groq==0.62.3, opentelemetry-instrumentation-haystack==0.62.3, opentelemetry-instrumentation-lancedb==0.62.3, opentelemetry-instrumentation-langchain==0.62.3, opentelemetry-instrumentation-litellm==0.62.3, opentelemetry-instrumentation-llamaindex==0.62.3, opentelemetry-instrumentation-logging==0.65b0, opentelemetry-instrumentation-marqo==0.62.3, opentelemetry-instrumentation-mcp==0.62.3, opentelemetry-instrumentation-milvus==0.60.0, opentelemetry-instrumentation-mistralai==0.62.3, opentelemetry-instrumentation-ollama==0.62.3, opentelemetry-instrumentation-openai==0.62.3, opentelemetry-instrumentation-openai-agents==0.62.3, opentelemetry-instrumentation-pinecone==0.60.0, opentelemetry-instrumentation-qdrant==0.62.3, opentelemetry-instrumentation-redis==0.65b0, opentelemetry-instrumentation-replicate==0.62.3, opentelemetry-instrumentation-requests==0.65b0, opentelemetry-instrumentation-sagemaker==0.62.3, opentelemetry-instrumentation-sqlalchemy==0.65b0, opentelemetry-instrumentation-threading==0.65b0, opentelemetry-instrumentation-together==0.62.3, opentelemetry-instrumentation-transformers==0.62.3, opentelemetry-instrumentation-urllib3==0.65b0, opentelemetry-instrumentation-vertexai==0.62.3, opentelemetry-instrumentation-voyageai==0.62.3, opentelemetry-instrumentation-watsonx==0.62.3, opentelemetry-instrumentation-weaviate==0.62.3, opentelemetry-instrumentation-writer==0.62.3, opentelemetry-proto==1.44.0, opentelemetry-sdk==1.44.0, opentelemetry-semantic-conventions==0.65b0, opentelemetry-semantic-conventions-ai==0.5.1, opentelemetry-util-http==0.65b0, orjson==3.12.0, ormsgpack==1.12.2, overrides==7.7.0, packaging==26.3, pandas==3.0.5, pathable==0.6.0, patsy==1.0.3, pdfminer.six==20260107, pdfplumber==0.11.10, pefile==2024.8.26, pendulum==3.2.0, pillow==12.3.0, pip==26.2.1, platformdirs==4.11.3, playwright==1.62.0, pluggy==1.7.0, portalocker==2.7.0, posthog==5.4.0, prompt_toolkit==3.0.53, propcache==0.5.2, proto-plus==1.28.2, protobuf==5.29.6, psutil==7.2.2, py-key-value-aio==0.4.5, py-spy==0.4.2, pyarrow==25.0.1, pyasn1==0.6.4, pyasn1_modules==0.4.2, pybase64==1.5.0, pycparser==3.0, pydantic==2.12.5, pydantic_core==2.41.5, pydantic-extra-types==2.11.1, pydantic-settings==2.15.0, pydeck==0.9.3, pyee==13.0.1, Pygments==2.21.0, pyinstaller==6.22.3, pyinstaller-hooks-contrib==2026.8, PyJWT==2.13.0, pymupdf==1.28.2, pymupdf-layout==1.28.2, pymupdf4llm==1.28.2, pyparsing==3.3.3, pypdf==6.16.2, pypdfium2==5.13.0, pyperclip==1.11.0, PyPika==0.51.1, pyproject_hooks==1.3.3, PySide6==6.11.2, PySide6_Addons==6.11.2, PySide6_Essentials==6.11.2, pytest==9.1.1, python-dateutil==2.9.0.post0, python-docx==1.2.0, python-dotenv==1.2.3, python-engineio==4.13.5, python-Levenshtein==0.27.4, python-multipart==0.0.32, python-pptx==1.0.2, python-socketio==5.16.4, python-telegram-bot==22.8, pywa==4.5.0, pywin32==312, pywin32-ctypes==0.2.3, PyYAML==6.0.3, rank-bm25==0.2.2, RapidFuzz==3.14.5, referencing==0.37.0, regex==2026.1.15, requests==2.34.2, requests-oauthlib==2.0.0, requests-toolbelt==1.0.0, rich==14.3.4, rich-rst==2.1.0, rich-toolkit==0.20.6, rignore==0.8.1, rpds-py==2026.6.3, scikit-learn==1.9.0, scipy==1.18.1, seaborn==0.13.2, Send2Trash==2.1.0, sentry-sdk==2.71.0, setuptools==84.0.0, shellingham==1.5.4, shiboken6==6.11.2, simple-websocket==1.1.0, six==1.17.0, sniffio==1.3.1, soupsieve==2.9.2, sse-starlette==3.4.8, starlette==1.6.0, statsmodels==0.15.0, streamlit==1.62.0, syncer==2.0.3, tabulate==0.10.0, tavily-python==0.8.5, tenacity==9.1.4, textual==8.2.8, thefuzz==0.22.1, threadpoolctl==3.7.0, tiktoken==0.14.0, tokenizers==0.23.2, toml==0.10.2, tomli==2.0.2, tomli_w==1.1.0, tqdm==4.70.1, traceloop-sdk==0.62.3, truststore==0.10.4, typer==0.27.2, typing_extensions==4.16.0, typing-inspect==0.9.0, typing-inspection==0.4.4, tzdata==2026.3, tzlocal==5.4.4, uc-micro-py==2.0.0, uncalled-for==0.4.0, uritemplate==4.2.0, urllib3==2.7.0, uuid_utils==0.17.0, uuid7==0.1.0, uv==0.11.33, uvicorn==0.52.4, watchdog==6.0.0, watchfiles==1.2.0, wcwidth==0.8.2, websocket-client==1.9.2, websockets==16.1.1, windows-mcp==0.8.5, winrt-runtime==3.2.1, winrt-Windows.Foundation==3.2.1, winrt-Windows.Foundation.Collections==3.2.1, winrt-Windows.Globalization==3.2.1, winrt-Windows.Graphics.Imaging==3.2.1, winrt-Windows.Media.Ocr==3.2.1, winrt-Windows.Storage==3.2.1, winrt-Windows.Storage.Streams==3.2.1, wrapt==2.3.0, wsproto==1.3.2, xgboost==3.4.1, xlsxwriter==3.2.9, xlwings==0.37.0, xxhash==4.0.1, yarl==1.24.5, zstandard==0.25.0
+
+<pytest_ml-kit>
+cwd=C:\CLI-dev\ml-kit exit=0 976.7초
+................................s.............................ss........ [ 50%]
+...............................................s........................ [100%]
+140 passed, 4 skipped in 972.18s (0:16:12)
+
+<pytest_office-cli>
+cwd=C:\CLI-dev\office-cli exit=0 51.9초
+........................................................................ [ 19%]
+........................................................................ [ 38%]
+........................................................................ [ 58%]
+........................................................................ [ 77%]
+........................................................................ [ 97%]
+..........                                                               [100%]
+370 passed in 47.61s
+
+<ml-kit 실기 테스트 화면 출력>
+$ C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\python.exe tools\run_win_tests.py --label 집PC
+exit=0 1017.9초
+======================================================================
+ ml-kit Windows 테스트 / 테스트 폴더: C:\ml_test\ml 테스트
+======================================================================
+[준비] Excel로 테스트 데이터(xlsx, CP949 CSV) 생성
+
+[M1] 보고서형 xlsx 학습
+    $ python ml_train.py -f C:\ml_test\ml 테스트\공정 데이터.xlsx --header-row 3 --unit-row 4 -x 일시,라인,반응온도,소비전력,압축압력,촉매비율,수분함량 -y 생산효율 --desc 공정 효율 예측 (실기 테스트) --tag 베이스라인
+  => [PASS] M1 Excel이 만든 xlsx (제목/단위 행, 날짜 셀, 범주, 한글 경로+공백) - score=0.9785, types={'numeric': ['반응온도(°C)', '소비전력(kW)', '압축압력(bar)', '촉매비율(wt%)', '수분함량(%)'], 'categorical': ['라인'], 'datetime': {'일시': ['year', 'month', 'day', 'dayofweek', 'hour']}}
+
+[M2] 열린 xlsx 학습
+    $ python ml_train.py -f C:\ml_test\ml 테스트\공정 데이터.xlsx --header-row 3 --unit-row 4 -x 반응온도,소비전력,촉매비율,수분함량,라인 -y 생산효율 --tag 엑셀에 열린 상태
+  => [PASS] M2 입력 xlsx가 Excel에 열려 있어도 학습 + 설명 자동 상속 - version=v2, description='공정 효율 예측 (실기 테스트)'
+
+[M3] CP949 CSV
+    $ python ml_train.py -f C:\ml_test\ml 테스트\엑셀저장 CP949.csv -x 반응온도,소비전력,촉매비율,수분함량 -y 생산효율 --desc CP949 CSV 입력
+  => [PASS] M3 Excel이 저장한 CSV(CP949) 입력 - 파일 인코딩=cp949, score=0.8568
+
+[M4] 결과 CSV를 Excel로
+    $ python ml_predict.py -m C:\ml_test\ml 테스트\공정 데이터_ml_data\v1 -f C:\ml_test\ml 테스트\공정 데이터.xlsx --header-row 3 --unit-row 4
+  => [PASS] M4 xlsx 배치 예측 -> 결과 CSV를 Excel로 열면 한글 정상 - Excel이 읽은 머리글 일부=['일시', '라인', '반응온도(°C)'] ... ['map_생산효율(%)', 'map_diff_생산효율(%)', 'map_방식_생산효율(%)']
+
+[M5] 결과 CSV 잠금
+    $ python ml_predict.py -m C:\ml_test\ml 테스트\공정 데이터_ml_data\v1 -f C:\ml_test\ml 테스트\공정 데이터.xlsx --header-row 3 --unit-row 4 --out C:\ml_test\ml 테스트\공정 데이터_pred_20261031_094512.csv --overwrite
+  => [PASS] M5 결과 CSV가 Excel에 열려 있으면 새 이름으로 저장 - 요청=공정 데이터_pred_20261031_094512.csv, 실제=공정 데이터_pred_20261031_094521.csv
+
+[M6] 보고서를 Word로
+    $ python ml_report.py -d C:\ml_test\ml 테스트\공정 데이터_ml_data
+  => [ERROR] M6 (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', 'XML 파일 ML결과보고서_공정 데이터_v1.docx을(를) 처리하는 동안 Word에서 오류가 발생했습니다.\n지정되지 않은 오류입니다.\n\n위치:  부분: /word/document.xml, 줄: 2, 열: 2803', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 25582, -2146822186), None)
+
+[M7] 보고서 잠금
+  => [ERROR] M7 (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+
+[M8] next_commands 셸 실행
+    $ python ml_train.py -f C:\ml_test\ml 테스트\품질 등급.csv -x 반응온도,촉매비율,수분함량 -y 품질등급 --task classification --desc 등급 분류
+  => [PASS] M8 next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호) + needs_input 표시 - needs_input 표시 정확=True, 명령='--task classification -y "품질등급" -x "반응온도(°C),촉매비율(wt%),수분함량(%)" --eval "반응온도x촉매비율 = 반응온도(°C) * 촉매비율(wt%)" --tag "교차항_추가"', 결과={'cmd': ('ok', 'v2', 0, ''), 'powershell': ('ok', 'v3', 0, '')}
+
+[M9] 단독 배포
+    $ python ml_predict.py -m v1 -i 일시=2026-01-20 10:00,라인=B,반응온도=240,소비전력=65,압축압력=3,촉매비율=0.8,수분함량=20
+  => [PASS] M9 단독 배포 폴더(ml_predict.py + v1만)에서 예측 - 예측=[53.6924], 범위=[[52.0639, 55.3051]]
+
+[M10] 2만 행 성능
+    $ python ml_train.py -f C:\ml_test\ml 테스트\대용량 2만행.csv -x 반응온도,소비전력,압축압력,촉매비율,수분함량 -y 생산효율 --desc 2만 행 성능
+    $ python ml_predict.py -m C:\ml_test\ml 테스트\대용량 2만행_ml_data\v1 -f C:\ml_test\ml 테스트\대용량 2만행.csv
+  => [ERROR] M10 Command '['C:\\Users\\JooJoo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', 'C:\\CLI\\ml-kit\\ml_predict.py', '-m', 'C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1', '-f', 'C:\\ml_test\\ml 테스트\\대용량 2만행.csv']' timed out after 900 seconds
+
+[M11] 동시 학습 잠금
+    $ python ml_train.py -f C:\ml_test\ml 테스트\대용량 2만행.csv -x 반응온도,소비전력,압축압력,촉매비율,수분함량 -y 생산효율 --tag 동시B
+  => [PASS] M11 같은 데이터 동시 학습 -> 두 번째는 STOP_RETRY, 첫 번째는 완료 - B=error exit=1 msg='같은 데이터에 대한 다른 학습이 이미 실행 중입니다 (C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data). 동시에 실행할 수 없으니 ', A=ok v2
+
+[M12] 강제 종료 복구
+    $ python ml_train.py -f C:\ml_test\ml 테스트\대용량 2만행.csv -x 반응온도,소비전력,압축압력,촉매비율,수분함량 -y 생산효율 --tag 종료 후 재학습
+  => [PASS] M12 학습 중 강제 종료 -> 다음 학습이 잠금/임시 폴더 정리 후 정상 - 종료 직후 임시 폴더=['.tmp_v3'], 재학습=v3, 재학습 후 임시 폴더=[], 버전=['v1', 'v2', 'v3']
+
+[M13] 오류 계약
+    $ python ml_train.py -f C:\ml_test\ml 테스트\공정 데이터.xlsx --history
+    $ python ml_train.py -f C:\ml_test\ml 테스트\공정 데이터.xlsx -x 반응온두 -y 생산효율 --header-row 3 --unit-row 4
+    $ python ml_train.py --없는옵션
+  => [PASS] M13 이력 조회 / 오타 추천(exit 1) / 잘못된 옵션(exit 2)도 1줄 JSON - history=ok, 오타 exit=1, 옵션 exit=2, root=공정 데이터_ml_data
+
+[M14] 출력 계약
+  => [PASS] M14 모든 호출의 stdout 1줄 JSON / stderr 줄 단위 진행 로그 - 위반 없음
+
+======================================================================
+ 결과 요약: ERROR=3, PASS=11
+   [ERROR] M6 보고서를 Word로 com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', 'XML 파일 ML결과보고서_공정 데이터_v1.docx을(를) 처리하는 동안 Word에서 오류가 발생했습니다.\n지정되지 않은 오류입니다.\n\n위치:  부분: /word/document.xml, 줄: 2, 열: 2803', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 25582, -2146822186), None)
+   [ERROR] M7 보고서 잠금 com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+   [ERROR] M10 2만 행 성능 TimeoutExpired: Command '['C:\\Users\\JooJoo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', 'C:\\CLI\\ml-kit\\ml_predict.py', '-m', 'C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1', '-f', 'C:\\ml_test\\ml 테스트\\대용량 2만행.csv']' timed out after 900 seconds
+ 보고서: C:\ml_test\ml 테스트\report_20261031_100142.txt
+ AI 판독용 로그: C:\CLI-dev\ml-kit\tools\test_logs\testlog_집PC_20261031_094447.txt
+   (이 파일을 Claude에게 전달하거나 git add/commit/push 하세요)
+======================================================================
+
+<testlog_집PC_20261031_094447.txt>
+파일: C:\CLI-dev\ml-kit\tools\test_logs\testlog_집PC_20261031_094447.txt
+==============================================================================
+ml-kit 실기 테스트 로그 (AI 판독용)  라벨=집PC  생성=20261031_094447
+==============================================================================
+결과: ERROR=3, PASS=11
+
+[판정 표]
+  PASS  M1        6.1s  Excel이 만든 xlsx (제목/단위 행, 날짜 셀, 범주, 한글 경로+공백)
+  PASS  M2        7.3s  입력 xlsx가 Excel에 열려 있어도 학습 + 설명 자동 상속
+  PASS  M3        5.4s  Excel이 저장한 CSV(CP949) 입력
+  PASS  M4        6.9s  xlsx 배치 예측 -> 결과 CSV를 Excel로 열면 한글 정상
+  PASS  M5        7.2s  결과 CSV가 Excel에 열려 있으면 새 이름으로 저장
+  ERROR M6        6.8s  보고서를 Word로
+  ERROR M7        1.3s  보고서 잠금
+  PASS  M8       20.0s  next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호) + needs_input 표시
+  PASS  M9        3.4s  단독 배포 폴더(ml_predict.py + v1만)에서 예측
+  ERROR M10     912.1s  2만 행 성능
+  PASS  M11      10.9s  같은 데이터 동시 학습 -> 두 번째는 STOP_RETRY, 첫 번째는 완료
+  PASS  M12      16.8s  학습 중 강제 종료 -> 다음 학습이 잠금/임시 폴더 정리 후 정상
+  PASS  M13      10.0s  이력 조회 / 오타 추천(exit 1) / 잘못된 옵션(exit 2)도 1줄 JSON
+  PASS  M14       0.0s  모든 호출의 stdout 1줄 JSON / stderr 줄 단위 진행 로그
+
+[환경]
+  OS: Windows-11-10.0.26200-SP0 (10.0.26200)
+  Python: 3.13.13 (C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\python.exe)
+  패키지: numpy 2.5.2, pandas 3.0.5, scikit-learn 1.9.0, joblib 1.6.0, openpyxl 3.1.5, python-docx 1.2.0, matplotlib 3.11.1, pywin32 312
+  Office: Excel 12.0, Word 12.0
+  ml-kit: SKILL.md version 2.9.8, git ?, 커밋 안 된 변경 0개
+  인코딩: locale=utf-8, stdout=utf-8, Active code page: 65001
+  테스트 폴더: C:\ml_test\ml 테스트
+
+[실패 상세] 3건
+
+------------------------------------------------------------------------------
+[ERROR] M6 보고서를 Word로
+  통과 기준: 보고서 status=ok, Word로 열림, 표 5개 이상, 문서 첫 문단에 '보고서' 포함
+  관측 결과: com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', 'XML 파일 ML결과보고서_공정 데이터_v1.docx을(를) 처리하는 동안 Word에서 오류가 발생했습니다.\n지정되지 않은 오류입니다.\n\n위치:  부분: /word/document.xml, 줄: 2, 열: 2803', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 25582, -2146822186), None)
+  예외 traceback:
+    Traceback (most recent call last):
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 160, in run_test
+        fn()
+        ~~^^
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 347, in m6
+        doc = wd.app.Documents.Open(rep, ReadOnly=True, AddToRecentFiles=False, Visible=False)
+      File "<COMObject <unknown>>", line 5, in Open
+    pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', 'XML 파일 ML결과보고서_공정 데이터_v1.docx을(를) 처리하는 동안 Word에서 오류가 발생했습니다.\n지정되지 않은 오류입니다.\n\n위치:  부분: /word/document.xml, 줄: 2, 열: 2803', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 25582, -2146822186), None)
+  호출 1: $ python ml_report.py -d C:\ml_test\ml 테스트\공정 데이터_ml_data
+    cwd=C:\CLI\ml-kit  exit=0  4.9s
+    stdout JSON: {"status": "ok", "report_file": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data\\ML결과보고서_공정 데이터_v1.docx", "best_version": "v1", "version": "v1", "task": "regression", "targets": ["생산효율(%)"], "overall_verdict": "적합", "verdicts": {"생산효율(%)": "적합"}, "figure_count": 2, "table_count": 3, "slots_used": [], "verified": true, "preview": "[보고서 완료] v1 / 타겟 1개 / 종합 판정 적합 / 저장: ML결과보고서_공정 데이터_v1.docx", "agent_directive": "VERIFIED: ML result report for v1 (1 target(s)) saved to 'ML결과보고서_공정 데이터_v1.docx'. Overall verdict=적합. Next step: report the file path to the user. export_note를 그대로 알리세요.", "export_note": "성능예측표를 만들지 못했습니다 (보고서는 정상): InputError: 글자·날짜 입력 ['일시', '라인']이(가) 있는 모델은 성능예측표로 만들 수 없습니다 (숫자 입력만 가능)."}
+    stderr(끝부분):
+      [INFO] 보고서 버전 자동 선택: v1 (최근 학습과 같은 타겟 조합 중 최고 점수)
+
+      [WARN] 성능예측표를 만들지 못했습니다 (보고서는 정상): InputError: 글자·날짜 입력 ['일시', '라인']이(가) 있는 모델은 성능예측표로 만들 수 없습니다 (숫자 입력만 가능).
+    폴더 상태: C:\ml_test\ml 테스트\공정 데이터_ml_data: .train.lock (0 B), ML결과보고서_공정 데이터_v1.docx (256644 B), history.json (20956 B), history.jsonl (14642 B), v1/, v2/
+
+------------------------------------------------------------------------------
+[ERROR] M7 보고서 잠금
+  통과 기준: 보고서가 Word에 열려 있으면 (--overwrite를 줘도) status=ok, report_file이 기존 파일과 다른 새 파일, recovered에 '잠김'
+  관측 결과: com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+  예외 traceback:
+    Traceback (most recent call last):
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 160, in run_test
+        fn()
+        ~~^^
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 362, in m7
+        doc = wd.app.Documents.Open(rep, ReadOnly=False, AddToRecentFiles=False, Visible=False)   # Word가 잠금
+      File "<COMObject <unknown>>", line 5, in Open
+    pywintypes.com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+
+------------------------------------------------------------------------------
+[ERROR] M10 2만 행 성능
+  통과 기준: 2만 행 학습 300초 미만, 예측 60초 미만, 둘 다 status=ok
+  관측 결과: TimeoutExpired: Command '['C:\\Users\\JooJoo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', 'C:\\CLI\\ml-kit\\ml_predict.py', '-m', 'C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1', '-f', 'C:\\ml_test\\ml 테스트\\대용량 2만행.csv']' timed out after 900 seconds
+  예외 traceback:
+    Traceback (most recent call last):
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 160, in run_test
+        fn()
+        ~~^^
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 413, in m10
+        d2, c2, o2, e2 = run_tool("ml_predict.py", "-m", (d or {}).get("version_dir"), "-f", big)
+                         ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 99, in run_tool
+        proc = subprocess.run(cmd, cwd=cwd or ROOT, capture_output=True, timeout=timeout, env=env)
+      File "C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\subprocess.py", line 556, in run
+        stdout, stderr = process.communicate(input, timeout=timeout)
+                         ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+      File "C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\subprocess.py", line 1222, in communicate
+        stdout, stderr = self._communicate(input, endtime, timeout)
+                         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\subprocess.py", line 1665, in _communicate
+        raise TimeoutExpired(self.args, orig_timeout)
+    subprocess.TimeoutExpired: Command '['C:\\Users\\JooJoo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', 'C:\\CLI\\ml-kit\\ml_predict.py', '-m', 'C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1', '-f', 'C:\\ml_test\\ml 테스트\\대용량 2만행.csv']' timed out after 900 seconds
+  호출 1: $ python ml_train.py -f C:\ml_test\ml 테스트\대용량 2만행.csv -x 반응온도,소비전력,압축압력,촉매비율,수분함량 -y 생산효율 --desc 2만 행 성능
+    cwd=C:\CLI\ml-kit  exit=0  12.0s
+    stdout JSON: {"status": "ok", "version": "v1", "tag": "", "description": "2만 행 성능", "duration_sec": 8.61, "data_root": "C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9486, "delta_score": "base", "is_best": true, "goal_met": true, "verified": true, "recommendations": ["모든 타겟이 목표 성능(검증 R2 >= 0.90)을 달성했습니다. 예측 배포와 보고서 작성이 가능합니다. 보고서를 만들면 엑셀만으로 예측하는 성능예측표(엑셀 계산기)도 함께 만들어집니다.", "기여도가 1% 미만인 피처 ['압축압력(bar)']을(를) 배제하여 노이즈를 감소시키십시오."], "next_commands": [{"purpose": "ML 결과 보고서(Word)와 성능예측표(엑셀 계산기) 생성 (모든 타겟, 입력을 줄이며 다시 학습해 몇 분 걸림. 성능예측표 제목은 학습 때 데이터 설명에서 자동으로 정함)", "command": "python \"C:\\CLI\\ml-kit\\ml_report.py\" -f \"C:\\ml_test\\ml 테스트\\대용량 2만행.csv\"", "needs_input": false}, {"purpose": "목표 성능 달성: 새 데이터 예측 (<새데이터.xlsx>를 사용자가 준 실제 파일 경로로 바꿀 것)", "command": "python \"C:\\CLI\\ml-kit\\ml_predict.py\" -m \"C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1\" -f \"<새데이터.xlsx>\"", "needs_input": true, "placeholder": "<새데이터.xlsx>"}], "feature_types": {"numeric": ["반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"], "categorical": [], "datetime": {}}, "preview": "[v1 완료 / regression] 타겟: [생산효율(%)(Ridge: 검증 R2=0.9486)] | 평균 검증 R2=0.9486 (Delta: base) | 소요시간: 8.61s | 산출물 저장: C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1", "agent_directive": "VERIFIED: v1 competitive training completed. Champion models and leaderboard packaged into 'v1'. Task=regression, Mean 검증 R2=0.9486. Next step: run next_commands[0] if the user wants to continue, or proceed to inference. A command with needs_input=true has a placeholder: replace it with a path the user gave, or ask the user first.", "column_aliases": {"반응온도": "반응온도(°C)", "소비전력": "소비전력(kW)", "압축압력": "압축압력(bar)", "촉매비율": "촉매비율(wt%)", "수분함량": "수분함량(%)", "생산효율": "생산효율(%)"}}
+    stderr(끝부분):
+      [PROGRESS   5%] [=-------------------] 입력 데이터 로드 중: 대용량 2만행.csv...
+
+      [PROGRESS  10%] [==------------------] 컬럼 유효성 검증 및 타입 정제 중...
+
+      [INFO] 컬럼명 자동 매칭: '반응온도' -> '반응온도(°C)'
+
+      [INFO] 컬럼명 자동 매칭: '소비전력' -> '소비전력(kW)'
+
+      [INFO] 컬럼명 자동 매칭: '압축압력' -> '압축압력(bar)'
+
+      [INFO] 컬럼명 자동 매칭: '촉매비율' -> '촉매비율(wt%)'
+
+      [INFO] 컬럼명 자동 매칭: '수분함량' -> '수분함량(%)'
+
+      [INFO] 컬럼명 자동 매칭: '생산효율' -> '생산효율(%)'
+
+      [PROGRESS  20%] [====----------------] 변수 간 2차원 상관행렬 계산 중...
+
+      [PROGRESS  25%] [=====---------------] 타겟 [1/1] '생산효율(%)' 5대 모델 경쟁 학습 (regression)...
+
+      [PROGRESS  27%] [=====---------------] Target '생산효율(%)' | HistGradientBoosting (Fold 1/5)...
+
+      [PROGRESS  29%] [=====---------------] Target '생산효율(%)' | HistGradientBoosting (Fold 2/5)...
+
+      [PROGRESS  31%] [======--------------] Target '생산효율(%)' | HistGradientBoosting (Fold 3/5)...
+
+      [PROGRESS  33%] [======--------------] Target '생산효율(%)' | HistGradientBoosting (Fold 4/5)...
+
+      [PROGRESS  36%] [=======-------------] Target '생산효율(%)' | HistGradientBoosting (Fold 5/5)...
+
+      [PROGRESS  38%] [=======-------------] Target '생산효율(%)' | RandomForest (Fold 1/5)...
+
+      [PROGRESS  40%] [========------------] Target '생산효율(%)' | RandomForest (Fold 2/5)...
+
+      [PROGRESS  42%] [========------------] Target '생산효율(%)' | RandomForest (Fold 3/5)...
+
+      [PROGRESS  44%] [========------------] Target '생산효율(%)' | RandomForest (Fold 4/5)...
+
+      [PROGRESS  47%] [=========-----------] Target '생산효율(%)' | RandomForest (Fold 5/5)...
+
+      [PROGRESS  49%] [=========-----------] Target '생산효율(%)' | ExtraTrees (Fold 1/5)...
+
+      [PROGRESS  51%] [==========----------] Target '생산효율(%)' | ExtraTrees (Fold 2/5)...
+
+      [PROGRESS  53%] [==========----------] Target '생산효율(%)' | ExtraTrees (Fold 3/5)...
+
+      [PROGRESS  55%] [===========---------] Target '생산효율(%)' | ExtraTrees (Fold 4/5)...
+
+      [PROGRESS  58%] [===========---------] Target '생산효율(%)' | ExtraTrees (Fold 5/5)...
+
+      [PROGRESS  60%] [============--------] Target '생산효율(%)' | Ridge (Fold 1/5)...
+
+      [PROGRESS  62%] [============--------] Target '생산효율(%)' | Ridge (Fold 2/5)...
+
+      [PROGRESS  64%] [============--------] Target '생산효율(%)' | Ridge (Fold 3/5)...
+
+      [PROGRESS  66%] [=============-------] Target '생산효율(%)' | Ridge (Fold 4/5)...
+
+      [PROGRESS  69%] [=============-------] Target '생산효율(%)' | Ridge (Fold 5/5)...
+
+      [PROGRESS  71%] [==============------] Target '생산효율(%)' | ElasticNet (Fold 1/5)...
+
+      [PROGRESS  73%] [==============------] Target '생산효율(%)' | ElasticNet (Fold 2/5)...
+
+      [PROGRESS  75%] [===============-----] Target '생산효율(%)' | ElasticNet (Fold 3/5)...
+
+      [PROGRESS  77%] [===============-----] Target '생산효율(%)' | ElasticNet (Fold 4/5)...
+
+      [PROGRESS  80%] [================----] Target '생산효율(%)' | ElasticNet (Fold 5/5)...
+
+      [PROGRESS  76%] [===============-----] Target '생산효율(%)' | 1위 챔피언(Ridge) 전체 데이터 적합 중...
+
+      [PROGRESS  78%] [===============-----] Target '생산효율(%)' | 순열 피처 중요도(Feature Importance) 산출 중...
+
+      [PROGRESS  85%] [=================---] 이전 이력 대조 및 성능 변화(Delta 검증 R2) 산출 중...
+
+      [PROGRESS  90%] [==================--] 버전 산출물 패키징 중 (v1)...
+
+      [PROGRESS 100%] [====================] 학습 및 산출물 패키징 완료: v1 (v1) [소요: 8.61초]
+    폴더 상태: C:\ml_test\ml 테스트\대용량 2만행_ml_data: .train.lock (0 B), history.json (26839 B), history.jsonl (18758 B), v1/, v2/, v3/
+    폴더 상태: C:\ml_test\ml 테스트\대용량 2만행_ml_data\v1: correlation.csv (459 B), leaderboard.json (3816 B), model_dataset.csv (916337 B), model_생산효율(%).joblib (1584 B), model_생산효율(%).json (2229 B), oof_생산효율(%).csv (652376 B)
+  호출 2: $ python ml_predict.py -m C:\ml_test\ml 테스트\대용량 2만행_ml_data\v1 -f C:\ml_test\ml 테스트\대용량 2만행.csv
+    cwd=C:\CLI\ml-kit  exit=TIMEOUT  900.0s
+
+[출력 계약 위반]
+  없음
+
+[전체 호출 기록] (항목, 호출, 종료코드, 시간, status / agent_directive 앞부분)
+  M1     ml_train.py                              exit=0          6.1s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M2     ml_train.py                              exit=0          6.0s  ok / VERIFIED: v2 competitive training completed. Champion models and leade
+  M3     ml_train.py                              exit=0          5.4s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M4     ml_predict.py                            exit=0          5.6s  ok / VERIFIED: Prediction completed for 1 target(s) with map-check warning 
+  M5     ml_predict.py                            exit=0          5.8s  ok / VERIFIED: Prediction completed for 1 target(s) with map-check warning 
+  M6     ml_report.py                             exit=0          4.9s  ok / VERIFIED: ML result report for v1 (1 target(s)) saved to 'ML결과보고서_공정 데
+  M8     ml_train.py                              exit=0          6.7s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M8     next_commands via cmd                    exit=0          6.6s  ok / VERIFIED: v2 competitive training completed. Champion models and leade
+  M8     next_commands via powershell             exit=0          6.8s  ok / VERIFIED: v3 competitive training completed. Champion models and leade
+  M9     ml_predict.py (배포 폴더)                    exit=0          3.4s  ok / VERIFIED: Prediction completed for 1 target(s). Report each prediction
+  M10    ml_train.py                              exit=0         12.0s  ok / VERIFIED: v1 competitive training completed. Champion models and leade
+  M10    ml_predict.py                            exit=TIMEOUT  900.0s  - / 
+  M11    ml_train.py                              exit=1          5.1s  error / STOP_RETRY: Argument or data schema validation failed. If the message 
+  M11    ml_train.py (동시A)                        exit=0         Nones  ok / VERIFIED: v2 competitive training completed. Champion models and leade
+  M12    ml_train.py                              exit=0         10.7s  ok / VERIFIED: v3 competitive training completed. Champion models and leade
+  M13    ml_train.py                              exit=0          3.2s  ok / VERIFIED: History summary returned. Do not re-read history.jsonl for t
+  M13    ml_train.py                              exit=1          3.6s  error / STOP_RETRY: Argument or data schema validation failed. If the message 
+  M13    ml_train.py                              exit=2          3.2s  error / STOP_RETRY: Invalid CLI arguments. Check the option names in SKILL.md
+
+<report_20261031_100142.txt>
+파일: C:\ml_test\ml 테스트\report_20261031_100142.txt
+ml-kit Windows 테스트 보고서 (20261031_100142)
+Python 3.13.13 / scikit-learn 1.9.0 / 테스트 폴더 C:\ml_test\ml 테스트
+요약: ERROR=3, PASS=11
+
+[PASS] M1 Excel이 만든 xlsx (제목/단위 행, 날짜 셀, 범주, 한글 경로+공백)
+    내용: score=0.9785, types={'numeric': ['반응온도(°C)', '소비전력(kW)', '압축압력(bar)', '촉매비율(wt%)', '수분함량(%)'], 'categorical': ['라인'], 'datetime': {'일시': ['year', 'month', 'day', 'dayofweek', 'hour']}}
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v1", "tag": "베이스라인", "description": "공정 효율 예측 (실기 테스트)", "duration_sec": 2.86, "data_root": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data\\v1", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9785, "delta_score": "base", "is_best": true, "goal_met": true, "verified": true, "recom
+
+[PASS] M2 입력 xlsx가 Excel에 열려 있어도 학습 + 설명 자동 상속
+    내용: version=v2, description='공정 효율 예측 (실기 테스트)'
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v2", "tag": "엑셀에 열린 상태", "description": "공정 효율 예측 (실기 테스트)", "duration_sec": 2.71, "data_root": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data\\v2", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9782, "delta_score": -0.0003, "is_best": false, "goal_met": true, "verified": true, 
+
+[PASS] M3 Excel이 저장한 CSV(CP949) 입력
+    내용: 파일 인코딩=cp949, score=0.8568
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v1", "tag": "", "description": "CP949 CSV 입력", "duration_sec": 2.12, "data_root": "C:\\ml_test\\ml 테스트\\엑셀저장 CP949_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\엑셀저장 CP949_ml_data\\v1", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.8568, "delta_score": "base", "is_best": true, "goal_met": false, "verified": true, "recomm
+
+[PASS] M4 xlsx 배치 예측 -> 결과 CSV를 Excel로 열면 한글 정상
+    내용: Excel이 읽은 머리글 일부=['일시', '라인', '반응온도(°C)'] ... ['map_생산효율(%)', 'map_diff_생산효율(%)', 'map_방식_생산효율(%)']
+    종료코드: 0
+    JSON: {"status": "ok", "source": "공정 데이터.xlsx", "sample_count": 150, "total_rows": 150, "targets_predicted": ["생산효율(%)"], "output_file": "C:\\ml_test\\ml 테스트\\공정 데이터_pred_20261031_094512.csv", "verified": true, "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "ElasticNet", "description": "공정 효율 예측 (실기 테스트)", "features_used": ["일시", "라인", "반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)"
+
+[PASS] M5 결과 CSV가 Excel에 열려 있으면 새 이름으로 저장
+    내용: 요청=공정 데이터_pred_20261031_094512.csv, 실제=공정 데이터_pred_20261031_094521.csv
+    종료코드: 0
+    JSON: {"status": "ok", "source": "공정 데이터.xlsx", "sample_count": 150, "total_rows": 150, "targets_predicted": ["생산효율(%)"], "output_file": "C:\\ml_test\\ml 테스트\\공정 데이터_pred_20261031_094521.csv", "verified": true, "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "ElasticNet", "description": "공정 효율 예측 (실기 테스트)", "features_used": ["일시", "라인", "반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)"
+
+[ERROR] M6 보고서를 Word로
+    내용: com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', 'XML 파일 ML결과보고서_공정 데이터_v1.docx을(를) 처리하는 동안 Word에서 오류가 발생했습니다.\n지정되지 않은 오류입니다.\n\n위치:  부분: /word/document.xml, 줄: 2, 열: 2803', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 25582, -2146822186), None)
+    trace: Traceback (most recent call last):
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 160, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 347, in m6
+            doc = wd.app.Documents.Open(rep, ReadOnly=True, AddToRecentFiles=False, Visible=False)
+          File "<COMObject <unknown>>", line 5, in Open
+        pywintypes.com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', 'XML 파일 ML결과보고서_공정 데이터_v1.docx을(를) 처리하는 동안 Word에서 오류가 발생했습니다.\n지정되지 않은 오류입니다.\n\n위치:  부분: /word/document.xml, 줄: 2, 열: 2803', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 25582, -2146822186), None)
+        
+
+[ERROR] M7 보고서 잠금
+    내용: com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+    trace: Traceback (most recent call last):
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 160, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 362, in m7
+            doc = wd.app.Documents.Open(rep, ReadOnly=False, AddToRecentFiles=False, Visible=False)   # Word가 잠금
+          File "<COMObject <unknown>>", line 5, in Open
+        pywintypes.com_error: (-2147352571, '형식이 일치하지 않습니다.', None, 1)
+        
+
+[PASS] M8 next_commands를 cmd.exe / PowerShell에 그대로 실행 (따옴표, %, 괄호) + needs_input 표시
+    내용: needs_input 표시 정확=True, 명령='--task classification -y "품질등급" -x "반응온도(°C),촉매비율(wt%),수분함량(%)" --eval "반응온도x촉매비율 = 반응온도(°C) * 촉매비율(wt%)" --tag "교차항_추가"', 결과={'cmd': ('ok', 'v2', 0, ''), 'powershell': ('ok', 'v3', 0, '')}
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v1", "tag": "", "description": "등급 분류", "duration_sec": 3.24, "data_root": "C:\\ml_test\\ml 테스트\\품질 등급_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\품질 등급_ml_data\\v1", "targets": ["품질등급"], "task": "classification", "primary_metric": "val_f1_macro", "mean_val_score": 0.8011, "delta_score": "base", "is_best": true, "goal_met": false, "verified": true, "recommendations"
+
+[PASS] M9 단독 배포 폴더(ml_predict.py + v1만)에서 예측
+    내용: 예측=[53.6924], 범위=[[52.0639, 55.3051]]
+    종료코드: 0
+    JSON: {"status": "ok", "source": "Inline Input (1 record(s))", "sample_count": 1, "total_rows": 1, "targets_predicted": ["생산효율(%)"], "output_file": null, "verified": true, "predictions_summary": {"생산효율(%)": {"task": "regression", "model": "ElasticNet", "description": "공정 효율 예측 (실기 테스트)", "features_used": ["일시", "라인", "반응온도(°C)", "소비전력(kW)", "압축압력(bar)", "촉매비율(wt%)", "수분함량(%)"], "mean_pred": 53.6924, "mi
+
+[ERROR] M10 2만 행 성능
+    내용: TimeoutExpired: Command '['C:\\Users\\JooJoo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', 'C:\\CLI\\ml-kit\\ml_predict.py', '-m', 'C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1', '-f', 'C:\\ml_test\\ml 테스트\\대용량 2만행.csv']' timed out after 900 seconds
+    trace: Traceback (most recent call last):
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 160, in run_test
+            fn()
+            ~~^^
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 413, in m10
+            d2, c2, o2, e2 = run_tool("ml_predict.py", "-m", (d or {}).get("version_dir"), "-f", big)
+                             ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          File "C:\CLI-dev\ml-kit\tools\run_win_tests.py", line 99, in run_tool
+            proc = subprocess.run(cmd, cwd=cwd or ROOT, capture_output=True, timeout=timeout, env=env)
+          File "C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\subprocess.py", line 556, in run
+            stdout, stderr = process.communicate(input, timeout=timeout)
+                             ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+          File "C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\subprocess.py", line 1222, in communicate
+            stdout, stderr = self._communicate(input, endtime, timeout)
+                             ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+          File "C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\Lib\subprocess.py", line 1665, in _communicate
+            raise TimeoutExpired(self.args, orig_timeout)
+        subprocess.TimeoutExpired: Command '['C:\\Users\\JooJoo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe', 'C:\\CLI\\ml-kit\\ml_predict.py', '-m', 'C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v1', '-f', 'C:\\ml_test\\ml 테스트\\대용량 2만행.csv']' timed out after 900 seconds
+        
+
+[PASS] M11 같은 데이터 동시 학습 -> 두 번째는 STOP_RETRY, 첫 번째는 완료
+    내용: B=error exit=1 msg='같은 데이터에 대한 다른 학습이 이미 실행 중입니다 (C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data). 동시에 실행할 수 없으니 ', A=ok v2
+    종료코드: 1
+    JSON: {"status": "error", "error_type": "input", "message": "같은 데이터에 대한 다른 학습이 이미 실행 중입니다 (C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data). 동시에 실행할 수 없으니 진행 중인 학습이 끝난 뒤 다시 실행하십시오.", "agent_directive": "STOP_RETRY: Argument or data schema validation failed. If the message contains '[추천]', re-run ONCE with the suggested name; otherwise report the message to the user. Check column names or formula syntax."}
+
+[PASS] M12 학습 중 강제 종료 -> 다음 학습이 잠금/임시 폴더 정리 후 정상
+    내용: 종료 직후 임시 폴더=['.tmp_v3'], 재학습=v3, 재학습 후 임시 폴더=[], 버전=['v1', 'v2', 'v3']
+    종료코드: 0
+    JSON: {"status": "ok", "version": "v3", "tag": "종료 후 재학습", "description": "2만 행 성능", "duration_sec": 7.55, "data_root": "C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data", "version_dir": "C:\\ml_test\\ml 테스트\\대용량 2만행_ml_data\\v3", "targets": ["생산효율(%)"], "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9486, "delta_score": 0.0, "is_best": false, "goal_met": true, "verified": true, "recommendati
+
+[PASS] M13 이력 조회 / 오타 추천(exit 1) / 잘못된 옵션(exit 2)도 1줄 JSON
+    내용: history=ok, 오타 exit=1, 옵션 exit=2, root=공정 데이터_ml_data
+    종료코드: 0
+    JSON: {"status": "ok", "data_root": "C:\\ml_test\\ml 테스트\\공정 데이터_ml_data", "description": "공정 효율 예측 (실기 테스트)", "record_count": 2, "best_version": "v1", "best_mean_val_score": 0.9785, "best_by_task": {"regression": {"version": "v1", "mean_val_score": 0.9785}}, "latest_version": "v2", "records": [{"version": "v1", "tag": "베이스라인", "task": "regression", "primary_metric": "val_r2", "mean_val_score": 0.9785, 
+
+[PASS] M14 모든 호출의 stdout 1줄 JSON / stderr 줄 단위 진행 로그
+    내용: 위반 없음
+
+<ml-kit 실기 중 도구 오류 로그 (일부러 낸 오류 포함)>
+파일: C:\ml_test\ml 테스트\_data\logs\errors.txt
+===== 2026-10-31T10:01:13 | ml-kit 2.9.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: ml_train.py -f "C:\ml_test\ml 테스트\대용량 2만행.csv" -x "반응온도,소비전력,압축압력,촉매비율,수분함량" -y 생산효율 --tag 동시B
+결과: input | 같은 데이터에 대한 다른 학습이 이미 실행 중입니다 (C:\ml_test\ml 테스트\대용량 2만행_ml_data). 동시에 실행할 수 없으니 진행 중인 학습이 끝난 뒤 다시 실행하십시오.
+
+===== 2026-10-31T10:01:39 | ml-kit 2.9.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: ml_train.py -f "C:\ml_test\ml 테스트\공정 데이터.xlsx" -x 반응온두 -y 생산효율 --header-row 3 --unit-row 4
+결과: input | 지정하신 피처(-x) 컬럼 ['반응온두']을(를) 데이터셋에서 찾을 수 없습니다. '반응온두' -> [추천] ['반응온도(°C)']
+[사용 가능한 컬럼 목록]: ['일시', '라인', '반응온도(°C)', '소비전력(kW)', '압축압력(bar)', '촉매비율(wt%)', '수분함량(%)', '생산효율(%)']
+
+===== 2026-10-31T10:01:42 | ml-kit 2.9.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: ml_train.py --없는옵션
+결과: input | CLI 인자 오류: unrecognized arguments: --없는옵션
+
+<office-cli 실기 테스트 실행>
+$ C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\python.exe tools\run_win_tests.py --skip-outlook --auto
+exit=0 130.7초
+
+<errors_20261031_100144.txt>
+파일: C:\office_test\errors_20261031_100144.txt
+# office-cli 실기 테스트 오류 로그 (분석용)
+# 생성 20261031_100144. 이 파일 전체를 그대로 Claude에게 전달하세요. 편집하지 마세요.
+
+## 1. 환경
+office-cli 버전: 1.4.8 (C:\CLI\office-cli)
+Windows: Windows-11-10.0.26200-SP0 / 10.0.26200
+Python: 3.13.13 (C:\Users\JooJoo\AppData\Local\Programs\Python\Python313\python.exe)
+라이브러리: pywin32 312, openpyxl 3.1.5, python-docx 1.2.0, python-pptx 1.0.2, pymupdf 1.28.2, olefile 0.47, matplotlib 3.11.1, numpy 2.5.2
+Office (office.py windows의 office): {}
+config.json: {"transfer_method": {"word": ["export", "redraw"], "ppt": ["export", "redraw"]}}
+러너 옵션: only=None auto=True agent=False skip_outlook=True self_email=없음 keep_open=False
+테스트 폴더: C:\office_test / 도구 환경변수: {"OFFICE_CLI_CACHE_DIR": "C:\\office_test\\_cache", "OFFICE_CLI_DATA_DIR": "C:\\office_test\\_data"}
+소요 시간: 130초
+
+## 2. 요약
+결과: ENV-SKIP=2, FAIL=1, PASS=68
+문제 항목: A3(FAIL)
+건너뜀: D1(ENV-SKIP: 이 PC의 Word에 PDF 내보내기 기능이 없음 (원본은 그대로)), D4(ENV-SKIP: 이 PC의 PowerPoint에 PDF 내보내기 기능이 없음)
+
+## 3. 러너 자동 복구와 창/프로세스 정리
+자동 복구: 없음
+정리 기록: 
+  10:02:19 [A5] 대상 문서=C_second_instance.xlsx, 끝내도 되는 PID=[5400]
+  10:02:19 [A5]   excel pid 5400: 문서 닫음 C_second_instance.xlsx
+  10:02:19 [A5]   excel pid 12960: 문서 1개 남음 -> 보호 (종료하지 않음)
+  10:02:19 [A5]   word pid None: 문서 1개 남음 -> 보호 (종료하지 않음)
+  10:02:19 [A5]   ppt pid None: 문서 1개 남음 -> 보호 (종료하지 않음)
+  10:02:19 [A5]   excel pid 5400: Quit (이 단계가 띄운 프로세스)
+  10:02:19 [A5]   WM_CLOSE XLMAIN pid 5400 hwnd 395140 제목='Microsoft Excel' 표시=False
+  10:02:19 [A5]   보호한 PID: [3544, 12960]
+  10:03:52 [종료 정리] 대상 문서=테스트 폴더 전체, 끝내도 되는 PID=실행 중 생긴 프로세스
+  10:03:52 [종료 정리]   excel pid 12960: 문서 닫음 A.xlsx
+  10:03:52 [종료 정리]   excel pid 12960: 문서 닫음 Book3
+  10:03:52 [종료 정리]   word pid None: 문서 닫음 A.docx
+  10:03:52 [종료 정리]   ppt pid None: 문서 닫음 A.pptx
+  10:03:52 [종료 정리]   excel pid 12960: Quit (테스트 실행 중 생긴 빈 프로세스)
+  10:03:52 [종료 정리]   word pid None: Quit (문서 0개 (PID 모름))
+  10:03:52 [종료 정리]   ppt pid None: Quit (문서 0개 (PID 모름))
+  10:03:52 [종료 정리]   WM_CLOSE XLMAIN pid 12960 hwnd 1246806 제목='Microsoft Excel' 표시=False
+  10:03:52 [종료 정리]   WM_CLOSE PP12FrameClass pid 3544 hwnd 67332 제목='Microsoft PowerPoint' 표시=True
+
+## 4. 문제 항목 상세
+
+----------------------------------------------------------------------
+[FAIL] A3 닫힌 워드 파일 쓰기 시 사용자 창 유지
+  판정 근거: WINWORD.EXE 1->1, A.docx 열림=True
+  이 항목에서 실행한 도구 명령 1개:
+    $ python word.py write --target C:\office_test\B.docx --text "닫힌 문서에 추가"
+      시작 10:02:07 / 종료코드 1 / 1.75초
+      stdout(JSON):
+        {
+          "status": "error",
+          "tool": "word",
+          "command": "write",
+          "error_type": "office",
+          "message": "Office 오류: 명령을 정상적으로 종료할 수 없습니다.",
+          "hresult": "0x80020009",
+          "agent_directive": "STOP_RETRY: Office 작업이 실패했습니다. 인자(범위, 시트, 슬라이드 번호 등)를 확인할 수 있으면 1회만 고쳐서 다시 실행하고, 아니면 message를 사용자에게 보고하세요."
+        }
+      stderr:
+        [PROGRESS] Word 파일 여는 중 (백그라운드): B.docx
+
+        [ERROR] com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', '명령을 정상적으로 종료할 수 없습니다.', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 36966, -2146824090), None)
+  이 항목의 진행 로그:
+        
+        [A3] 닫힌 워드 쓰기와 사용자 창
+            $ python word.py write --target C:\office_test\B.docx --text "닫힌 문서에 추가"
+          => [FAIL] A3 닫힌 워드 파일 쓰기 시 사용자 창 유지 - WINWORD.EXE 1->1, A.docx 열림=True
+
+## 5. 도구 오류 로그 (_data\logs\errors.txt)
+원본: C:\office_test\_data\logs\errors.txt (이번 실행에서 추가된 부분)
+===== 2026-10-31T10:02:08 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: word.py write --target C:\office_test\B.docx --text "닫힌 문서에 추가"
+결과: office | Office 오류: 명령을 정상적으로 종료할 수 없습니다.
+
+===== 2026-10-31T10:02:23 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: excel.py read --target C:\office_test\B.xlsx --sheet 없는시트
+결과: input | 시트 '없는시트'을(를) 찾을 수 없습니다. 사용 가능한 시트: Sheet1, Sheet2, Sheet3
+
+===== 2026-10-31T10:02:24 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: word.py read --target C:\office_test\없는파일.docx
+결과: input | Word 문서 'C:\office_test\없는파일.docx'을(를) 찾을 수 없습니다. (열린 문서 이름도 아니고 파일도 없음) 사용 가능한 Word 문서: A.docx
+
+===== 2026-10-31T10:02:37 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: word.py export --save office_test_pagenum.pdf --page-number
+결과: input | 이 PC의 Office 12.0에는 PDF 내보내기 기능이 없습니다 (Office 2007은 'PDF/XPS로 저장' 추가 기능 필요). --save에 .docx를 쓰세요.
+
+===== 2026-10-31T10:02:38 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: ppt.py export --save office_test_deck.pdf
+결과: input | 이 PC의 Office 12.0에는 PDF 내보내기 기능이 없습니다 (Office 2007은 'PDF/XPS로 저장' 추가 기능 필요). --save에 .pptx를 쓰세요.
+
+===== 2026-10-31T10:02:39 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: excel.py range --action merge
+결과: input | range merge에는 --range가 필요합니다.
+
+===== 2026-10-31T10:02:40 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: excel.py range --action merge --range A10:B10
+결과: needs_user_decision | 병합하면 왼쪽 위 칸만 남고 값 1개가 지워집니다: B10=병합2
+
+===== 2026-10-31T10:02:43 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: ppt.py slide --action clear
+결과: input | clear에는 --slide가 필요합니다. 모든 슬라이드를 비우려면 --all-slides를 명시하세요 (사용자가 요청한 경우에만).
+
+===== 2026-10-31T10:03:00 | office-cli 1.4.8 | Python 3.13.13 | Windows-11-10.0.26200-SP0
+명령: excel.py chart --action delete --sheet I_DATA --name 없는차트
+결과: input | 차트 '없는차트'을(를) 찾을 수 없습니다. 사용 가능한 차트: I 막대, I 분산
+
+<report_20261031_100144.txt>
+파일: C:\office_test\report_20261031_100144.txt
+office-cli 1.0 Windows 테스트 보고서 (20261031_100144)
+Python 3.13.13 / 테스트 폴더 C:\office_test
+요약: ENV-SKIP=2, FAIL=1, PASS=68
+
+[PASS] A1 닫힌 엑셀 읽기는 Excel을 띄우지 않음 (openpyxl)
+    내용: EXCEL.EXE 1->1, source=file(openpyxl)
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "read", "preview": "Sheet1!A1: 1행 x 1열", "target_resolved": {"app": "Excel", "name": "B.xlsx", "path": "C:\\office_test\\B.xlsx", "source": "file(openpyxl)"}, "sheet": "Sheet1", "range": "A1", "rows": 1, "cols": 1, "values": [["B파일"]], "truncated": false, "verified": true, "agent_directive": "VERIFIED: 작업이 완료되었습니다. 같은 명령을 다시 실행하거나 결과를 다시 조회하지 마세요."}
+
+[PASS] A2 닫힌 엑셀 파일 쓰기 시 사용자 창 유지
+    내용: EXCEL.EXE 1->1, A.xlsx 열림=True, Visible=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "write", "preview": "Sheet1!C1에 썼습니다 (1행 x 1열)", "verified": true, "target_resolved": {"app": "Excel", "name": "B.xlsx", "path": "C:\\office_test\\B.xlsx", "source": "file", "sheet": "Sheet1"}, "sheet": "Sheet1", "range_written": "C1", "rows": 1, "cols": 1, "agent_directive": "VERIFIED: 쓴 칸을 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[FAIL] A3 닫힌 워드 파일 쓰기 시 사용자 창 유지
+    내용: WINWORD.EXE 1->1, A.docx 열림=True
+    종료코드: 1
+    JSON: {"status": "error", "tool": "word", "command": "write", "error_type": "office", "message": "Office 오류: 명령을 정상적으로 종료할 수 없습니다.", "hresult": "0x80020009", "agent_directive": "STOP_RETRY: Office 작업이 실패했습니다. 인자(범위, 시트, 슬라이드 번호 등)를 확인할 수 있으면 1회만 고쳐서 다시 실행하고, 아니면 message를 사용자에게 보고하세요."}
+    stderr(끝부분): [PROGRESS] Word 파일 여는 중 (백그라운드): B.docx
+
+        [ERROR] com_error: (-2147352567, '예외가 발생했습니다.', (0, 'Microsoft Word', '명령을 정상적으로 종료할 수 없습니다.', 'C:\\Program Files (x86)\\Microsoft Office\\Office12\\1042\\WDMAIN11.CHM', 36966, -2146824090), None)
+
+[PASS] A4 닫힌 PPT 파일 조회 시 창 유지 / 파일 미변경
+    내용: B.pptx 수정시각 불변=True, WindowState=1
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "info", "preview": "B.pptx: 슬라이드 3장", "target_resolved": {"app": "PowerPoint", "name": "B.pptx", "path": "C:\\office_test\\B.pptx", "source": "file"}, "slides_total": 3, "slides": [{"no": 1, "title": "B.pptx 슬라이드 1", "shapes": 2, "tables": 0, "pictures": 0, "chars": 31}, {"no": 2, "title": "B.pptx 슬라이드 2", "shapes": 2, "tables": 0, "pictures": 0, "chars":...
+
+[PASS] A5 다중 Excel 프로세스 목록
+    내용: EXCEL.EXE 프로세스 2개
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "info", "preview": "열린 통합문서 2개", "workbooks": [{"name": "C_second_instance.xlsx", "path": "C:\\office_test\\C_second_instance.xlsx", "saved": true, "active": true}, {"name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "saved": true, "active": true}], "verified": true, "agent_directive": "VERIFIED: 작업이 완료되었습니다. 같은 명령을 다시 실행하거나 결과를 다시 조회하지 마세요."}
+
+[PASS] B1 없는 시트 읽기 -> error, 파일 미변경
+    내용: 시트 '없는시트'을(를) 찾을 수 없습니다. 사용 가능한 시트: Sheet1, Sheet2, Sheet3
+    종료코드: 1
+    JSON: {"status": "error", "tool": "excel", "command": "read", "error_type": "input", "message": "시트 '없는시트'을(를) 찾을 수 없습니다. 사용 가능한 시트: Sheet1, Sheet2, Sheet3", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] B2 열린 문서 다른 시트 읽기 시 화면 시트 유지
+    내용: 읽은 뒤 활성 시트=Sheet1
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "read", "preview": "Sheet2!A1: 1행 x 1열", "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "sheet": "Sheet2", "range": "A1", "rows": 1, "cols": 1, "values": [["시트2 데이터"]], "truncated": false, "verified": true, "agent_directive": "VERIFIED: 작업이 완료되었습니다. 같은 명령을 다시 실행하거나 결과를 다시 조회하지 마세요."}
+
+[PASS] B3 시트명 대소문자 무시
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "read", "preview": "Sheet2!A1: 1행 x 1열", "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "sheet": "Sheet2", "range": "A1", "rows": 1, "cols": 1, "values": [["시트2 데이터"]], "truncated": false, "verified": true, "agent_directive": "VERIFIED: 작업이 완료되었습니다. 같은 명령을 다시 실행하거나 결과를 다시 조회하지 마세요."}
+
+[PASS] B4 없는 워드 파일 읽기 -> error, 파일 미생성
+    내용: 파일 생성됨=False
+    종료코드: 1
+    JSON: {"status": "error", "tool": "word", "command": "read", "error_type": "input", "message": "Word 문서 'C:\\office_test\\없는파일.docx'을(를) 찾을 수 없습니다. (열린 문서 이름도 아니고 파일도 없음) 사용 가능한 Word 문서: A.docx", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] B5 PPT 읽기 시 화면이 마지막 슬라이드로 이동하지 않음
+    내용: 읽은 뒤 화면 슬라이드=1
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "read", "preview": "A.pptx: 슬라이드 3장 표시 (전체 3장)", "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active"}, "slides_total": 3, "slides": [{"no": 1, "title": "A.pptx 슬라이드 1", "text": "A.pptx 슬라이드 1\n본문 1", "notes": ""}, {"no": 2, "title": "A.pptx 슬라이드 2", "text": "A.pptx 슬라이드 2\n본문 2", "notes": ""}, {...
+
+[PASS] C1 Excel 쓰기 후 undo
+    내용: undo 후 A1='원래값', restored_as=reopened_in_office
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'A.xlsx'을(를) 'excel write' 이전 상태로 되돌렸습니다 (reopened_in_office)", "restored": true, "app": "Excel", "name": "A.xlsx", "original_path": "C:\\office_test\\A.xlsx", "restored_as": "reopened_in_office", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\excel_20261031_100225_20092.xlsx", "verified": true, "agent_directi...
+
+[PASS] C2 연속 undo 두 번
+    내용: 1차 후 A1='값1', 2차 후 A1='원래값'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'A.xlsx'을(를) 'excel write' 이전 상태로 되돌렸습니다 (reopened_in_office)", "restored": true, "app": "Excel", "name": "A.xlsx", "original_path": "C:\\office_test\\A.xlsx", "restored_as": "reopened_in_office", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\excel_20261031_100227_20148.xlsx", "verified": true, "agent_directi...
+
+[PASS] C3 저장 안 한 새 통합문서 undo -> 바뀐 창 닫고 되돌린 창 하나
+    내용: 통합문서 수 2->2, 'Book1' 남음=False, 되돌린 A1='원래새값'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'Book1'을(를) 'excel write' 이전 상태로 되돌렸습니다 (replaced_untitled_document). 저장한 적 없는 Excel 문서라 되돌린 내용을 새 창 'excel_3d37da34fe_20261031_100227_9002441'(으)로 열고, 바뀐 'Book1'은(는) 저장하지 않고 닫았습니다", "restored": true, "app": "Excel", "name": "Book1", "original_path": "", "restored_as": "replaced_untitled_document", "pre_undo_backup": "C:\\office_tes...
+
+[PASS] C4 워드 쓰기 성공 + 원본 자동 저장 안 됨
+    내용: 수정시각 불변=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "write", "preview": "A.docx의 문서 끝에 넣었습니다: 본문", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "inserted": ["본문"], "agent_directive": "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] C5 워드 undo -> 도구가 쓴 문장만 제거
+    내용: '테스트 문장' 남음=False, '가' 유지=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'A.docx'을(를) 'word write' 이전 상태로 되돌렸습니다 (reopened_in_office)", "restored": true, "app": "Word", "name": "A.docx", "original_path": "C:\\office_test\\A.docx", "restored_as": "reopened_in_office", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\word_20261031_100231_10912.xml", "verified": true, "agent_directive":...
+
+[PASS] C6 PPT 슬라이드 추가 후 undo
+    내용: 슬라이드 수 3->4->3
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'A.pptx'을(를) 'ppt slide' 이전 상태로 되돌렸습니다 (reopened_in_office)", "restored": true, "app": "PowerPoint", "name": "A.pptx", "original_path": "C:\\office_test\\A.pptx", "restored_as": "reopened_in_office", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\ppt_20261031_100232_15464.pptx", "verified": true, "agent_direct...
+
+[PASS] C7 스냅샷 소진 시 '되돌릴 것 없음'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "되돌릴 스냅샷이 없습니다", "restored": false, "verified": true, "agent_directive": "VERIFIED: 되돌릴 수 있는 작업이 없습니다. 사용자에게 알리세요."}
+
+[PASS] C8 저장 안 한 새 워드 문서 undo -> 같은 창에서 되돌림
+    내용: 쓰기 확인=True, 문서 수 2->2, 같은 창 남음=True, 문장 남음=False
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'문서1'을(를) 'word write' 이전 상태로 되돌렸습니다 (restored_in_place). '문서1'을(를) 같은 창에서 되돌렸습니다 (저장하지 않은 문서라 저장은 하지 않았습니다)", "restored": true, "app": "Word", "name": "문서1", "original_path": "", "restored_as": "restored_in_place", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\word_20261031_100234_15364.xml", "restored_name"...
+
+[ENV-SKIP] D1 PDF 쪽 번호, 원본 바닥글 미변경
+    내용: 이 PC의 Word에 PDF 내보내기 기능이 없음 (원본은 그대로)
+    종료코드: 1
+    JSON: {"status": "error", "tool": "word", "command": "export", "error_type": "input", "message": "이 PC의 Office 12.0에는 PDF 내보내기 기능이 없습니다 (Office 2007은 'PDF/XPS로 저장' 추가 기능 필요). --save에 .docx를 쓰세요.", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] D2 DOCX 사본 저장, 원본 경로 그대로
+    내용: C:\office_test\_data\office_test_copy.docx
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "export", "preview": "A.docx을(를) DOCX로 저장: C:\\office_test\\_data\\office_test_copy.docx", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "output_file": "C:\\office_test\\_data\\office_test_copy.docx", "page_number": false, "agent_directive": "VERIFIED: 저장한 파일을 확인했습니다. 원본 문서는...
+
+[PASS] D3 XLSX 내보내기 후 임시 통합문서 미잔류
+    내용: 통합문서 수 1->1
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "export", "preview": "Sheet1!A1를 XLSX로 저장: C:\\office_test\\_data\\office_test_t.xlsx", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "output_file": "C:\\office_test\\_data\\office_test_t.xlsx", "sheet": "Sheet1", "range": "A1", "rows": 1, "cols": 1, "agent_directive": "VE...
+
+[ENV-SKIP] D4 PPT PDF 내보내기
+    내용: 이 PC의 PowerPoint에 PDF 내보내기 기능이 없음
+    종료코드: 1
+    JSON: {"status": "error", "tool": "ppt", "command": "export", "error_type": "input", "message": "이 PC의 Office 12.0에는 PDF 내보내기 기능이 없습니다 (Office 2007은 'PDF/XPS로 저장' 추가 기능 필요). --save에 .pptx를 쓰세요.", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] E1 범위 이동 데이터 손실 없음
+    내용: B2:C4=(('가', '나'), ('다', '라'), ('마', '바')), A1=None
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "range", "preview": "move 완료: E_TEST!B2:C4 -> E_TEST!B2", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "E_TEST"}, "sheet": "E_TEST", "range": "B2:C4", "rows": 3, "cols": 2, "agent_directive": "VERIFIED: 결과를 다시 읽어 확인했습니다."}
+
+[PASS] E2 범위 없는 병합 -> error
+    종료코드: 1
+    JSON: {"status": "error", "tool": "excel", "command": "range", "error_type": "input", "message": "range merge에는 --range가 필요합니다.", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] E3 값이 있는 셀 병합: 확인 없이는 멈춤, --overwrite면 대화상자 없이 완료
+    내용: 확인 요청=needs_user_decision, 값 유지=True, 병합됨=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "range", "preview": "merge 완료: E_TEST!A10:B10", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "E_TEST"}, "sheet": "E_TEST", "range": "A10:B10", "rows": 1, "cols": 2, "agent_directive": "VERIFIED: 결과를 다시 읽어 확인했습니다."}
+
+[PASS] E4 따옴표 시트명 주소 해석
+    내용: My Sheet A열 너비=30.0
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "range", "preview": "width 완료: My Sheet!A1", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "My Sheet"}, "sheet": "My Sheet", "range": "A1", "rows": 1, "cols": 1, "agent_directive": "VERIFIED: 결과를 다시 읽어 확인했습니다."}
+
+[PASS] E5 수식 셀 치환 시 수식 보존 + 서식 적용
+    내용: C20 수식==A20+B20, 배경색=65535
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "replace", "preview": "1개 셀 처리 (수식 셀 1개는 내용 유지, 서식만 적용)", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "E_TEST"}, "changed_cells": 1, "cells": ["E_TEST!C20"], "formula_cells_kept": ["E_TEST!C20"], "agent_directive": "VERIFIED: 바꾼 칸을 다시 읽어 확인했습니다."}
+
+[PASS] E6 테마 적용 (머리글 색)
+    내용: B2 배경색=0x5d361b
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "style", "preview": "E_TEST!B2:C4에 서식 적용: theme, zebra_rows, number_columns, summary_row", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "E_TEST"}, "applied": {"theme": "navy", "zebra_rows": 1, "number_columns": [], "summary_row": false}, "sheet": "E_TEST", "range"...
+
+[PASS] F1 슬라이드 번호 없는 clear -> error, 삭제 없음
+    내용: 도형 수 [2, 2, 2]->[2, 2, 2]
+    종료코드: 1
+    JSON: {"status": "error", "tool": "ppt", "command": "slide", "error_type": "input", "message": "clear에는 --slide가 필요합니다. 모든 슬라이드를 비우려면 --all-slides를 명시하세요 (사용자가 요청한 경우에만).", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] F2 2번 슬라이드만 clear
+    내용: 도형 수 [2, 2, 2]->[2, 0, 2]
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "slide", "preview": "슬라이드 2의 요소 2개를 지웠습니다", "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 2}, "slides_total": 3, "verified": true, "agent_directive": "VERIFIED: 슬라이드를 다시 읽어 확인했습니다."}
+
+[PASS] F3 새 슬라이드 쓰기 + 고친 슬라이드로 이동
+    내용: 슬라이드 3->4, 화면=4
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "write", "preview": "슬라이드 4: 제목, 본문 2줄", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 4}, "slides_written": [4], "agent_directive": "VERIFIED: 쓴 슬라이드를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] H1 사인 2주기 그래프 (쓰기 2회)
+    내용: chart_type=scatter_lines
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "chart", "preview": "차트 '사인 2주기' 생성 (scatter_lines, 데이터 사인!A1:B101)", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "사인"}, "chart_name": "사인 2주기", "chart_type": "scatter_lines", "data_range": {"sheet": "사인", "range": "A1:B101", "rows": 101, "cols": 2}, "next_comman...
+
+[PASS] H2 차트 전달 방식 시험 (--probe)
+    내용: 저장된 순서={'word': ['export', 'redraw'], 'ppt': ['export', 'redraw']}
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "transfer", "preview": "차트 전달 방식 시험 결과 저장 - Word: export, redraw; PowerPoint: export, redraw", "probe": {"word": {"export": "ok", "redraw": "ok", "relay": "실패: RuntimeError: 워드에 붙여넣기 안 됨"}, "ppt": {"export": "ok", "redraw": "ok", "relay": "실패: RuntimeError: 워드에 붙여넣기 안 됨"}}, "saved_order": {"word": ["export", "redraw"], "ppt": ["export", "redraw"]}, "ve...
+
+[PASS] H3 차트를 워드와 PPT에 그림으로
+    내용: 사용 방식={'word': 'export', 'ppt': 'export'}, 워드 그림 0->1, PPT 슬라이드 4->5
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "transfer", "preview": "차트 '사인 2주기'를 넣었습니다: Word(export), PowerPoint(export)", "verified": true, "chart": "사인 2주기", "results": {"word": {"method": "export", "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "image_file": "C:\\office_test\\_data\\_work\\chart_사인 2주기_export_20261031_100249.png"},...
+
+[PASS] H4 워드/PPT 내용을 엑셀 새 시트로
+    내용: 시트: Word 내용, PPT 내용
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "transfer", "preview": "'A.pptx'의 내용을 엑셀 시트 'PPT 내용'에 넣었습니다 (6행 x 4열)", "verified": true, "sheet": "PPT 내용", "rows": 6, "cols": 4, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "PPT 내용"}, "agent_directive": "VERIFIED: 넣은 칸을 다시 읽어 확인했습니다."}
+
+[PASS] H5 캐시 문서 검색 -> 워드에 넣기
+    내용: 일치 1건, 워드 글자 32->90
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "write", "preview": "A.docx의 문서 끝에 넣었습니다: 제목1, 제목2, 본문", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "inserted": ["제목1", "제목2", "본문"], "agent_directive": "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I1 엑셀 CSV 쓰기 + --append(같은 머리글 생략), 숫자는 숫자로
+    내용: A1:C5=(('품목', '수량', '금액'), ('사과', 3.0, 1500.0), ('배', 2.0, 4000.0), ('포도', 5.0, 120.0), (None, None, None))
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "write", "preview": "I_DATA!A4:C4에 썼습니다 (1행 x 3열)", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "I_DATA"}, "sheet": "I_DATA", "range_written": "A4:C4", "rows": 1, "cols": 3, "next_commands": [{"purpose": "방금 쓴 범위로 차트 만들기 (--type, --title은 원하는 값으로)", "command": "p...
+
+[PASS] I2 엑셀 --values JSON 쓰기
+    내용: F1:G5=(('x', 'y'), (1.0, 2.0), (2.0, 4.0), (3.0, 1.0), (4.0, 3.0))
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "write", "preview": "I_DATA!F1:G5에 썼습니다 (5행 x 2열)", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "I_DATA"}, "sheet": "I_DATA", "range_written": "F1:G5", "rows": 5, "cols": 2, "next_commands": [{"purpose": "방금 쓴 범위로 차트 만들기 (--type, --title은 원하는 값으로)", "command": "p...
+
+[PASS] I3 엑셀 --search 셀 주소 + --save CSV
+    내용: 일치=1, CSV 첫 줄='품목,수량,금액', 읽은 뒤 활성 시트=I_DATA
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "read", "preview": "I_DATA!A1:C4 (4행 x 3열)를 CSV로 저장: C:\\office_test\\_data\\_work\\I_DATA_A1-C4_20261031_100256.csv", "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "sheet": "I_DATA", "range": "A1:C4", "rows": 4, "cols": 3, "output_file": "C:\\office_test\\_data\\_work\\I_DATA_A1-C4_2026103...
+
+[PASS] I4 엑셀 300행 읽기 -> 잘림 + 이어 읽기 명령
+    내용: 표시 200행, next=ce-cli\excel.py read --target active --range I_BIG!A201:A300
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "read", "preview": "I_BIG!A1:A300: 300행 x 1열 (앞 200행만 표시)", "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "sheet": "I_BIG", "range": "A1:A300", "rows": 300, "cols": 1, "values": [[1], [2], [3], [4], [5], [6], [7], [8], [9], [10], [11], [12], [13], [14], [15], [16], [17], [18], [19], [20], [...
+
+[PASS] I5 차트 종류 (막대/원형/분산형, 분산형 선) + 분산형 x축
+    내용: 실제 ChartType={'I 막대': 51, 'I 원형': 5, 'I 분산': -4169, '사인 2주기': 75}, 기대={'I 막대': 51, 'I 원형': 5, 'I 분산': -4169, '사인 2주기': 75}, 분산형 계열 수={'I 분산': 1, '사인 2주기': 1} (기대 1)
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "chart", "preview": "차트 'I 분산' 생성 (scatter, 데이터 I_DATA!F1:G5)", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "I_DATA"}, "chart_name": "I 분산", "chart_type": "scatter", "data_range": {"sheet": "I_DATA", "range": "F1:G5", "rows": 5, "cols": 2}, "next_commands": [{"pu...
+
+[PASS] I6 차트 목록 / 이름으로 삭제 / 없는 이름은 삭제 안 함
+    내용: 목록=['사인 2주기', 'I 막대', 'I 원형', 'I 분산'], 삭제 후=['I 막대', 'I 분산'], 없는이름 삭제=error 후=['I 막대', 'I 분산']
+    종료코드: 1
+    JSON: {"status": "error", "tool": "excel", "command": "chart", "error_type": "input", "message": "차트 '없는차트'을(를) 찾을 수 없습니다. 사용 가능한 차트: I 막대, I 분산", "agent_directive": "STOP_RETRY: 인자나 대상 확인에 실패했습니다. message에 '[추천]'이 있으면 그 값으로 1회만 다시 실행하고, 없으면 message를 사용자에게 그대로 보고하세요."}
+
+[PASS] I7 조건부 강조 / 숫자 서식 / 서식 지우기
+    내용: 조건부 서식 1개 -> 지운 뒤 0개, 숫자 서식='#,##0'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "style", "preview": "I_DATA!C2:C4에 서식 적용: cleared", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "I_DATA"}, "applied": {"cleared": true}, "sheet": "I_DATA", "range": "C2:C4", "rows": 3, "cols": 1, "agent_directive": "VERIFIED: 적용한 서식을 다시 읽어 확인했습니다."}
+
+[PASS] I8 시트 이름변경 / 복사 / 삭제
+    내용: 추가된 시트 위치 7/11번째, 복사 후 ['My Sheet', 'PPT 내용', 'Word 내용', '사인', 'E_TEST', 'I_BIG', 'I_TMP2', 'I_DATA', 'Sheet1', 'Sheet2', 'I_TMP3']
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "sheet", "preview": "시트 'I_TMP3'을(를) 삭제했습니다 (되돌리기: office.py undo)", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "sheets": ["My Sheet", "PPT 내용", "Word 내용", "사인", "E_TEST", "I_BIG", "I_DATA", "Sheet1", "Sheet2"], "agent_directive": "VERIFIED: 시트 목록을 다시 읽어 확인했습니다."}
+
+[PASS] I9 범위 복사 / 열 숨김·해제 / 틀 고정·해제
+    내용: 복사 일치=True, 숨김=True, 해제=True, 고정(FreezePanes,SplitRow)=(True, 1), 해제=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "range", "preview": "unfreeze 완료: I_DATA", "verified": true, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "I_DATA"}, "sheet": "I_DATA", "agent_directive": "VERIFIED: 결과를 다시 읽어 확인했습니다."}
+
+[PASS] I10 워드 그림 넣기 (비율 유지)
+    내용: 그림 1->2, 가로/세로=2.000 (기대 2.0)
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "write", "preview": "A.docx의 문서 끝에 넣었습니다: 그림 i_img.png", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "inserted": ["그림 i_img.png"], "agent_directive": "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I11 워드 CSV -> 표
+    내용: 표 0->1, 크기=(3, 3), (2,1)='사과'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "write", "preview": "A.docx의 문서 끝에 넣었습니다: 표 3x3", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "inserted": ["표 3x3"], "agent_directive": "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I12 워드 앵커 앞에 넣기 / 앵커 단락 바꾸기
+    내용: 새 단락 1번, 앵커 2번, 바꾼 뒤 '바꾼 문장' 있음=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "write", "preview": "A.docx의 '앞에 넣은 문장' 단락 자리에 넣었습니다: 본문", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "inserted": ["본문"], "agent_directive": "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I13 워드 제목 수준 / 쪽 나누기 / 목차
+    내용: 개요 수준=2, 쪽 나누기=True, 목차 1개
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "write", "preview": "A.docx의 문서 끝에 넣었습니다: 목차", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "inserted": ["목차"], "agent_directive": "VERIFIED: 넣은 범위를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I14 워드 치환 (굵게 / --map / 바닥글 안)
+    내용: 굵게=True, map 결과 있음=True, 바닥글='바닥글 변경됨'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "replace", "preview": "1곳 처리: '원본표시' 1곳", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "replaced": 1, "by_text": {"원본표시": 1}, "agent_directive": "VERIFIED: 문서를 다시 찾아 확인했습니다."}
+
+[PASS] I15 PPT 그림 슬라이드 (비율 유지, 슬라이드 안)
+    내용: 그림(비율, 안쪽)=[(2.0, True)]
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "write", "preview": "슬라이드 6: 제목, 그림 i_img.png", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 6}, "slides_written": [6], "agent_directive": "VERIFIED: 쓴 슬라이드를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I16 PPT 카드 3개 (슬라이드 안)
+    내용: 카드=[('속도', True), ('품질', True), ('비용', True)]
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "write", "preview": "슬라이드 7: 제목, 카드 3개", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 7}, "slides_written": [7], "agent_directive": "VERIFIED: 쓴 슬라이드를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I17 PPT 마크다운 -> 제목마다 새 슬라이드
+    내용: 새 슬라이드 제목=['첫째 장', '둘째 장']
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "write", "preview": "슬라이드 8: 제목, 본문 2줄; 슬라이드 9: 제목, 본문 1줄", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 9}, "slides_written": [8, 9], "agent_directive": "VERIFIED: 쓴 슬라이드를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I18 PPT 긴 CSV 표 -> 여러 슬라이드, 머리글 반복
+    내용: (머리글, 데이터 행, 안쪽)=[('품목', 15, True), ('품목', 15, True)]
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "write", "preview": "슬라이드 10: 표 16x2; 슬라이드 11: 표 16x2", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 11}, "slides_written": [10, 11], "agent_directive": "VERIFIED: 쓴 슬라이드를 다시 읽어 확인했습니다. 같은 명령을 다시 실행하지 마세요."}
+
+[PASS] I19 PPT 슬라이드 복제 / 이동 / 삭제 / 목록
+    내용: 장수 11->12->11, 복제 제목 일치=True, 이동 후 1번='', 목록 11장
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "slide", "preview": "슬라이드 11장", "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active"}, "slides": [{"no": 1, "title": "A.pptx 슬라이드 1"}, {"no": 2, "title": ""}, {"no": 3, "title": "A.pptx 슬라이드 3"}, {"no": 4, "title": "추진 전략"}, {"no": 5, "title": "사인 2주기"}, {"no": 6, "title": "그림 슬라이드"}, {"no": 7, "...
+
+[PASS] I20 PPT 치환 (표 셀, 그룹 도형 안)
+    내용: 표 셀 변경=True, 그룹 글자=['그룹바뀜', '옆 상자']
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "replace", "preview": "2곳 처리 (슬라이드 10, 12)", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active", "slide": 10}, "replaced": 2, "by_text": {"품목07": 1, "그룹안글자": 1}, "slides": [10, 12], "agent_directive": "VERIFIED: 바꾼 슬라이드를 다시 읽어 확인했습니다."}
+
+[PASS] I21 PPT .pptx 사본 저장 (원본 경로 그대로)
+    내용: 사본 장수=12 (원본 12), 원본 경로 유지=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "export", "preview": "A.pptx을(를) 저장: C:\\office_test\\_data\\i_copy.pptx", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active"}, "output_file": "C:\\office_test\\_data\\i_copy.pptx", "agent_directive": "VERIFIED: 저장한 파일을 확인했습니다. 원본은 그대로입니다."}
+
+[PASS] I22 엑셀 범위 -> 워드/PPT 표
+    내용: 워드 표 1->2 (4,1)='포도', PPT 표 (4,1)='포도'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "transfer", "preview": "I_DATA!A1:C4 (4행)을 표로 넣었습니다: word, ppt", "verified": true, "rows": 4, "results": {"word": {"method": "table", "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}}, "ppt": {"method": "table", "slides": [13], "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": ...
+
+[PASS] I23 워드 표 -> 엑셀 새 시트
+    내용: 새 시트=['Word 표'], A1:C2=(('품목', '수량', '금액'), ('사과', 3.0, 1500.0))
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "transfer", "preview": "'A.docx'의 표을 엑셀 시트 'Word 표'에 넣었습니다 (3행 x 3열)", "verified": true, "sheet": "Word 표", "rows": 3, "cols": 3, "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active", "sheet": "Word 표"}, "agent_directive": "VERIFIED: 넣은 칸을 다시 읽어 확인했습니다."}
+
+[PASS] I24 차트 전달 redraw 방식 강제 (DRM 대비 경로)
+    내용: 방식=redraw, 워드 그림 2->3
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "transfer", "preview": "차트 'I 막대'를 넣었습니다: Word(redraw)", "verified": true, "chart": "I 막대", "results": {"word": {"method": "redraw", "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "image_file": "C:\\office_test\\_data\\_work\\chart_I 막대_redraw_20261031_100331.png"}}, "agent_directive": "VERI...
+
+[PASS] I25 undo --list / --pick 2 (두 단계 전으로)
+    내용: 지점 6개, pick 2 후 I_UNDO!A1=None
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'A.xlsx'을(를) 'excel write' 이전 상태로 되돌렸습니다 (reopened_in_office)", "restored": true, "app": "Excel", "name": "A.xlsx", "original_path": "C:\\office_test\\A.xlsx", "restored_as": "reopened_in_office", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\excel_20261031_100334_4348.xlsx", "verified": true, "agent_directiv...
+
+[PASS] I26 닫힌 파일 쓰기 후 undo
+    내용: 쓰기 후 D5='닫힌값', undo 후 D5=None, restored_as=file_replaced
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "undo", "preview": "'B.xlsx'을(를) 'excel write' 이전 상태로 되돌렸습니다 (file_replaced)", "restored": true, "app": "Excel", "name": "B.xlsx", "original_path": "C:\\office_test\\B.xlsx", "restored_as": "file_replaced", "pre_undo_backup": "C:\\office_test\\_cache\\snapshots\\undo_backups\\excel_20261031_100337_8892.xlsx", "verified": true, "agent_directive": "VERIF...
+
+[PASS] I27 창 전환 시 최대화 유지
+    내용: WindowState=-4137 (최대화 -4137), 앞 창 클래스=XLMAIN
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "office", "command": "focus", "preview": "Excel 'A.xlsx' 창을 앞으로 가져왔습니다", "app": "Excel", "name": "A.xlsx", "brought_to_front": true, "verified": true, "agent_directive": "VERIFIED: 작업이 완료되었습니다. 같은 명령을 다시 실행하거나 결과를 다시 조회하지 마세요."}
+
+[PASS] J1 PPT 전체 슬라이드 배치 경고 없음 (info --detail)
+    내용: 경고 0건
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "info", "preview": "A.pptx: 슬라이드 13장, 배치 경고 없음", "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "active"}, "slides_total": 13, "slides": [{"no": 1, "title": "A.pptx 슬라이드 1", "shapes": 2, "tables": 0, "pictures": 0, "chars": 31, "shape_detail": [{"name": "TextBox 1", "kind": "text", "left": 50.0, "to...
+
+[PASS] J2 엑셀 차트가 데이터를 가리지 않음 (info --detail)
+    내용: 경고 0건
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "excel", "command": "info", "preview": "A.xlsx: 시트 11개 (My Sheet A1, PPT 내용 A1:D6, Word 내용 A1:D4, 사인 A1:B101 차트1, E_TEST A2:C20, I_BIG A1:A300, Word 표 A1:C3, I_DATA A1:G22 차트2), 배치 경고 없음", "target_resolved": {"app": "Excel", "name": "A.xlsx", "path": "C:\\office_test\\A.xlsx", "source": "active"}, "sheets": [{"name": "My Sheet", "used_range": "A1", "rows": 1, "cols": 1, "c...
+
+[PASS] J3 워드 그림이 쪽 너비 안 (info --detail)
+    내용: 경고 0건
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "info", "preview": "A.docx: 3쪽, 글자 153, 표 2개, 그림 3개, 제목 3개, 배치 경고 없음", "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "active"}, "stats": {"pages": 3, "words": 63, "characters": 153, "paragraphs": 34}, "tables": [{"no": 1, "rows": 3, "cols": 3}, {"no": 2, "rows": 4, "cols": 3}], "pictures": 3, "floating_...
+
+[PASS] K1 워드 outline(수준·쪽) + read --section(하위 절 포함, 다음 장 전까지)
+    내용: 제목={'paragraph': 37, 'level': 1, 'text': 'K장 100342', 'page': 3}, {'paragraph': 39, 'level': 2, 'text': 'K절 100342', 'page': 3}, 장절 단락=['K장 100342', 'K 본문 100342', 'K절 100342', 'K 세부 100342']
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "read", "preview": "A.docx: 장절 'K장 100342' (단락 37-40), 단락 4개 표시 (고른 범위 4개, 전체 42개)", "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "open"}, "units_total": 42, "selection": "장절 'K장 100342' (단락 37-40)", "count": 4, "paragraphs": [{"no": 37, "heading": "K장 100342", "text": "K장 100342"}, {"no": 38, "heading...
+
+[PASS] K2 워드 read --pages(쪽 번호) + --paragraphs(같은 단락 번호)
+    내용: Word 쪽=4, read 결과={'no': 43, 'heading': 'K다음장 100342', 'text': 'K 쪽 확인 100342', 'page': 4}, --paragraphs 일치=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "read", "preview": "A.docx: 쪽 4, 단락 1개 표시 (고른 범위 1개, 전체 43개)", "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "open"}, "units_total": 43, "selection": "쪽 4", "count": 1, "page_total": 4, "paragraphs": [{"no": 43, "heading": "K다음장 100342", "text": "K 쪽 확인 100342", "page": 4}], "truncated": false, "verifie...
+
+[PASS] K3 워드 메모 달기(기준 글에) + 메모 목록
+    내용: 메모 0->1, 목록에 있음=True
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "comment", "preview": "A.docx: 메모 1개를 달았습니다 (문서 전체 메모 1개)", "verified": true, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "open"}, "added": [{"anchor": "K 본문 100342", "text": "K 검토 메모 100342", "page": 3}], "count": 1, "comments_total": 1, "agent_directive": "VERIFIED: 메모를 달고 다시 읽어 확인했습니다. 잘못 달았으면 offi...
+
+[PASS] K4 워드 변경 추적 목록 (삽입 1건 이상, 종류·작성자·쪽)
+    내용: count=1, 항목={'no': 1, 'type': '삽입', 'author': 'JooJoo', 'date': '2026-10-31 10:03', 'page': 4, 'text': 'K 변경 문장 100342'}
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "word", "command": "revisions", "preview": "A.docx: 변경 내용(변경 추적) 1개 표시 (전체 1개)", "count": 1, "items": [{"no": 1, "type": "삽입", "author": "JooJoo", "date": "2026-10-31 10:03", "page": 4, "text": "K 변경 문장 100342"}], "truncated": false, "target_resolved": {"app": "Word", "name": "A.docx", "path": "C:\\office_test\\A.docx", "source": "open"}, "track_changes": false, "verified"...
+
+[PASS] K5 PPT 노트 쓰기 + --append + 읽기
+    내용: 노트='K 노트 100342\r둘째 줄\r덧붙인 줄', 읽기='K 노트 100342\n둘째 줄\n덧붙인 줄'
+    종료코드: 0
+    JSON: {"status": "ok", "tool": "ppt", "command": "notes", "preview": "A.pptx 슬라이드 1: 노트를 덧붙였습니다", "verified": true, "target_resolved": {"app": "PowerPoint", "name": "A.pptx", "path": "C:\\office_test\\A.pptx", "source": "open", "slide": 1}, "slide": 1, "before": "K 노트 100342\n둘째 줄", "after": "K 노트 100342\n둘째 줄\n덧붙인 줄", "appended": true, "agent_directive": "VERIFIED: 노트를 쓰고 다시 읽어 확인했습니다. 잘못 썼으면 office.py...
+
+UNVERIFIED 결과 0건 (없음)
+
+<도구 오류 로그>
+없음 (<도구>/data/logs/errors.txt 파일이 없습니다)
+
+<요약>
+diag: 이상 0건 (없음)
+pytest ml-kit: exit=0, 140 passed, 4 skipped in 972.18s (0:16:12)
+pytest office-cli: exit=0, 370 passed in 47.61s
+ml-kit 실기: exit=0, 결과: ERROR=3, PASS=11
+office-cli 실기: exit=0, 결과: ENV-SKIP=2, FAIL=1, PASS=68 / 문제 항목: A3(FAIL)
+
