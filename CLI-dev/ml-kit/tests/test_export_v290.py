@@ -81,6 +81,19 @@ def test_search_keeps_interacting_input_and_builds_locked_workbook(version, tmp_
     assert any("엑셀" in u for u in r.get("unverified", [])) or r["verified"]          # Excel check only on Windows
 
 
+def test_status_cells_have_visible_colors(version):
+    # conditional formats: Excel reads bgColor for a solid fill, so fgColor alone shows no color
+    _, _, vdir = version
+    wb = openpyxl.load_workbook(run_tool("ml_export.py", "-m", vdir)["output_file"])
+    for sheet in ("계산기", "일괄계산"):
+        rules = [(rule.formula[0], rule.dxf) for cf in wb[sheet].conditional_formatting for rule in cf.rules]
+        ok = [d for f, d in rules if f.endswith('="정상"')]
+        warn = [d for f, d in rules if "범위 밖" in f and "참고용" in f]
+        assert ok and warn and len(ok) == len(warn)
+        assert all(d.fill.bgColor.rgb.endswith("DCFCE7") and d.font.color.rgb.endswith("166534") for d in ok)
+        assert all(d.fill.bgColor.rgb.endswith("FCE4D6") and d.font.color.rgb.endswith("C2410C") for d in warn)
+
+
 def test_keep_and_inputs_and_errors(version):
     _, _, vdir = version
     k = run_tool("ml_export.py", "-m", vdir, "--keep", "잡음", "--title", "짧은 제목")
