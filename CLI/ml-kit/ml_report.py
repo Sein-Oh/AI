@@ -196,30 +196,57 @@ def _style_font(style, size: float, bold: bool = False, color: str = C_INK) -> N
             del rfonts.attrib[qn(attr)]
 
 
+# Child order required by the WordprocessingML schema. Word 2007 refuses to open documents that break it,
+# and it only knows w:left/w:right (w:start/w:end are Word 2010+ names).
+_TCPR_ORDER = ("cnfStyle", "tcW", "gridSpan", "hMerge", "vMerge", "tcBorders", "shd", "noWrap", "tcMar",
+               "textDirection", "tcFitText", "vAlign", "hideMark")
+_TBLPR_ORDER = ("tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW",
+                "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook")
+_PPR_ORDER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr",
+              "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap",
+              "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid",
+              "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection",
+              "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange")
+
+
+def _set_child(parent, el, order: Tuple[str, ...]) -> None:
+    """Put el into parent at its schema position, replacing an earlier element of the same kind."""
+    old = parent.find(el.tag)
+    if old is not None:
+        parent.remove(old)
+    name = el.tag.rsplit("}", 1)[-1]
+    later = {qn(f"w:{n}") for n in order[order.index(name) + 1:]}
+    for child in parent:
+        if child.tag in later:
+            child.addprevious(el)
+            return
+    parent.append(el)
+
+
 def _shade(cell, hex_color: str) -> None:
     tcpr = cell._tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"), hex_color)
-    tcpr.append(shd)
+    _set_child(tcpr, shd, _TCPR_ORDER)
 
 
 def _cell_margins(cell, top=60, bottom=60, left=90, right=90) -> None:
     tcpr = cell._tc.get_or_add_tcPr()
     mar = OxmlElement("w:tcMar")
-    for k, v in (("top", top), ("bottom", bottom), ("start", left), ("end", right)):
+    for k, v in (("top", top), ("left", left), ("bottom", bottom), ("right", right)):
         el = OxmlElement(f"w:{k}")
         el.set(qn("w:w"), str(v))
         el.set(qn("w:type"), "dxa")
         mar.append(el)
-    tcpr.append(mar)
+    _set_child(tcpr, mar, _TCPR_ORDER)
 
 
 def _table_borders(table, color: str = C_LINE, inside: bool = True) -> None:
     tblpr = table._tbl.tblPr
     borders = OxmlElement("w:tblBorders")
-    edges = ["top", "bottom", "left", "right"] + (["insideH", "insideV"] if inside else [])
+    edges = ["top", "left", "bottom", "right"] + (["insideH", "insideV"] if inside else [])
     for edge in edges:
         el = OxmlElement(f"w:{edge}")
         el.set(qn("w:val"), "single")
@@ -227,22 +254,22 @@ def _table_borders(table, color: str = C_LINE, inside: bool = True) -> None:
         el.set(qn("w:space"), "0")
         el.set(qn("w:color"), color)
         borders.append(el)
-    tblpr.append(borders)
+    _set_child(tblpr, borders, _TBLPR_ORDER)
 
 
 def _cell_left_bar(cell, color: str, size: int = 18) -> None:
     tcpr = cell._tc.get_or_add_tcPr()
     borders = OxmlElement("w:tcBorders")
-    for edge in ("top", "bottom", "right"):
+    for edge in ("top", "left", "bottom", "right"):
         el = OxmlElement(f"w:{edge}")
-        el.set(qn("w:val"), "nil")
+        if edge == "left":
+            el.set(qn("w:val"), "single")
+            el.set(qn("w:sz"), str(size))
+            el.set(qn("w:color"), color)
+        else:
+            el.set(qn("w:val"), "nil")
         borders.append(el)
-    left = OxmlElement("w:left")
-    left.set(qn("w:val"), "single")
-    left.set(qn("w:sz"), str(size))
-    left.set(qn("w:color"), color)
-    borders.append(left)
-    tcpr.append(borders)
+    _set_child(tcpr, borders, _TCPR_ORDER)
 
 
 def _fix_widths(table, widths_cm: List[float]) -> None:
@@ -250,7 +277,7 @@ def _fix_widths(table, widths_cm: List[float]) -> None:
     tblpr = table._tbl.tblPr
     layout = OxmlElement("w:tblLayout")
     layout.set(qn("w:type"), "fixed")
-    tblpr.append(layout)
+    _set_child(tblpr, layout, _TBLPR_ORDER)
     for col, w in zip(table.columns, widths_cm):
         col.width = Cm(w)
     for row in table.rows:
@@ -298,7 +325,7 @@ def _para_border_bottom(paragraph, color: str = C_LINE, size: int = 6) -> None:
     b.set(qn("w:space"), "1")
     b.set(qn("w:color"), color)
     pbdr.append(b)
-    ppr.append(pbdr)
+    _set_child(ppr, pbdr, _PPR_ORDER)
 
 
 # ------------------------------------------------------------------------------
@@ -354,7 +381,7 @@ def _ensure_styles(doc) -> List[str]:
             ppr = style.element.get_or_add_pPr()
             lvl = OxmlElement("w:outlineLvl")
             lvl.set(qn("w:val"), str(outline))
-            ppr.append(lvl)
+            _set_child(ppr, lvl, _PPR_ORDER)
         created.append(name)
     return created
 
