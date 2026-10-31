@@ -591,25 +591,51 @@ def _ppt_running() -> bool:
 
 
 # 열기 암호가 걸린 파일: 보이지 않는 인스턴스에서 암호 창이 뜨면 끝나지 않으므로 틀린 암호를 넘겨 바로 오류가 나게 함
-# (암호가 없는 파일은 이 값을 무시함)
 _NO_PASSWORD = "office-cli-no-password"
 
 
+def _word_encrypted(path: str) -> Optional[bool]:
+    """Word 파일에 열기 암호가 있는지 파일 구조로 판별합니다. 판별하지 못하면 None (DRM 파일 등)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+        if head[:2] == b"PK":                       # 암호 없는 docx/docm (암호를 걸면 OLE 파일이 됨)
+            return False
+        if head != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            return None
+        import olefile
+        with olefile.OleFileIO(path) as ole:
+            if ole.exists("EncryptedPackage"):      # 암호 docx/docm
+                return True
+            with ole.openstream("WordDocument") as s:
+                return bool(s.read(12)[11] & 0x01)  # doc: FIB fEncrypted (0x000A의 비트 0x0100)
+    except Exception:
+        return None
+
+
+def _password_error(path: str) -> rt.InputError:
+    return rt.InputError(f"열기 암호가 걸린 문서라 열 수 없습니다: {os.path.basename(path)}. 사용자가 Office에서 직접 열어 둔 뒤 "
+                         "같은 요청을 하면 열린 문서로 작업합니다.", no_fallback=True)
+
+
 def _open_file(kind: str, app: Any, path: str, readonly: bool) -> Any:
+    encrypted: Optional[bool] = False
     try:
         if kind == "excel":
             return app.Workbooks.Open(path, UpdateLinks=0, ReadOnly=readonly, Password=_NO_PASSWORD,
                                       IgnoreReadOnlyRecommended=True, Notify=False, AddToMru=False)
         if kind == "word":
+            # Word 2007은 ReadOnly와 PasswordDocument를 함께 주면 암호 없는 파일도 열지 못하므로 암호가 없다고 확인된 파일에는 넘기지 않음
+            encrypted = _word_encrypted(path)
+            password = {} if encrypted is False else {"PasswordDocument": _NO_PASSWORD}
             return app.Documents.Open(path, ConfirmConversions=False, ReadOnly=readonly, AddToRecentFiles=False,
-                                      PasswordDocument=_NO_PASSWORD, Visible=False)
+                                      Visible=False, **password)
         return app.Presentations.Open(path, -1 if readonly else 0, 0, 0)   # ReadOnly, Untitled, WithWindow=False
     except Exception as e:
         info = rt._com_error_info(e)
         text = (info[1] if info else str(e)).lower()
-        if "암호" in text or "password" in text:
-            raise rt.InputError(f"열기 암호가 걸린 문서라 열 수 없습니다: {os.path.basename(path)}. 사용자가 Office에서 직접 열어 둔 뒤 "
-                                "같은 요청을 하면 열린 문서로 작업합니다.", no_fallback=True)
+        if encrypted is True or "암호" in text or "password" in text:    # Word 2007의 오류 문구에는 '암호'가 없음
+            raise _password_error(path)
         raise
 
 
