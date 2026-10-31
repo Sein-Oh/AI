@@ -409,7 +409,6 @@ Windows 실기 테스트(집 PC: Windows 11 Pro 26200, Python 3.13.13, Office 20
 - Outlook 날짜 범위 검색 (`--since`).
 
 ### 1.4.0 점검에서 남긴 것
-- R1 사후 확인: 기존 쓰기 명령(excel write/replace/style/sheet/range/chart, word write/replace/export, ppt write/replace/export, transfer, undo, outlook)이 다시 읽지 않고 `VERIFIED:`. 명령마다 다시 읽어 비교하거나 `ok_unverified`로.
 - PowerPoint 닫힌 파일의 열기 암호, DRM 인증 창이 뜨는 문서: 백그라운드에서 멈출 수 있음 (감시 시간 초과 후 정리 필요).
 - 엑셀: 열린 문서의 열 전체 범위(`A:A`)를 사용 범위로 자르기 (닫힌 파일·CSV는 1.4.5), 조건부 강조 `포함:`의 상대참조(활성 셀 기준), 같은 이름 차트가 여러 시트에 있을 때 `[후보]`, `--map` 연쇄 치환, 보호된 시트 사전 확인, 잘못된 시트 이름 검사 전에 시트가 만들어지는 문제.
 - 워드: 열린 문서의 자동 번호 제목(`ListFormat.ListString`)이 `outline`/`--section`에 나오지 않음(닫힌 파일과 번호 체계 다름), 목차(TOC) 안의 앵커 후보 구별, 머리글 안 글상자 치환, `replace --find`만 준 경우.
