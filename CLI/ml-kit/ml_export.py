@@ -302,7 +302,9 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
     FONT = "맑은 고딕"
     YELLOW = PatternFill("solid", fgColor="FFF2CC")
     HEAD = PatternFill("solid", fgColor="E7ECF5")
-    ORANGE = PatternFill("solid", fgColor="FCE4D6")
+    # conditional formats: Excel reads bgColor for a solid fill here (fgColor alone shows no color)
+    GOOD = {"fill": PatternFill("solid", fgColor="DCFCE7", bgColor="DCFCE7"), "font": Font(color="166534", bold=True)}
+    WARN = {"fill": PatternFill("solid", fgColor="FCE4D6", bgColor="FCE4D6"), "font": Font(color="C2410C", bold=True)}
     NAVY = "1E3A8A"
     thin = Side(style="thin", color="C9D1E0")
     BOX = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -317,6 +319,11 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
             c.border = BOX
         if fmt:
             c.number_format = fmt
+
+    def status_colors(ws, cells, first):
+        """Green for 정상, orange for 범위 밖 / 참고용. first = top-left cell of cells (relative reference)."""
+        ws.conditional_formatting.add(cells, FormulaRule(formula=[f'{first}="정상"'], **GOOD))
+        ws.conditional_formatting.add(cells, FormulaRule(formula=[f'OR({first}="범위 밖",LEFT({first},3)="참고용")'], **WARN))
 
     wb = Workbook()
     calc = wb.active
@@ -445,7 +452,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
         chk = f"OR({x}<{lo!r},{x}>{hi!r})"
         style(calc.cell(row=row, column=6, value=f'=IF(ISNUMBER({x}),IF({chk},"범위 밖","정상"),"값을 넣으세요")'), align="center")
     in_end = r + len(all_inputs)
-    calc.conditional_formatting.add(f"F{r + 1}:F{in_end}", FormulaRule(formula=[f'F{r + 1}<>"정상"'], fill=ORANGE))
+    status_colors(calc, f"F{r + 1}:F{in_end}", f"F{r + 1}")
 
     r2 = in_end + 2
     for j, h in enumerate(("결과", "예측값", "단위", "90% 범위", "판단"), 2):
@@ -468,7 +475,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
         out_rng = "OR(" + ",".join(f"OR({x}<{rng[c][0]!r},{x}>{rng[c][1]!r})" for c, x in zip(p["cand"]["inputs"], own)) + ")"
         style(calc.cell(row=row, column=6, value=(f'=IF(NOT({ready}),"",IF({out_rng},"참고용 (학습 범위 밖)",'
                                                    f'IF({df_}>{UNCOVERED_DIST},"참고용 (실측 없는 영역)","정상")))')), align="center")
-        calc.conditional_formatting.add(f"F{row}", FormulaRule(formula=[f'AND(F{row}<>"",F{row}<>"정상")'], fill=ORANGE))
+        status_colors(calc, f"F{row}", f"F{row}")
         for c in range(helper_col, helper_col_end):
             calc.column_dimensions[_col(c)].width = 9
             calc.cell(row=row, column=c).font = Font(name=FONT, size=8, color="9CA3AF")
@@ -536,8 +543,7 @@ def write_workbook(path: str, title: str, vinfo: Dict[str, Any], plans: List[Dic
                                                       f'IF({df_}>{UNCOVERED_DIST},"참고용 (실측 없는 영역)","정상")))'))
             rc += 4
     for c in res_cols[3::4]:
-        batch.conditional_formatting.add(f"{_col(c)}3:{_col(c)}{BATCH_ROWS + 2}",
-                                         FormulaRule(formula=[f'AND({_col(c)}3<>"",{_col(c)}3<>"정상")'], fill=ORANGE))
+        status_colors(batch, f"{_col(c)}3:{_col(c)}{BATCH_ROWS + 2}", f"{_col(c)}3")
 
     # -- 사용법 ----------------------------------------------------------------------------------
     lines = [
