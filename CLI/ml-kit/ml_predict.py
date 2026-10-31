@@ -47,7 +47,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # C1. Console & Agent CLI Protocol (Clean Terminal Principle - No Emojis)
 # ==============================================================================
 
-VERSION = "2.9.8"                         # must equal SKILL.md metadata.version (tests check it)
+VERSION = "2.9.9"                         # must equal SKILL.md metadata.version (tests check it)
 TOOL_NAME = "ml-kit"                      # tool folder name, used in the error log header
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 ERROR_LOG_MAX = 2 * 1024 * 1024           # errors.txt larger than this -> errors.old.txt (1 generation)
@@ -1367,13 +1367,18 @@ def _load_snapshot(version_dir: str, cache: Dict[str, Any]) -> Optional[pd.DataF
     return cache[version_dir]
 
 
-def _idw(sub: pd.DataFrame, keys: List[str], target: str, x: np.ndarray) -> Dict[str, Any]:
+def _idw_rows(sub: pd.DataFrame, keys: List[str], target: str) -> Dict[str, np.ndarray]:
+    """Numeric arrays for _idw. Built once per category: converting the columns for every input row is what takes minutes."""
     K = np.column_stack([coerce_numeric(sub[c]).to_numpy(dtype=float) for c in keys])
     y = coerce_numeric(sub[target]).to_numpy(dtype=float)
     ok = np.isfinite(K).all(axis=1) & np.isfinite(y)
     K, y, rows = K[ok], y[ok], sub["__row"].to_numpy()[ok]
     lo, hi = K.min(axis=0), K.max(axis=0)
-    span = np.where(hi - lo > 0, hi - lo, 1.0)
+    return {"K": K, "y": y, "rows": rows, "lo": lo, "hi": hi, "span": np.where(hi - lo > 0, hi - lo, 1.0)}
+
+
+def _idw(data: Dict[str, np.ndarray], x: np.ndarray) -> Dict[str, Any]:
+    K, y, rows, lo, hi, span = (data[k] for k in ("K", "y", "rows", "lo", "hi", "span"))
     d = np.sqrt((((K - x) / span) ** 2).sum(axis=1))
     near = np.argsort(d, kind="stable")[:NEAREST_N]
     if d[near[0]] == 0:
@@ -1439,8 +1444,8 @@ def compare_with_measured(meta: Dict[str, Any], target: str, version_dir: str, d
                     tab = Table(sub, keys, [target], [])
                 except InputError:
                     tab = None
-            tables[cat_key] = (sub, tab)
-        sub, tab = tables[cat_key]
+            tables[cat_key] = (sub, tab, None)
+        sub, tab, idw_rows = tables[cat_key]
         try:
             if tab is not None:
                 r = tab.at(X[i])
@@ -1448,7 +1453,10 @@ def compare_with_measured(meta: Dict[str, Any], target: str, version_dir: str, d
                 out["method"][i], out["basis"][i], out["extrapolated"][i] = r["method"], r["basis"], r["extrapolated"]
                 out["warnable"][i] = not r["extrapolated"]
             else:
-                r = _idw(sub, keys, target, X[i])
+                if idw_rows is None:
+                    idw_rows = _idw_rows(sub, keys, target)
+                    tables[cat_key] = (sub, tab, idw_rows)
+                r = _idw(idw_rows, X[i])
                 out["values"][i] = r["value"]
                 out["method"][i], out["basis"][i], out["extrapolated"][i] = r["method"], r["basis"], r["extrapolated"]
                 # with many inputs the nearest rows can be far apart: only a close neighbourhood is worth a warning

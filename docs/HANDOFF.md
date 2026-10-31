@@ -4,7 +4,7 @@
 이 파일은 작업이 이어지면 최신 상태로 고치거나 지웁니다.
 
 ## 1. 지금 상태
-- main 기준 도구 버전: **ml-kit 2.9.8**, **office-cli 1.4.8** (PR #29~#37 모두 머지)
+- main 기준 도구 버전: **ml-kit 2.9.9**, **office-cli 1.4.9** (집 PC 실기 수정 포함)
 - 저장소 규칙은 `AGENTS.md` 한 곳 (Claude Code는 `CLAUDE.md`가 불러옴). 특히:
   - 답변은 한국어, 이모지·장식 기호 금지 (CP949 안전 문자만)
   - 베타 단계: 이전 버전 호환 코드를 넣지 않음. CLI 인자·JSON 키는 바꿔도 되고, 바꾸면 SKILL.md·README·CHANGELOG·테스트를 같은 커밋에서
@@ -43,6 +43,12 @@
 - PDF 내보내기는 Office 2007 추가 기능이 없으면 ENV-SKIP (오류 아님)
 
 집 PC에서 확인 못 하는 것 (회사 PC 몫): 문서 보안(DRM), Office 16 차트 전달 방식, Gemma 종합 테스트(`docs/opencode/자동테스트/` + `CLI-dev/grade_opencode.py`), 파이썬 없는 PC에서 성능예측표 열기(V8)
+
+## 3-1. 집 PC 자동 점검 결과 (2026-10-31, Office 2007)
+- `run_beta_check.py`: 27개 항목 모두 OK (F7 Excel 2007 수식 재계산 포함)
+- `run_all_tests.py --auto`: pytest 통과, UNVERIFIED 결과 0건, ENV-SKIP은 D1·D4 (PDF 추가 기능 없음, 오류 아님)
+- 수정 후 실제 Office로 다시 통과: M6·M7 (보고서가 Word 2007에서 열림), M10 (2만 행 예측 900초 초과 -> 40.7초), A3 (닫힌 Word 파일 쓰기)
+- 아직 하지 않음: 눈 확인 V1~V7, V9~V10
 
 ## 4. 남은 일
 - 집 PC·회사 PC 실기 결과 분석과 수정

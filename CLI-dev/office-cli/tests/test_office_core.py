@@ -328,6 +328,51 @@ def test_password_error_becomes_input_error(tmp_path):
     assert "열기 암호" in str(ei.value)
 
 
+class _WordApp:
+    """Documents.Open 인자를 기록하고, fail이 있으면 그 오류를 냅니다."""
+
+    def __init__(self, fail=None):
+        self.kw = None
+        self.fail = fail
+        self.Documents = self
+
+    def Open(self, path, **kw):
+        self.kw = kw
+        if self.fail:
+            raise self.fail
+        return "doc"
+
+
+def test_word_open_skips_password_for_plain_docx(tmp_path):
+    # Word 2007: ReadOnly + PasswordDocument 조합은 암호 없는 docx도 "명령을 정상적으로 종료할 수 없습니다"로 실패
+    path = tmp_path / "a.docx"
+    path.write_bytes(b"PK\x03\x04 zip")
+    app = _WordApp()
+    assert off._open_file("word", app, str(path), readonly=False) == "doc"
+    assert "PasswordDocument" not in app.kw and app.kw["ReadOnly"] is False
+
+
+def test_word_open_keeps_password_when_unknown_and_reports_office_error(tmp_path):
+    path = tmp_path / "drm.docx"
+    path.write_bytes(b"DRM-HEADER")                      # 판별할 수 없는 파일: 암호 창을 막되 오류는 그대로
+    assert off._word_encrypted(str(path)) is None
+    app = _WordApp()
+    off._open_file("word", app, str(path), readonly=True)
+    assert app.kw["PasswordDocument"] == off._NO_PASSWORD
+    with pytest.raises(Exception) as ei:
+        off._open_file("word", _WordApp(fail=RuntimeError("다른 오류")), str(path), readonly=True)
+    assert not isinstance(ei.value, rt.InputError)
+
+
+def test_word_encrypted_file_error_without_password_word_becomes_input_error(tmp_path, monkeypatch):
+    # Word 2007의 틀린 암호 오류 문구에는 '암호'가 없음
+    monkeypatch.setattr(off, "_word_encrypted", lambda p: True)
+    with pytest.raises(rt.InputError) as ei:
+        off._open_file("word", _WordApp(fail=RuntimeError("명령을 정상적으로 종료할 수 없습니다.")),
+                       str(tmp_path / "s.docx"), readonly=True)
+    assert "열기 암호" in str(ei.value)
+
+
 def test_write_to_file_opened_read_only_stops_before_writing(tmp_path, fake_com, monkeypatch):
     path = tmp_path / "공유.xlsx"
     path.write_bytes(b"x")
